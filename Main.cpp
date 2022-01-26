@@ -10,38 +10,95 @@
 #pragma comment(lib, "openssl/libcrypto_static.lib")
 #pragma comment(lib, "openssl/libssl_static.lib")
 
+#include "Common.h"
+#include "StringBuilder.h"
+
 #include <stdio.h>
 #include <string.h>
-
-#define TriggerBreakpoint() __debugbreak()
-#define Assert(x) if (!x) { TriggerBreakpoint(); }
-#define Unimplemented TriggerBreakpoint
 
 //
 // https://discord.com/developers/docs/topics/rate-limits#rate-limits
 //
 
-int main() {
+
+void LogError(const char *agent, const char *fmt, ...) {
+	fprintf(stderr, "[%s] Error:", agent);
+
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+}
+
+bool NetInit() {
 	WSADATA wsaData;
-	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
-	if (err != 0) {
-		// Tell the user that we could not find a usable Winsock DLL.
-		Unimplemented();
+	int error = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+	if (error != 0) {
+		if (error == WSASYSNOTREADY)
+			LogError("Network/WSAStartup", "The underlying network subsystem is not ready for network communication.");
+		else if (error == WSAVERNOTSUPPORTED)
+			LogError("Network/WSAStartup", "The version of Windows Sockets support requested is not provided by this particular Windows Sockets implementation.");
+		else if (error == WSAEINPROGRESS)
+			LogError("Network/WSAStartup", "A blocking Windows Sockets 1.1 operation is in progress.");
+		else if (error == WSAEPROCLIM)
+			LogError("Network/WSAStartup", "A limit on the number of tasks supported by the Windows Sockets implementation has been reached.");
+		else if (error == WSAEFAULT)
+			TriggerBreakpoint();
+		else
+			Unreachable();
+
+		return false;
 	}
 
-	SSL_library_init(); // TODO: Check error
+	SSL_library_init();
+	OpenSSL_add_all_algorithms();
+	SSL_load_error_strings();
 
-	int result = 0;
+	return true;
+}
 
-	ADDRINFOW hints;
+void NetShutdown() {
+	WSACleanup();
+}
+
+struct Net_Socket {
+	SOCKET handle;
+
+	struct {
+		SSL *handle;
+		SSL_CTX *context;
+	} ssl;
+
+	String hostname;
+	String port;
+
+	char hostname_buffer[256];
+	char port_buffer[8];
+};
+
+bool NetOpenConnection(const String hostname, const String port, Net_Socket *net) {
+	Assert(hostname.length < ArrayCount(net->hostname_buffer) && port.length < ArrayCount(net->port_buffer));
+
+	memcpy(net->hostname_buffer, hostname.data, hostname.length);
+	memcpy(net->port_buffer, port.data, port.length);
+
+	net->hostname_buffer[hostname.length] = 0;
+	net->port_buffer[port.length] = 0;
+
+	net->hostname = String((uint8_t *)net->hostname_buffer, hostname.length);
+	net->port = String((uint8_t *)net->port_buffer, port.length);
+
+	ADDRINFOA hints;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	ADDRINFOW *address = nullptr;
-	result = GetAddrInfoW(L"discord.com", L"443", &hints, &address);
+	ADDRINFOA *address = nullptr;
+	int result = GetAddrInfoA(net->hostname_buffer, net->port_buffer, &hints, &address);
 	if (result) {
 		Unimplemented();
+		return false;
 	}
 
 	SOCKET connect_socket = INVALID_SOCKET;
@@ -63,45 +120,75 @@ int main() {
 		break;
 	}
 
-	FreeAddrInfoW(address);
+	FreeAddrInfoA(address);
 
 	if (connect_socket == INVALID_SOCKET) {
 		Unimplemented();
+		return false;
 	}
 
-	// TODO: Read docs + error
-	OpenSSL_add_all_algorithms();  /* Load cryptos, et.al. */
-	SSL_load_error_strings();   /* Bring in and register error messages */
-	auto method = TLSv1_2_client_method();  /* Create new client-method instance */
-	auto ctx = SSL_CTX_new(method);   /* Create new context */
-	if (ctx == NULL) {
-		ERR_print_errors_fp(stdout);
+	net->handle = connect_socket;
+	net->ssl.handle = NULL;
+	net->ssl.context = NULL;
+
+	return true;
+}
+
+bool NetPerformTSLHandshake(Net_Socket *net, bool verify = true) {
+	net->ssl.context = SSL_CTX_new(TLS_client_method());
+
+	if (!net->ssl.context) {
 		Unimplemented();
+		return false;
 	}
 
-	auto ssl = SSL_new(ctx);      /* create new SSL connection state */
+	net->ssl.handle = SSL_new(net->ssl.context);
 
-	SSL_set_fd(ssl, connect_socket);    /* attach the socket descriptor */
-	if (SSL_connect(ssl) == -1) {   /* perform the connection */
-		ERR_print_errors_fp(stdout);
+	if (!net->ssl.handle) {
 		Unimplemented();
+		return false;
 	}
-	else {
-		auto xcert = SSL_get_peer_certificate(ssl); /* get the server's certificate */
-		if (xcert == NULL) {
+
+	if (!SSL_set_tlsext_host_name(net->ssl.handle, net->hostname_buffer)) {
+		Unimplemented();
+		return false;
+	}
+
+	SSL_set_fd(net->ssl.handle, (int)net->handle);
+	if (SSL_connect(net->ssl.handle) == -1) {
+		ERR_print_errors_fp(stderr);
+		Unimplemented();
+		return false;
+	}
+
+	X509 *x509 = SSL_get_peer_certificate(net->ssl.handle);
+	if (x509 == NULL) {
+		Unimplemented();
+		return false;
+	}
+	Defer{ X509_free(x509); };
+
+	if (verify) {
+		auto arena = ThreadScratchpad();
+		auto temp = BeginTemporaryMemory(arena);
+		Defer{ EndTemporaryMemory(&temp); };
+
+		int encoded_cert_len = i2d_X509(x509, NULL);
+		uint8_t *encoded_cert = (uint8_t *)PushSize(arena, encoded_cert_len);
+
+		if (!encoded_cert) {
 			Unimplemented();
 		}
 
-		unsigned char *cert_buf = NULL;
-		int cert_len = i2d_X509(xcert, &cert_buf);
-		if (cert_len < 0) {
-			Unimplemented();
-		}
+		auto p = encoded_cert;
+		i2d_X509(x509, &p);
 
-		const CERT_CONTEXT *certificate = CertCreateCertificateContext(X509_ASN_ENCODING, cert_buf, cert_len);
-		if (certificate == NULL) {
+		const CERT_CONTEXT *cert_context = CertCreateCertificateContext(X509_ASN_ENCODING, encoded_cert, encoded_cert_len);
+		if (cert_context == NULL) {
 			Unimplemented();
+			return false;
 		}
+		Defer{ CertFreeCertificateContext(cert_context); };
 
 		CERT_CHAIN_PARA chain_para;
 		memset(&chain_para, 0, sizeof(chain_para));
@@ -111,9 +198,11 @@ int main() {
 		chain_para.RequestedUsage.Usage.rgpszUsageIdentifier = NULL;
 
 		const CERT_CHAIN_CONTEXT *certificate_chain = nullptr;
-		if (!CertGetCertificateChain(NULL, certificate, NULL, NULL, &chain_para, CERT_CHAIN_TIMESTAMP_TIME, NULL, &certificate_chain)) {
+		if (!CertGetCertificateChain(NULL, cert_context, NULL, NULL, &chain_para, CERT_CHAIN_TIMESTAMP_TIME, NULL, &certificate_chain)) {
 			Unimplemented();
+			return false;
 		}
+		Defer{ CertFreeCertificateChain(certificate_chain); };
 
 		CERT_CHAIN_POLICY_PARA chain_policy_para;
 		memset(&chain_policy_para, 0, sizeof(chain_policy_para));
@@ -128,20 +217,64 @@ int main() {
 
 		if (!CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_BASE, certificate_chain, &chain_policy_para, &policy_status)) {
 			Unimplemented();
+			return false;
 		}
 
 		if (policy_status.dwError != 0) {
 			Unimplemented();
+			return false;
 		}
-
-		CertFreeCertificateChain(certificate_chain);
-		CertFreeCertificateContext(certificate);
-
-		X509_free(xcert);     /* free the malloc'ed certificate copy */
 	}
 
-	const char create_msg_json[] =
-		R"foo-bar(
+	return true;
+}
+
+void NetCloseConnection(Net_Socket *net) {
+	if (net->ssl.context) {
+		SSL_shutdown(net->ssl.handle);
+		SSL_free(net->ssl.handle);
+		SSL_CTX_free(net->ssl.context);
+	}
+	closesocket(net->handle);
+}
+
+int NetWrite(Net_Socket *net, void *buffer, int length) {
+	return send(net->handle, (char *)buffer, length, 0);
+}
+
+int NetRead(Net_Socket *net, void *buffer, int length) {
+	return recv(net->handle, (char *)buffer, length, 0);
+}
+
+int NetWriteEncrypted(Net_Socket *net, void *buffer, int length) {
+	return SSL_write(net->ssl.handle, buffer, length);
+}
+
+int NetReadDecrypted(Net_Socket *net, void *buffer, int length) {
+	return SSL_read(net->ssl.handle, buffer, length);
+}
+
+int main(int argc, char **argv) {
+	if (argc != 2) {
+		fprintf(stderr, "USAGE: %s token\n", argv[0]);
+		return 1;
+	}
+
+	InitThreadContext(MegaBytes(64));
+
+	NetInit();
+
+	Net_Socket net;
+	if (!NetOpenConnection("discord.com", "443", &net)) {
+		return 1;
+	}
+
+	NetPerformTSLHandshake(&net, true);
+
+	const char *token = argv[1];
+
+	const String content = 
+R"foo-bar(
 {
   "content": "Hello, From C!",
   "tts": false,
@@ -151,34 +284,34 @@ int main() {
   }]
 })foo-bar";
 
+	String_Builder builder;
 
-	// /api/v9/channels/850062383266136065
-	const char *request =
-		//"POST /api/v9/channels/850062383266136065/messages HTTP/1.1\r\n"
-		"GET /api/v9/gateway/bot HTTP/1.1\r\n"
-		"Authorization: Bot ODMzNjg2NjUxMTQ1NTUxOTIy.YH19Mg.ZlWmd1e1T74ENnKoLlrRNxJ5rCg\r\n"
-		"User-Agent: KatachiBot\r\n"
-		"Connection: keep-alive\r\n"
-		"Host: discord.com\r\n"
-		//"Content-Type: application/json\r\n"
-		//"Content-Length: 151\r\n"
-		"\r\n";
+	String method = "POST";
+	String endpoint = "/api/v9/channels/850062383266136065/messages";
 
-	int bytes_sent = SSL_write(ssl, request, strlen(request));
-	//int bytes_sent = send(connect_socket, request, strlen(request), 0);
-	if (bytes_sent < 1) {
-		Unimplemented();
+	WriteFormatted(&builder, "% % HTTP/1.1\r\n", method, endpoint);
+	WriteFormatted(&builder, "Authorization: Bot %\r\n", token);
+	Write(&builder, "User-Agent: KatachiBot\r\n");
+	Write(&builder, "Connection: keep-alive\r\n");
+	WriteFormatted(&builder, "Host: %\r\n", net.hostname);
+	WriteFormatted(&builder, "Content-Type: %\r\n", "application/json");
+	WriteFormatted(&builder, "Content-Length: %\r\n", content.length);
+	Write(&builder, "\r\n");
+
+	// Send header
+	for (auto buk = &builder.head; buk; buk = buk->next) {
+		int bytes_sent = NetWriteEncrypted(&net, buk->data, buk->written);
 	}
 
-	//bytes_sent = SSL_write(ssl, create_msg_json, strlen(create_msg_json));
-	//if (bytes_sent < 1) {
-	//	Unimplemented();
-	//}
+	// Send Content
+	{
+		int bytes_sent = NetWriteEncrypted(&net, content.data, (int)content.length);
+	}
 
 	static char buffer[4096 * 2];
 
-	int bytes_received = SSL_read(ssl, buffer, sizeof(buffer) - 1);
-	bytes_received += recv(connect_socket, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received, 0);
+	int bytes_received = NetReadDecrypted(&net, buffer, sizeof(buffer) - 1);
+	bytes_received += NetReadDecrypted(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received);
 	if (bytes_received < 1) {
 		ERR_print_errors_fp(stdout);
 		Unimplemented();
@@ -186,8 +319,9 @@ int main() {
 
 	buffer[bytes_received] = 0;
 
+	NetCloseConnection(&net);
 
-	WSACleanup();
+	NetShutdown();
 
 	return 0;
 }
