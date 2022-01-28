@@ -55,7 +55,7 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 	memcpy(cport, port.data, port.length);
 	cport[port.length] = 0;
 
-	net->info.port = atoi(cport);
+	net->info.port = htons((uint16_t)atoi(cport));
 
     addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
