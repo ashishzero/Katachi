@@ -4,16 +4,40 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#ifdef PLATFORM_LINUX
+#if PLATFORM_WINDOWS
+#include <Winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Crypt32.lib")
+
+#pragma comment(lib, "openssl/libcrypto_static.lib")
+#pragma comment(lib, "openssl/libssl_static.lib")
+#endif
+
+#if PLATFORM_LINUX
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+
+#define closesocket close
+#define SOCKET int
+#define INVALID_SOCKET -1
 #endif
 
 static SSL_CTX *DefaultClientContext;
 
 Net_Result NetInit() {
+#if PLATFORM_WINDOWS
+	WSADATA wsaData;
+	int error = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+	if (error != 0) {
+		Unimplemented();
+		return Net_Error;
+	}
+#endif
+
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
 
@@ -26,18 +50,50 @@ Net_Result NetInit() {
 
 	SSL_CTX_set_verify(DefaultClientContext, SSL_VERIFY_PEER, nullptr);
 
+#if PLATFORM_WINDOWS
+	X509_STORE *store = SSL_CTX_get_cert_store(DefaultClientContext);
+	if (!store) {
+		Unimplemented();
+		return Net_Error;
+	}
+
+	HCERTSTORE cert_store = CertOpenSystemStoreW(0, L"ROOT");
+	if (!cert_store) {
+		Unimplemented();
+		return Net_Error;
+	}
+	Defer{ CertCloseStore(cert_store, 0); };
+
+	PCCERT_CONTEXT cert_context = nullptr;
+	while (cert_context = CertEnumCertificatesInStore(cert_store, cert_context)) {
+		X509 *x509 = d2i_X509(nullptr, (const unsigned char **)&cert_context->pbCertEncoded, cert_context->cbCertEncoded);
+
+		if (x509) {
+			int i = X509_STORE_add_cert(store, x509);
+			X509_free(x509);
+		}
+	}
+	CertFreeCertificateContext(cert_context);
+#endif
+
+#if PLATFORM_LINUX
 	long res = SSL_CTX_set_default_verify_paths(DefaultClientContext);
 
 	if (res != 1) {
 		Unimplemented();
 		return Net_Error;
 	}
+#endif
 
 	return Net_Ok;
 }
 
 void NetShutdown() {
 	SSL_CTX_free(DefaultClientContext);
+
+#if PLATFORM_WINDOWS
+	WSACleanup();
+#endif
 }
 
 //
@@ -69,7 +125,7 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 		return Net_Error;
 	}
 
-	int socket_handle = -1;
+	SOCKET socket_handle = INVALID_SOCKET;
 
 	for (auto ptr = address; ptr; ptr = ptr->ai_next) {
 		socket_handle = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
@@ -82,8 +138,8 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 
 		error = connect(socket_handle, ptr->ai_addr, (int)ptr->ai_addrlen);
 		if (error) {
-			close(socket_handle);
-			socket_handle = -1;
+			closesocket(socket_handle);
+			socket_handle = INVALID_SOCKET;
 			continue;
 		}
 
@@ -92,7 +148,7 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 
 	freeaddrinfo(address);
 
-	if (socket_handle == -1) {
+	if (socket_handle == INVALID_SOCKET) {
 		Unimplemented();
 		return Net_Error;
 	}
@@ -146,15 +202,15 @@ void NetCloseConnection(Net_Socket *net) {
 		SSL_shutdown(ssl);
 		SSL_free(ssl);
 	}
-	close((int)net->descriptor);
+	closesocket((SOCKET)net->descriptor);
 }
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
-	return send((int)net->descriptor, (char *)buffer, length, 0);
+	return send((SOCKET)net->descriptor, (char *)buffer, length, 0);
 }
 
 int NetRead(Net_Socket *net, void *buffer, int length) {
-	return recv((int)net->descriptor, (char *)buffer, length, 0);
+	return recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
 }
 
 int NetWriteSecured(Net_Socket *net, void *buffer, int length) {
