@@ -1,6 +1,7 @@
 #include "Basic.h"
 #include "StringBuilder.h"
 #include "Network.h"
+#include "Discord.h"
 
 #include <stdio.h>
 
