@@ -117,7 +117,7 @@ namespace Discord {
 	// Users Resource
 	//
 
-	enum class Premium {
+	enum class PremiumType {
 		NONE = 0,
 		NITRO_CLASSIC = 1,
 		NITRO = 2
@@ -170,9 +170,9 @@ namespace Discord {
 		String locale;
 		bool verified;
 		String email;
-		int32_t flags;
-		int32_t premium_type;
-		int32_t public_flags;
+		UserFlag flags;
+		PremiumType premium_type;
+		UserFlag public_flags;
 	};
 
 	//
@@ -200,8 +200,8 @@ namespace Discord {
 		String description;
 		String tags;
 		String asset;
-		int32_t type;
-		int32_t format_type;
+		StickerType type;
+		StickerFormatType format_type;
 		bool available;
 		Snowflake guild_id;
 		User *user;
@@ -231,7 +231,7 @@ namespace Discord {
 		Snowflake guild_id;
 		Snowflake channel_id;
 		String topic;
-		int32_t privacy_level;
+		PrivacyLevel privacy_level;
 		bool discoverable_disabled;
 	};
 
@@ -369,7 +369,7 @@ namespace Discord {
 
 	struct Channel {
 		Snowflake id;
-		int32_t type;
+		ChannelType type;
 		Snowflake guild_id;
 		int32_t position;
 		Array<Overwrite> permission_overwrites;
@@ -464,7 +464,7 @@ namespace Discord {
 		ActivityAssets *assets;
 		ActivitySecrets *secrets;
 		bool instance;
-		uint32_t flags;
+		ActivityFlag flags;
 		Array<ActivityButton> buttons;
 	};
 
@@ -476,7 +476,7 @@ namespace Discord {
 		ALL_MESSAGES = 0, ONLY_MENTIONS = 1
 	};
 
-	enum class ExplicitContentFilerLevel {
+	enum class ExplicitContentFilterLevel {
 		DISABLED = 0, MEMBERS_WITHOUT_ROLES = 1, ALL_MEMBERS = 2
 	};
 
@@ -623,16 +623,16 @@ namespace Discord {
 		int32_t afk_timeout;
 		bool widget_enabled;
 		Snowflake widget_channel_id;
-		int32_t verification_level;
+		VerificationLevel verification_level;
 		int32_t default_message_notifications;
-		int32_t explicit_content_filter;
+		ExplicitContentFilterLevel explicit_content_filter;
 		Array<Role> roles;
 		Array<Emoji> emojis;
 		Array<GuildFeature> features;
-		int32_t mfa_level;
+		MFALevel mfa_level;
 		Snowflake application_id;
 		Snowflake system_channel_id;
-		int32_t system_channel_flags;
+		SystemChannelFlag system_channel_flags;
 		Snowflake rules_channel_id;
 		uint64_t joined_at;
 		bool large;
@@ -648,7 +648,7 @@ namespace Discord {
 		String vanity_url_code;
 		String description;
 		String banner;
-		int32_t premium_tier;
+		PremiumTier premium_tier;
 		int32_t premium_subscription_count;
 		String preferred_locale;
 		Snowflake public_updates_channel_id;
@@ -656,7 +656,7 @@ namespace Discord {
 		int32_t approximate_member_count;
 		int32_t approximate_presence_count;
 		WelcomeScreen *welcome_screen;
-		int32_t nsfw_level;
+		GuildNSFWLevel nsfw_level;
 		Array<StageInstance> stage_instances;
 		Array<Sticker> stickers;
 		Array<GuildScheduledEvent> guild_scheduled_events;
@@ -785,7 +785,7 @@ namespace Discord {
 	};
 
 	struct MessageActivity {
-		int32_t type;
+		MessageActivityType type;
 		String party_id;
 	};
 
@@ -807,12 +807,9 @@ namespace Discord {
 		Emoji emoji;
 	};
 
-	#define EMBED_TYPE_RICH 		"rich"
-	#define EMBED_TYPE_IMAGE 		"image"
-	#define EMBED_TYPE_VIDEO 		"video"
-	#define EMBED_TYPE_GIFV 		"gifv"
-	#define EMBED_TYPE_ARTICLE 		"article"
-	#define EMBED_TYPE_LINK 		"link"
+	enum class EmbedType {
+		RICH, IMAGE, VIDEO, GIFV, ARTICLE, LINK
+	};
 
 	struct EmbedThumbnail {
 		String url;
@@ -891,16 +888,16 @@ namespace Discord {
 	struct ChannelMention {
 		Snowflake id;
 		Snowflake guild_id;
-		int32_t type;
+		ChannelType type;
 		String name;
 	};
 
-	const String AllowedMentionRole = "roles";
-	const String AllowedMentionUser = "users";
-	const String AllowedMentionEveryone = "everyone";
+	enum class AllowedMentionType {
+		ROLE, USER, EVERYONE
+	};
 
 	struct AllowedMention {
-		Array<String> parse;
+		Array<AllowedMentionType> parse;
 		Array<Snowflake> roles;
 		Array<Snowflake> users;
 		bool replied_user;
@@ -935,12 +932,12 @@ namespace Discord {
 		String nonce;
 		bool pinned;
 		Snowflake webhook_id;
-		int32_t type;
+		MessageType type;
 		MessageActivity *activity;
 		struct Application *application;
 		Snowflake application_id;
 		MessageReference *message_reference;
-		int32_t flags;
+		MessageFlag flags;
 		struct Message *referenced_message;
 		struct MessageInteraction *interaction;
 		Channel *thread;
@@ -1184,7 +1181,7 @@ namespace Discord {
 		Guild guild;
 		Channel channel;
 		User inviter;
-		int32_t target_type;
+		InviteTargetType target_type;
 		User *target_user;
 		Application *target_application;
 		int32_t approximate_presence_count;
@@ -1331,7 +1328,7 @@ namespace Discord {
 		int32_t entity_type;
 		int32_t expire_behavior;
 		int32_t expire_grace_period;
-		int32_t explicit_content_filter;
+		ExplicitContentFilterLevel explicit_content_filter;
 		StickerFormatType format_type;
 		Snowflake guild_id;
 		bool hoist;
@@ -1344,7 +1341,7 @@ namespace Discord {
 		int32_t max_age;
 		int32_t max_uses;
 		bool mentionable;
-		int32_t mfa_level;
+		MFALevel mfa_level;
 		bool mute;
 		String name;
 		String nick;
@@ -1371,7 +1368,7 @@ namespace Discord {
 		int32_t user_limit;
 		int32_t uses;
 		String vanity_url_code;
-		int32_t verification_level;
+		VerificationLevel verification_level;
 		Snowflake widget_channel_id;
 		bool widget_enabled;
 		Array<Role> add;
@@ -1733,7 +1730,7 @@ namespace Discord {
 		User *inviter;
 		int32_t max_age;
 		int32_t max_uses;
-		int32_t target_type;
+		InviteTargetType target_type;
 		User *target_user;
 		Application *target_application;
 		bool temporary;
