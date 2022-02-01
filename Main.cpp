@@ -150,7 +150,12 @@ constexpr uint32_t JSON_INDEX_PER_BUCKET = 16;
 constexpr uint32_t JSON_INDEX_MASK = JSON_INDEX_PER_BUCKET - 1;
 constexpr uint32_t JSON_INDEX_SHIFT = 4;
 
-struct Json {
+struct Json_Pair {
+	String *key;
+	Json_Object *value;
+};
+
+struct Json {	
 	struct Index_Bucket {
 		uint32_t hashes[JSON_INDEX_PER_BUCKET] = {};
 		uint32_t indices[JSON_INDEX_PER_BUCKET] = {};
@@ -170,6 +175,23 @@ struct Json {
 	Json() = default;
 	Json(Memory_Allocator alloc): keys(alloc), values(alloc), allocator(alloc){}
 };
+
+//
+//
+//
+
+Json_Pair IterBegin(Json *json) {
+	return Json_Pair { json->keys.data, json->values.data };
+}
+
+void IterNext(Json_Pair *iter) {
+	iter->key += 1;
+	iter->value += 1;
+}
+
+bool IterEnd(Json *json, Json_Pair iter) {
+	return iter.key->data < (json->keys.data + json->keys.count)->data;
+}
 
 static inline uint32_t Murmur32Scramble(uint32_t k) {
     k *= 0xcc9e2d51;
@@ -301,9 +323,14 @@ int main(int argc, char **argv) {
 		JsonPut(&json, "title", "Yahallo!");
 		JsonPut(&json, "description", "This message is generated from Katachi bot");
 
-		printf("%s = %s\n", "tts", JsonGet(&json, "tts")->value.string.data);
-		printf("%s = %s\n", "title", JsonGet(&json, "title")->value.string.data);
-		printf("%s = %s\n", "description", JsonGet(&json, "description")->value.string.data);
+		ForEach (json) {
+			printf("%s : ", it.key->data);
+			printf("%s\n", JsonGet(&json, *it.key)->value.string.data);
+		}
+
+		//printf("%s = %s\n", "tts", JsonGet(&json, "tts")->value.string.data);
+		//printf("%s = %s\n", "title", JsonGet(&json, "title")->value.string.data);
+		//printf("%s = %s\n", "description", JsonGet(&json, "description")->value.string.data);
 	}
 
 	String_Builder content_builder;

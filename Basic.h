@@ -3,6 +3,9 @@
 
 #include <string.h>
 
+#define ForEach(c) for (auto it = IterBegin(&(c)); IterEnd(&(c), it); IterNext(&it)) 
+#define ForEachTag(name, c) for (auto name = IterBegin(&(c)); IterEnd(&(c), name); IterNext(&name)) 
+
 template <typename T> struct Array_View
 {
     int64_t count;
