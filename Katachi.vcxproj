@@ -158,6 +158,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common.h" />
+    <ClInclude Include="Discord.h" />
     <ClInclude Include="Network.h" />
     <ClInclude Include="StringBuilder.h" />
   </ItemGroup>
