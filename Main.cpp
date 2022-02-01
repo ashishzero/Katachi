@@ -233,7 +233,7 @@ uint32_t JsonGetHashValue(String key) {
 	return hash ? hash : 1;
 }
 
-void JsonPut(Json *json, String key, Json_Object value) {
+void JsonPutObject(Json *json, String key, Json_Object value) {
 	uint32_t hash = JsonGetHashValue(key);
 
 	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
@@ -267,12 +267,43 @@ void JsonPut(Json *json, String key, Json_Object value) {
 	}
 }
 
+template <int64_t _Length>
+void JsonPut(Json *json, String key, const char(&a)[_Length]) {
+	Json_Object object;
+	object.type = Json_Type::STRING;
+	object.value.string.length = _Length;
+	object.value.string.data = (uint8_t *)a;
+	JsonPutObject(json, key, object);
+}
+
+void JsonPut(Json *json, String key, const char *value) {
+	Json_Object object;
+	object.type = Json_Type::STRING;
+	object.value.string.length = strlen(value);
+	object.value.string.data = (uint8_t *)value;
+	JsonPutObject(json, key, object);
+}
+
 void JsonPut(Json *json, String key, String value) {
 	Json_Object object;
 	object.type = Json_Type::STRING;
 	object.value.string.length = value.length;
 	object.value.string.data = value.data;
-	JsonPut(json, key, object);
+	JsonPutObject(json, key, object);
+}
+
+void JsonPut(Json *json, String key, int64_t value) {
+	Json_Object object;
+	object.type = Json_Type::NUMBER;
+	object.value.number = value;
+	JsonPutObject(json, key, object);
+}
+
+void JsonPut(Json *json, String key, bool value) {
+	Json_Object object;
+	object.type = Json_Type::BOOL;
+	object.value.boolean = value;
+	JsonPutObject(json, key, object);
 }
 
 Json_Object *JsonGet(Json *json, String key) {
@@ -319,13 +350,25 @@ int main(int argc, char **argv) {
 	{
 		Json json;
 
-		JsonPut(&json, "tts", "false");
-		JsonPut(&json, "title", "Yahallo!");
+		const char *msg = "Yahallo!";
+
+		JsonPut(&json, "tts", false);
+		JsonPut(&json, "title", msg);
 		JsonPut(&json, "description", "This message is generated from Katachi bot");
 
 		ForEach (json) {
 			printf("%s : ", it.key->data);
-			printf("%s\n", JsonGet(&json, *it.key)->value.string.data);
+
+			if (it.value->type == Json_Type::BOOL)
+				printf("%s", it.value->value.boolean ? "true" : "false");
+			else if (it.value->type == Json_Type::NUMBER)
+				printf("%zd", it.value->value.number);
+			else if (it.value->type == Json_Type::STRING)
+				printf("%.*s", (int)it.value->value.string.length, it.value->value.string.data);
+			else
+				Unimplemented();
+			
+			printf("\n");
 		}
 
 		//printf("%s = %s\n", "tts", JsonGet(&json, "tts")->value.string.data);
