@@ -14,7 +14,7 @@ struct Json_Builder {
 	uint64_t depth;
 };
 
-int JsonNextElement(Json_Builder *json) {
+int JsonWriteNextElement(Json_Builder *json) {
 	int written = 0;
 	if (json->depth & 0x1) {
 		written = Write(json->builder, ",");
@@ -24,33 +24,33 @@ int JsonNextElement(Json_Builder *json) {
 	return written;
 }
 
-int JsonBeginObject(Json_Builder *json) {
+int JsonWriteBeginObject(Json_Builder *json) {
 	//Assert(json->depth & 0x8000000000000000 == 0);
-	int written = JsonNextElement(json);
+	int written = JsonWriteNextElement(json);
 	json->depth = json->depth << 1;
 	return written + Write(json->builder, "{");
 }
 
-int JsonEndObject(Json_Builder *json) {
+int JsonWriteEndObject(Json_Builder *json) {
 	json->depth = json->depth >> 1;
 	return Write(json->builder, "}");
 }
 
-int JsonBeginArray(Json_Builder *json) {
+int JsonWriteBeginArray(Json_Builder *json) {
 	//Assert(json->depth & 0x8000000000000000 == 0);
-	int written = JsonNextElement(json);
+	int written = JsonWriteNextElement(json);
 	json->depth = json->depth << 1;
 	return written + Write(json->builder, "[");
 }
 
-int JsonEndArray(Json_Builder *json) {
+int JsonWriteEndArray(Json_Builder *json) {
 	json->depth = json->depth >> 1;
 	return Write(json->builder, "]");
 }
 
-int JsonKey(Json_Builder *json, String key) {
+int JsonWriteKey(Json_Builder *json, String key) {
 	int written = 0;
-	written += JsonNextElement(json);
+	written += JsonWriteNextElement(json);
 	written += Write(json->builder, '"');
 	written += Write(json->builder, key);
 	written += Write(json->builder, '"');
@@ -60,67 +60,219 @@ int JsonKey(Json_Builder *json, String key) {
 }
 
 template <typename Type>
-int JsonKeyValue(Json_Builder *json, String key, Type value) {
+int JsonWriteKeyValue(Json_Builder *json, String key, Type value) {
 	int written = 0;
-	written += JsonKey(json, key);
+	written += JsonWriteKey(json, key);
 	written += WriteFormatted(json->builder, "\"%\"", value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonKeyValue(Json_Builder *json, String key, bool value) {
+int JsonWriteKeyValue(Json_Builder *json, String key, bool value) {
 	int written = 0;
-	written += JsonKey(json, key);
+	written += JsonWriteKey(json, key);
 	written += Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonKeyValue(Json_Builder *json, String key, int64_t value) {
+int JsonWriteKeyValue(Json_Builder *json, String key, int64_t value) {
 	int written = 0;
-	written += JsonKey(json, key);
+	written += JsonWriteKey(json, key);
 	written += Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonKeyValue(Json_Builder *json, String key, uint64_t value) {
+int JsonWriteKeyValue(Json_Builder *json, String key, uint64_t value) {
 	int written = 0;
-	written += JsonKey(json, key);
+	written += JsonWriteKey(json, key);
 	written += Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <typename Type>
-int JsonValue(Json_Builder *json, Type value) {
+int JsonWriteValue(Json_Builder *json, Type value) {
 	int written = WriteFormatted(json->builder, "\"%\"", value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonValue(Json_Builder *json, bool value) {
+int JsonWriteValue(Json_Builder *json, bool value) {
 	int written = Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonValue(Json_Builder *json, int64_t value) {
+int JsonWriteValue(Json_Builder *json, int64_t value) {
 	int written = Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
 template <>
-int JsonValue(Json_Builder *json, uint64_t value) {
+int JsonWriteValue(Json_Builder *json, uint64_t value) {
 	int written = Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
+}
+
+//
+//
+//
+
+enum class Json_Type {
+	BOOL, NUMBER, STRING
+};
+
+union Json_Value {
+	bool boolean;
+	int64_t number;
+	struct {
+		int64_t length;
+		uint8_t *data;
+	} string;
+};
+
+struct Json_Object {	
+	Json_Type type;
+	Json_Value value;
+};
+
+constexpr uint32_t JSON_INDEX_BUCKET_COUNT = 64;
+constexpr uint32_t JSON_INDEX_PER_BUCKET = 16;
+constexpr uint32_t JSON_INDEX_MASK = JSON_INDEX_PER_BUCKET - 1;
+constexpr uint32_t JSON_INDEX_SHIFT = 4;
+
+struct Json {
+	struct Index_Bucket {
+		uint32_t hashes[JSON_INDEX_PER_BUCKET] = {};
+		uint32_t indices[JSON_INDEX_PER_BUCKET] = {};
+		Index_Bucket *next = nullptr;
+	};
+
+	struct Index_Table {
+		Index_Bucket buckets[JSON_INDEX_BUCKET_COUNT];
+	};
+
+	Index_Table index;
+	Array<String> keys;
+	Array<Json_Object> values;
+
+	Memory_Allocator allocator = ThreadContext.allocator;
+
+	Json() = default;
+	Json(Memory_Allocator alloc): keys(alloc), values(alloc), allocator(alloc){}
+};
+
+static inline uint32_t Murmur32Scramble(uint32_t k) {
+    k *= 0xcc9e2d51;
+    k = (k << 15) | (k >> 17);
+    k *= 0x1b873593;
+    return k;
+}
+
+static uint32_t Murmur3Hash32(const uint8_t* key, size_t len, uint32_t seed) {
+	uint32_t h = seed;
+    uint32_t k;
+    
+	for (size_t i = len >> 2; i; i--) {
+        memcpy(&k, key, sizeof(uint32_t));
+        key += sizeof(uint32_t);
+        h ^= Murmur32Scramble(k);
+        h = (h << 13) | (h >> 19);
+        h = h * 5 + 0xe6546b64;
+    }
+    
+	k = 0;
+    for (size_t i = len & 3; i; i--) {
+        k <<= 8;
+        k |= key[i - 1];
+    }
+    h ^= Murmur32Scramble(k);
+
+	h ^= len;
+	h ^= h >> 16;
+	h *= 0x85ebca6b;
+	h ^= h >> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >> 16;
+	return h;
+}
+
+uint32_t JsonGetHashValue(String key) {
+	uint32_t hash = Murmur3Hash32(key.data, key.length, 0x42690042);
+	return hash ? hash : 1;
+}
+
+void JsonPut(Json *json, String key, Json_Object value) {
+	uint32_t hash = JsonGetHashValue(key);
+
+	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
+	uint32_t bucket_index = pos >> JSON_INDEX_SHIFT;
+
+	for (auto bucket = &json->index.buckets[bucket_index]; bucket; bucket = bucket->next) {
+		uint32_t count = 0;
+		for (uint32_t index = pos & JSON_INDEX_MASK; count < JSON_INDEX_PER_BUCKET; index = (index + 1) & JSON_INDEX_MASK) {
+			uint32_t current_hash = bucket->hashes[index];
+
+			if (current_hash == hash) {
+				uint32_t offset = bucket->indices[index];
+				//MemoryFree(json->values[offset].value.data, json->allocator);
+				json->values[offset] = value;	
+				return;
+			} else if (current_hash == 0) {
+				uint32_t offset = (uint32_t)json->values.count;
+				bucket->indices[index] = offset;
+				bucket->hashes[index] = hash;
+				json->keys.Add(key);
+				json->values.Add(Json_Object{value});
+				return;
+			}
+
+			count += 1;
+		}
+
+		if (bucket->next == nullptr) {
+			bucket->next = new(json->allocator) Json::Index_Bucket;
+		}
+	}
+}
+
+void JsonPut(Json *json, String key, String value) {
+	Json_Object object;
+	object.type = Json_Type::STRING;
+	object.value.string.length = value.length;
+	object.value.string.data = value.data;
+	JsonPut(json, key, object);
+}
+
+Json_Object *JsonGet(Json *json, String key) {
+	uint32_t hash = JsonGetHashValue(key);
+	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
+	uint32_t bucket_index = pos >> JSON_INDEX_SHIFT;
+
+	for (auto bucket = &json->index.buckets[bucket_index]; bucket; bucket = bucket->next) {
+		uint32_t count = 0;
+		for (uint32_t index = pos & JSON_INDEX_MASK; count < JSON_INDEX_PER_BUCKET; index = (index + 1) & JSON_INDEX_MASK) {
+			uint32_t current_hash = bucket->hashes[index];
+
+			if (current_hash == hash) {
+				uint32_t offset = bucket->indices[index];
+				return &json->values[offset];
+			}
+
+			count += 1;
+		}
+	}
+
+	return nullptr;
 }
 
 int main(int argc, char **argv) {
@@ -142,22 +294,34 @@ int main(int argc, char **argv) {
 
 	const char *token = argv[1];
 
+	{
+		Json json;
+
+		JsonPut(&json, "tts", "false");
+		JsonPut(&json, "title", "Yahallo!");
+		JsonPut(&json, "description", "This message is generated from Katachi bot");
+
+		printf("%s = %s\n", "tts", JsonGet(&json, "tts")->value.string.data);
+		printf("%s = %s\n", "title", JsonGet(&json, "title")->value.string.data);
+		printf("%s = %s\n", "description", JsonGet(&json, "description")->value.string.data);
+	}
+
 	String_Builder content_builder;
 	Json_Builder json = { &content_builder, 0 };
 
-	JsonBeginObject(&json);
-	JsonKeyValue(&json, "tts", false);
-	JsonKey(&json, "embeds");
+	JsonWriteBeginObject(&json);
+	JsonWriteKeyValue(&json, "tts", false);
+	JsonWriteKey(&json, "embeds");
 
-	JsonBeginArray(&json);
+	JsonWriteBeginArray(&json);
 
-	JsonBeginObject(&json);
-	JsonKeyValue(&json, "title", "Yahallo!");
-	JsonKeyValue(&json, "description", "This message is generated from Katachi bot (programming in C)");
-	JsonEndObject(&json);
+	JsonWriteBeginObject(&json);
+	JsonWriteKeyValue(&json, "title", "Yahallo!");
+	JsonWriteKeyValue(&json, "description", "This message is generated from Katachi bot (programming in C)");
+	JsonWriteEndObject(&json);
 
-	JsonEndArray(&json);
-	JsonEndObject(&json);
+	JsonWriteEndArray(&json);
+	JsonWriteEndObject(&json);
 
 
 	String_Builder builder;
