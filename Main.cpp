@@ -8,6 +8,70 @@
 // https://discord.com/developers/docs/topics/rate-limits#rate-limits
 //
 
+struct Json_Builder {
+	String_Builder *builder;
+	uint64_t depth;
+};
+
+int JsonNextElement(Json_Builder *json) {
+	int written = 0;
+	if (json->depth & 0x1) {
+		written = Write(json->builder, ",");
+		json->depth |= 0x1;
+	}
+	return written;
+}
+
+int JsonBeginObject(Json_Builder *json) {
+	Assert(json->depth & 0x8000000000000000 == 0);
+	int written = JsonNextElement(json);
+	json->depth = json->depth << 1;
+	return written + Write(json->builder, "{");
+}
+
+int JsonEndObject(Json_Builder *json) {
+	json->depth = json->depth >> 1;
+	return Write(json->builder, "}");
+}
+
+int JsonBeginArray(Json_Builder *json) {
+	Assert(json->depth & 0x8000000000000000 == 0);
+	int written = JsonNextElement(json);
+	json->depth = json->depth << 1;
+	return written + Write(json->builder, "[");
+}
+
+int JsonEndArray(Json_Builder *json) {
+	json->depth = json->depth >> 1;
+	return Write(json->builder, "]");
+}
+
+template <typename ...Args>
+int JsonKeyValue(Json_Builder *json, String key, const char *format, Args... args) {
+	int written = 0;
+	written += JsonNextElement(json);
+	written += Write(json->builder, key);
+	written += WriteFormatted(json->builder, format, args...);
+	return written;
+}
+
+int JsonKey(Json_Builder *json, String key) {
+	int written = JsonNextElement(json);
+	return written += Write(json->builder, key);
+}
+
+int JsonValue(String_Builder *builder, String value) {
+	return WriteFormatted(builder, "\"%\"", value);
+}
+
+int JsonValue(String_Builder *builder, int64_t value) {
+	return WriteFormatted(builder, "\"%\"", value);
+}
+
+int JsonValue(String_Builder *builder, uint64_t value) {
+	return WriteFormatted(builder, "\"%\"", value);
+}
+
 int main(int argc, char **argv) {
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
