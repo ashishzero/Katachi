@@ -128,7 +128,7 @@ int JsonWriteValue(Json_Builder *json, uint64_t value) {
 //
 
 enum class Json_Type {
-	BOOL, NUMBER, STRING
+	BOOL, NUMBER, STRING, ARRAY, OBJECT
 };
 
 union Json_Value {
@@ -138,6 +138,11 @@ union Json_Value {
 		int64_t length;
 		uint8_t *data;
 	} string;
+	struct {
+		Json_Type type;
+		Json_Value *data;
+	} array;
+	struct Json_Object *object;
 };
 
 struct Json_Object {	
