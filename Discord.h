@@ -41,7 +41,7 @@ namespace Discord {
 		MANAGE_ROLES = 1 << 28,
 		MANAGE_WEBHOOKS = 1 << 29,
 		MANAGE_EMOJIS_AND_STICKERS = 1 << 30,
-		USE_APPLICATION_COMMANDS = 1 << 31,
+		USE_APPLICATION_COMMANDS = (uint64_t)1 << 31,
 		REQUEST_TO_SPEAK = (uint64_t)1 << 32,
 		MANAGE_EVENTS = (uint64_t)1 << 33,
 		MANAGE_THREADS = (uint64_t)1 << 34,

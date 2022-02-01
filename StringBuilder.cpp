@@ -52,6 +52,10 @@ int WriteBuffer(String_Builder *builder, void *buffer, int64_t size) {
 	return written;
 }
 
+int Write(String_Builder *builder, bool value) {
+	return Write(builder, value ? String("true") : String("false"));
+}
+
 int Write(String_Builder *builder, char value) {
 	return WriteBuffer(builder, &value, 1);
 }
@@ -75,6 +79,12 @@ int Write(String_Builder *builder, uint32_t value) {
 int Write(String_Builder *builder, int64_t value) {
 	char buffer[128];
 	int written = snprintf(buffer, sizeof(buffer), "%zd", value);
+	return WriteBuffer(builder, &buffer, written);
+}
+
+int Write(String_Builder *builder, FormatHex value) {
+	char buffer[128];
+	int written = snprintf(buffer, sizeof(buffer), "%zx", value.value);
 	return WriteBuffer(builder, &buffer, written);
 }
 
