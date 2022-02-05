@@ -322,6 +322,9 @@ Memory_Arena *ThreadScratchpadI(uint32_t i);
 Memory_Arena *ThreadUnusedScratchpad(Memory_Arena *arenas, uint32_t count);
 void ResetThreadScratchpad();
 
+Memory_Allocator MemoryArenaAllocator(Memory_Arena *arena);
+Memory_Allocator NullMemoryAllocator();
+
 //
 //
 //

@@ -41,5 +41,8 @@
     <ClInclude Include="Discord.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Basic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

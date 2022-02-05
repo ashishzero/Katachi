@@ -116,11 +116,60 @@ void ResetThreadScratchpad() {
 	}
 }
 
+static void *MemoryArenaAllocatorAllocate(size_t size, void *context) {
+	Memory_Arena *arena = (Memory_Arena *)context;
+	return PushSizeAligned(arena, size, sizeof(size_t));
+}
+
+static void *MemoryArenaAllocatorReallocate(void *ptr, size_t previous_size, size_t new_size, void *context) {
+	Memory_Arena *arena = (Memory_Arena *)context;
+
+	if (previous_size > new_size)
+		return ptr;
+
+	if (arena->memory + arena->current_pos == ((uint8_t *)ptr + previous_size)) {
+		PushSize(arena, new_size - previous_size);
+		return ptr;
+	}
+
+	void *new_ptr = PushSizeAligned(arena, new_size, sizeof(size_t));
+	memmove(ptr, new_ptr, previous_size);
+	return new_ptr;
+}
+
+static void MemoryArenaAllocatorFree(void *ptr, void *context) {}
+
+Memory_Allocator MemoryArenaAllocator(Memory_Arena *arena) {
+	Memory_Allocator allocator;
+	allocator.allocate = MemoryArenaAllocatorAllocate;
+	allocator.reallocate = MemoryArenaAllocatorReallocate;
+	allocator.free = MemoryArenaAllocatorFree;
+	allocator.context = arena;
+	return allocator;
+}
+
+static void *NullMemoryAllocate(size_t size, void *ptr) { return nullptr; }
+static void *NullMemoryReallocate(void *ptr, size_t prev_size, size_t size, void *ctx) { return nullptr; }
+static void NullMemoryFree(void *ptr, void *context) {}
+
+Memory_Allocator NullMemoryAllocator() {
+	Memory_Allocator allocator;
+	allocator.allocate = NullMemoryAllocate;
+	allocator.reallocate = NullMemoryReallocate;
+	allocator.free = NullMemoryFree;
+	allocator.context = NULL;
+	return allocator;
+}
+
 static void *DefaultMemoryAllocateProc(size_t size, void *context);
 static void *DefaultMemoryReallocateProc(void *ptr, size_t previous_size, size_t new_size, void *context);
 static void DefaultMemoryFreeProc(void *ptr, void *context);
 
+static void InitOSContent();
+
 void InitThreadContext(uint32_t scratchpad_size, Thread_Context_Params *params) {
+	InitOSContent();
+
 	if (scratchpad_size) {
 		for (auto &thread_arena : ThreadContext.scratchpad.arena) {
 			thread_arena = MemoryArenaCreate(scratchpad_size);
@@ -198,6 +247,10 @@ void operator delete[](void *ptr) noexcept {
 #define MICROSOFT_WINDOWS_WINBASE_H_DEFINE_INTERLOCKED_CPLUSPLUS_OVERLOADS 0
 #include <Windows.h>
 
+static void InitOSContent() {
+	SetConsoleCP(CP_UTF8);
+}
+
 static void *DefaultMemoryAllocateProc(size_t size, void *context) {
 	HANDLE heap = GetProcessHeap();
 	return HeapAlloc(heap, 0, size);
@@ -238,6 +291,8 @@ bool VirtualMemoryFree(void *ptr, size_t size) {
 #if PLATFORM_LINUX == 1
 #include <sys/mman.h>
 #include <stdlib.h>
+
+static void InitOSContent() {}
 
 static void *DefaultMemoryAllocateProc(size_t size, void *context) {
 	return malloc(size);

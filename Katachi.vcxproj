@@ -157,6 +157,7 @@
     <ClCompile Include="StringBuilder.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Basic.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="Discord.h" />
     <ClInclude Include="Network.h" />

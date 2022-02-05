@@ -1,4 +1,4 @@
-#include "Basic.h"
+ï»¿#include "Basic.h"
 #include "StringBuilder.h"
 #include "Network.h"
 #include "Discord.h"
@@ -14,6 +14,13 @@ struct Json_Builder {
 	String_Builder *builder;
 	uint64_t depth;
 };
+
+Json_Builder JsonBuilderCreate(String_Builder *builder) {
+	Json_Builder json;
+	json.builder = builder;
+	json.depth = 0;
+	return json;
+}
 
 int JsonWriteNextElement(Json_Builder *json) {
 	int written = 0;
@@ -128,25 +135,26 @@ int JsonWriteValue(Json_Builder *json, uint64_t value) {
 //
 //
 
-enum class Json_Type {
-	BOOL, NUMBER, STRING, ARRAY, OBJECT
+enum Json_Type {
+	JSON_TYPE_NULL,
+	JSON_TYPE_BOOL, 
+	JSON_TYPE_NUMBER, 
+	JSON_TYPE_STRING,
+	JSON_TYPE_ARRAY,
+	JSON_TYPE_OBJECT
 };
 
 union Json_Value {
 	bool boolean;
-	int64_t number;
-	struct {
-		int64_t length;
-		uint8_t *data;
-	} string;
-	struct {
-		Json_Type type;
-		Json_Value *data;
-	} array;
-	struct Json_Object *object;
+	double number;
+	String string;
+	Array_View<struct Json_Item> array;
+	struct Json *object;
+
+	Json_Value() {}
 };
 
-struct Json_Object {	
+struct Json_Item {	
 	Json_Type type;
 	Json_Value value;
 };
@@ -158,10 +166,10 @@ constexpr uint32_t JSON_INDEX_SHIFT = 3;
 
 struct Json_Pair {
 	String *key;
-	Json_Object *value;
+	Json_Item *value;
 };
 
-struct Json {	
+struct Json {
 	struct Index_Bucket {
 		uint32_t hashes[JSON_INDEX_PER_BUCKET] = {};
 		uint32_t indices[JSON_INDEX_PER_BUCKET] = {};
@@ -174,7 +182,7 @@ struct Json {
 
 	Index_Table index;
 	Array<String> keys;
-	Array<Json_Object> values;
+	Array<Json_Item> values;
 
 	Memory_Allocator allocator = ThreadContext.allocator;
 
@@ -196,7 +204,7 @@ void IterNext(Json_Pair *iter) {
 }
 
 bool IterEnd(Json *json, Json_Pair iter) {
-	return iter.key->data < (json->keys.data + json->keys.count)->data;
+	return iter.key <= json->keys.LastElement();
 }
 
 static inline uint32_t Murmur32Scramble(uint32_t k) {
@@ -239,7 +247,7 @@ uint32_t JsonGetHashValue(String key) {
 	return hash ? hash : 1;
 }
 
-void JsonPutObject(Json *json, String key, Json_Object value) {
+void JsonPutItem(Json *json, String key, Json_Item value) {
 	uint32_t hash = JsonGetHashValue(key);
 
 	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
@@ -260,7 +268,7 @@ void JsonPutObject(Json *json, String key, Json_Object value) {
 				bucket->indices[index] = offset;
 				bucket->hashes[index] = hash;
 				json->keys.Add(key);
-				json->values.Add(Json_Object{value});
+				json->values.Add(Json_Item{value});
 				return;
 			}
 
@@ -275,44 +283,44 @@ void JsonPutObject(Json *json, String key, Json_Object value) {
 
 template <int64_t _Length>
 void JsonPut(Json *json, String key, const char(&a)[_Length]) {
-	Json_Object object;
-	object.type = Json_Type::STRING;
-	object.value.string.length = _Length;
-	object.value.string.data = (uint8_t *)a;
-	JsonPutObject(json, key, object);
+	Json_Item item;
+	item.type = Json_Type::STRING;
+	item.value.string.length = _Length;
+	item.value.string.data = (uint8_t *)a;
+	JsonPutItem(json, key, item);
 }
 
 void JsonPut(Json *json, String key, const char *value) {
-	Json_Object object;
-	object.type = Json_Type::STRING;
-	object.value.string.length = strlen(value);
-	object.value.string.data = (uint8_t *)value;
-	JsonPutObject(json, key, object);
+	Json_Item item;
+	item.type = JSON_TYPE_STRING;
+	item.value.string.length = strlen(value);
+	item.value.string.data = (uint8_t *)value;
+	JsonPutItem(json, key, item);
 }
 
 void JsonPut(Json *json, String key, String value) {
-	Json_Object object;
-	object.type = Json_Type::STRING;
-	object.value.string.length = value.length;
-	object.value.string.data = value.data;
-	JsonPutObject(json, key, object);
+	Json_Item item;
+	item.type = JSON_TYPE_STRING;
+	item.value.string.length = value.length;
+	item.value.string.data = value.data;
+	JsonPutItem(json, key, item);
 }
 
-void JsonPut(Json *json, String key, int64_t value) {
-	Json_Object object;
-	object.type = Json_Type::NUMBER;
-	object.value.number = value;
-	JsonPutObject(json, key, object);
+void JsonPut(Json *json, String key, double value) {
+	Json_Item item;
+	item.type = JSON_TYPE_NUMBER;
+	item.value.number = value;
+	JsonPutItem(json, key, item);
 }
 
 void JsonPut(Json *json, String key, bool value) {
-	Json_Object object;
-	object.type = Json_Type::BOOL;
-	object.value.boolean = value;
-	JsonPutObject(json, key, object);
+	Json_Item item;
+	item.type = JSON_TYPE_STRING;
+	item.value.boolean = value;
+	JsonPutItem(json, key, item);
 }
 
-Json_Object *JsonGet(Json *json, String key) {
+Json_Item *JsonGet(Json *json, String key) {
 	uint32_t hash = JsonGetHashValue(key);
 	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
 	uint32_t bucket_index = pos >> JSON_INDEX_SHIFT;
@@ -523,7 +531,7 @@ bool JsonTokenize(Json_Tokenizer *tokenizer) {
 				tokenizer->current += 1;
 			}
 
-			tokenizer->token.kind = JSON_TOKEN_TRUE;
+			tokenizer->token.kind = JSON_TOKEN_NULL;
 			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
 
 			return true;
@@ -535,7 +543,7 @@ bool JsonTokenize(Json_Tokenizer *tokenizer) {
 	return false;
 }
 
-static const String NoCheckinJSON = R"foo(
+static const String NoCheckinJSON = u8R"foo(
 {
 	"reactions": [
 	{
@@ -543,7 +551,7 @@ static const String NoCheckinJSON = R"foo(
 			"me": false,
 			"emoji": {
 			"id": null,
-			"name": "í ½í´¥"
+			"name": "ðŸ”¥"
 		}
 	}
 	],
@@ -585,8 +593,22 @@ static const String NoCheckinJSON = R"foo(
 
 struct Json_Parser {
 	Json_Tokenizer tokenizer;
+	Memory_Allocator allocator;
+	Json_Item parsed_item;
 	bool parsing;
 };
+
+Json_Parser JsonParserBegin(String content, Memory_Allocator allocator = ThreadContext.allocator) {
+	Json_Parser parser;
+	parser.tokenizer = JsonTokenizerBegin(content);
+	parser.allocator = allocator;
+	parser.parsing = true;
+	return parser;
+}
+
+bool JsonParserEnd(Json_Parser *parser) {
+	return JsonTokenizerEnd(&parser->tokenizer);
+}
 
 bool JsonParsing(Json_Parser *parser) {
 	return parser->parsing;
@@ -600,80 +622,85 @@ Json_Token JsonParseGetToken(Json_Parser *parser) {
 	return parser->tokenizer.token;
 }
 
-bool JsonParseAcceptToken(Json_Parser *parser, Json_Token_Kind token) {
+bool JsonParseAcceptToken(Json_Parser *parser, Json_Token_Kind token, Json_Token *out = nullptr) {
 	if (JsonParsePeekToken(parser, token)) {
+		if (out) {
+			*out = parser->tokenizer.token;
+		}
 		parser->parsing = JsonTokenize(&parser->tokenizer);
 		return true;
 	}
 	return false;
 }
 
-bool JsonParseExpectToken(Json_Parser *parser, Json_Token_Kind token) {
-	if (JsonParseAcceptToken(parser, token)) {
+bool JsonParseExpectToken(Json_Parser *parser, Json_Token_Kind token, Json_Token *out = nullptr) {
+	if (JsonParseAcceptToken(parser, token, out)) {
 		return true;
 	}
 	parser->parsing = false;
 	return false;
 }
 
-bool JsonParseObject(Json_Parser *parser);
-bool JsonParseArray(Json_Parser *parser);
+bool JsonParseObject(Json_Parser *parser, Json_Item *object);
+bool JsonParseArray(Json_Parser *parser, Json_Item *object);
 
-bool JsonParseValue(Json_Parser *parser) {
+bool JsonParseValue(Json_Parser *parser, Json_Item *object) {
 	if (JsonParsing(parser)) {
 		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
-			if (JsonParseObject(parser)) {
-				// got object as value
+			if (JsonParseObject(parser, object)) {
 				return true;
 			}
 			return false;
 		}
 
 		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
-			if (JsonParseArray(parser)) {
-				// got array as value
+			if (JsonParseArray(parser, object)) {
 				return true;
 			}
 			return false;
 		}
 
-		if (JsonParseAcceptToken(parser, JSON_TOKEN_NUMBER)) {
-			// got number as value
+		Json_Token token;
+
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_NUMBER, &token)) {
+			object->type = JSON_TYPE_NUMBER;
+			object->value.number = token.number;
 			return true;
 		}
 
-		if (JsonParseAcceptToken(parser, JSON_TOKEN_IDENTIFIER)) {
-			// got identifer as value
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_IDENTIFIER, &token)) {
+			object->type = JSON_TYPE_STRING;
+			object->value.string = token.identifier;
 			return true;
 		}
 
-		if (JsonParseAcceptToken(parser, JSON_TOKEN_TRUE)) {
-			// got true as value
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_TRUE, &token)) {
+			object->type = JSON_TYPE_BOOL;
+			object->value.boolean = true;
 			return true;
 		}
 
-		if (JsonParseAcceptToken(parser, JSON_TOKEN_FALSE)) {
-			// got false as value
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_FALSE, &token)) {
+			object->type = JSON_TYPE_BOOL;
+			object->value.boolean = false;
 			return true;
 		}
 		
 		if (JsonParseAcceptToken(parser, JSON_TOKEN_NULL)) {
-			// got null as value
+			object->type = JSON_TYPE_NULL;
 			return true;
 		}
 	}
 	return false;
 }
 
-bool JsonParseKeyValuePair(Json_Parser *parser) {
+bool JsonParseKeyValuePair(Json_Parser *parser, String *key, Json_Item *value) {
 	if (JsonParsing(parser)) {
 		if (JsonParseExpectToken(parser, JSON_TOKEN_IDENTIFIER)) {
 			auto token = JsonParseGetToken(parser);
-			// got key
-			auto key = token.identifier;
+			*key = token.identifier;
 			if (JsonParseExpectToken(parser, JSON_TOKEN_COLON)) {
-				if (JsonParseValue(parser)) {
-					// got value
+				if (JsonParseValue(parser, value)) {
 					return true;
 				}
 			}
@@ -682,11 +709,14 @@ bool JsonParseKeyValuePair(Json_Parser *parser) {
 	return false;
 }
 
-bool JsonParseBody(Json_Parser *parser) {
+bool JsonParseBody(Json_Parser *parser, Json *json) {
 	bool parsed = false;
 	if (JsonParsing(parser)) {
 		while (JsonParsing(parser)) {
-			if (JsonParseKeyValuePair(parser)) {
+			String key;
+			Json_Item value;
+			if (JsonParseKeyValuePair(parser, &key, &value)) {
+				JsonPutItem(json, key, value);
 				if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
 					parsed = true;
 					break;
@@ -699,13 +729,16 @@ bool JsonParseBody(Json_Parser *parser) {
 	return parsed;
 }
 
-bool JsonParseObject(Json_Parser *parser) {
+bool JsonParseObject(Json_Parser *parser, Json_Item *object) {
 	if (JsonParsing(parser)) {
 		if (JsonParseExpectToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
 			if (JsonParseAcceptToken(parser, JSON_TOKEN_CLOSE_CURLY_BRACKET))
 				return true;
 
-			if (JsonParseBody(parser)) {
+			object->type = JSON_TYPE_OBJECT;
+			object->value.object = new(parser->allocator) Json(parser->allocator);
+
+			if (JsonParseBody(parser, object->value.object)) {
 				return JsonParseExpectToken(parser, JSON_TOKEN_CLOSE_CURLY_BRACKET);
 			}
 		}
@@ -713,9 +746,12 @@ bool JsonParseObject(Json_Parser *parser) {
 	return false;
 }
 
-bool JsonParseArray(Json_Parser *parser) {
+bool JsonParseArray(Json_Parser *parser, Json_Item *object) {
 	if (JsonParsing(parser)) {
 		if (JsonParseExpectToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
+
+			object->type = JSON_TYPE_ARRAY;
+			Array<Json_Item> elements(parser->allocator);
 
 			bool parsed = false;
 			while (JsonParsing(parser)) {
@@ -724,7 +760,9 @@ bool JsonParseArray(Json_Parser *parser) {
 					break;
 				}
 
-				if (JsonParseValue(parser)) {
+				Json_Item value;
+				if (JsonParseValue(parser, &value)) {
+					elements.Add(value);
 					if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
 						parsed = JsonParseExpectToken(parser, JSON_TOKEN_CLOSE_SQUARE_BRACKET);
 						break;
@@ -733,6 +771,9 @@ bool JsonParseArray(Json_Parser *parser) {
 					break;
 				}
 			}
+
+			elements.Pack();
+			object->value.array = elements;
 
 			return parsed;
 		}
@@ -745,74 +786,84 @@ bool JsonParseRoot(Json_Parser *parser) {
 
 	if (JsonParsing(parser)) {
 		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
-			return JsonParseObject(parser);
+			return JsonParseObject(parser, &parser->parsed_item);
 		}
 
 		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
-			return JsonParseArray(parser);
+			return JsonParseArray(parser, &parser->parsed_item);
 		}
 	}
 
 	return false;
 }
 
-int main() {
-	Json_Parser parser;
-	parser.tokenizer = JsonTokenizerBegin(NoCheckinJSON);
+void JsonPrintItem(Json_Item *item, int depth);
 
-	bool parsed = JsonParseRoot(&parser);
-
-	printf("JSON parsed: %s...\n", parsed ? "done" : "failed");
-
-#if 0
-	while (JsonTokenize(&tokenizer)) {
-		auto token = tokenizer.token;
-
-		if (token.kind == JSON_TOKEN_OPEN_CURLY_BRACKET)
-			printf("JSON_TOKEN_OPEN_CURLY_BRACKET");
-		else if (token.kind == JSON_TOKEN_CLOSE_CURLY_BRACKET)
-			printf("JSON_TOKEN_CLOSE_CURLY_BRACKET");
-		else if (token.kind == JSON_TOKEN_OPEN_SQUARE_BRACKET)
-			printf("JSON_TOKEN_OPEN_SQUARE_BRACKET");
-		else if (token.kind == JSON_TOKEN_CLOSE_SQUARE_BRACKET)
-			printf("JSON_TOKEN_CLOSE_SQUARE_BRACKET");
-		else if (token.kind == JSON_TOKEN_COLON)
-			printf("JSON_TOKEN_COLON");
-		else if (token.kind == JSON_TOKEN_COMMA)
-			printf("JSON_TOKEN_COMMA");
-		else if (token.kind == JSON_TOKEN_NUMBER)
-			printf("JSON_TOKEN_NUMBER");
-		else if (token.kind == JSON_TOKEN_IDENTIFIER)
-			printf("JSON_TOKEN_IDENTIFIER");
-		else if (token.kind == JSON_TOKEN_TRUE)
-			printf("JSON_TOKEN_TRUE");
-		else if (token.kind == JSON_TOKEN_FALSE)
-			printf("JSON_TOKEN_FALSE");
-		else
-			Unreachable();
-
-		printf(": %.*s", (int)token.content.length, token.content.data);
-
-		if (token.kind == JSON_TOKEN_NUMBER) {
-			printf(" (%f)", token.number);
-		} else if (token.kind == JSON_TOKEN_IDENTIFIER) {
-			printf(": %.*s", (int)token.identifier.length, token.identifier.data);
-		}
-
-		printf("\n");
+void JsonPrintArray(Array_View<Json_Item> items, int depth) {
+	printf("[ ");
+	for (auto &item : items) {
+		JsonPrintItem(&item, depth);
+		if (&item != items.LastElement())
+			printf(", ");
 	}
-
-	printf("Tokenizer success: %s", JsonTokenizerEnd(&tokenizer) ? "true" : "false");
-#endif
+	printf(" ]");
 }
 
-int main2(int argc, char **argv) {
+void JsonPrintIndent(int depth) {
+	for (int i = 0; i < depth * 3; ++i) {
+		printf(" ");
+	}
+}
+
+void JsonPrintObject(Json *json, int depth) {
+	depth += 1;
+	printf("{\n");
+	ForEach (*json) {
+		JsonPrintIndent(depth);
+		printf("%.*s: ", (int)it.key->length, it.key->data);
+		JsonPrintItem(it.value, depth);
+		if (it.key != json->keys.LastElement())
+			printf(",\n");
+	}
+	printf("}\n");
+}
+
+void JsonPrintItem(Json_Item *item, int depth = 0) {
+	auto type = item->type;
+
+	if (type == JSON_TYPE_NULL) {
+		printf("null");
+	} else if (type == JSON_TYPE_BOOL) {
+		printf("%s", item->value.boolean ? "true" : "false");
+	} else if (type == JSON_TYPE_NUMBER) {
+		printf("%f", item->value.number);
+	} else if (type == JSON_TYPE_STRING) {
+		printf("\"%.*s\"", (int)item->value.string.length, item->value.string.data);
+	} else if (type == JSON_TYPE_ARRAY) {
+		JsonPrintArray(item->value.array, depth);
+	} else if (type == JSON_TYPE_OBJECT) {
+		JsonPrintObject(item->value.object, depth);
+	} else {
+		Unreachable();
+	}
+}
+
+int main(int argc, char **argv) {
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
 	}
 
 	InitThreadContext(MegaBytes(64));
+
+	Json_Parser parser = JsonParserBegin(NoCheckinJSON);
+	bool parsed = JsonParseRoot(&parser);
+	parsed = JsonParserEnd(&parser);
+
+	printf("JSON parsed: %s...\n", parsed ? "done" : "failed");
+
+	JsonPrintItem(&parser.parsed_item);
+
 
 	NetInit();
 
@@ -825,37 +876,8 @@ int main2(int argc, char **argv) {
 
 	const char *token = argv[1];
 
-	{
-		Json json;
-
-		const char *msg = "Yahallo!";
-
-		JsonPut(&json, "tts", false);
-		JsonPut(&json, "title", msg);
-		JsonPut(&json, "description", "This message is generated from Katachi bot");
-
-		ForEach (json) {
-			printf("%s : ", it.key->data);
-
-			if (it.value->type == Json_Type::BOOL)
-				printf("%s", it.value->value.boolean ? "true" : "false");
-			else if (it.value->type == Json_Type::NUMBER)
-				printf("%zd", it.value->value.number);
-			else if (it.value->type == Json_Type::STRING)
-				printf("%.*s", (int)it.value->value.string.length, it.value->value.string.data);
-			else
-				Unimplemented();
-			
-			printf("\n");
-		}
-
-		//printf("%s = %s\n", "tts", JsonGet(&json, "tts")->value.string.data);
-		//printf("%s = %s\n", "title", JsonGet(&json, "title")->value.string.data);
-		//printf("%s = %s\n", "description", JsonGet(&json, "description")->value.string.data);
-	}
-
 	String_Builder content_builder;
-	Json_Builder json = { &content_builder, 0 };
+	Json_Builder json = JsonBuilderCreate(&content_builder);
 
 	JsonWriteBeginObject(&json);
 	JsonWriteKeyValue(&json, "tts", false);
