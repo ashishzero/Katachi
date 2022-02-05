@@ -825,7 +825,9 @@ void JsonPrintObject(Json *json, int depth) {
 		if (it.key != json->keys.LastElement())
 			printf(",\n");
 	}
-	printf("}\n");
+	printf("\n");
+	JsonPrintIndent(depth - 1);
+	printf("}");
 }
 
 void JsonPrintItem(Json_Item *item, int depth = 0) {
