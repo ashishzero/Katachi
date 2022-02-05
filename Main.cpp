@@ -4,6 +4,7 @@
 #include "Discord.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 //
 // https://discord.com/developers/docs/topics/rate-limits#rate-limits
@@ -150,10 +151,10 @@ struct Json_Object {
 	Json_Value value;
 };
 
-constexpr uint32_t JSON_INDEX_BUCKET_COUNT = 64;
-constexpr uint32_t JSON_INDEX_PER_BUCKET = 16;
+constexpr uint32_t JSON_INDEX_BUCKET_COUNT = 8;
+constexpr uint32_t JSON_INDEX_PER_BUCKET = 8;
 constexpr uint32_t JSON_INDEX_MASK = JSON_INDEX_PER_BUCKET - 1;
-constexpr uint32_t JSON_INDEX_SHIFT = 4;
+constexpr uint32_t JSON_INDEX_SHIFT = 3;
 
 struct Json_Pair {
 	String *key;
@@ -333,7 +334,479 @@ Json_Object *JsonGet(Json *json, String key) {
 	return nullptr;
 }
 
-int main(int argc, char **argv) {
+enum Json_Token_Kind {
+	JSON_TOKEN_OPEN_CURLY_BRACKET,
+	JSON_TOKEN_CLOSE_CURLY_BRACKET,
+	JSON_TOKEN_OPEN_SQUARE_BRACKET,
+	JSON_TOKEN_CLOSE_SQUARE_BRACKET,
+	JSON_TOKEN_COLON,
+	JSON_TOKEN_COMMA,
+	JSON_TOKEN_NUMBER,
+	JSON_TOKEN_IDENTIFIER,
+	JSON_TOKEN_TRUE,
+	JSON_TOKEN_FALSE,
+	JSON_TOKEN_NULL,
+
+	_JSON_TOKEN_COUNT
+};
+
+struct Json_Token {
+	Json_Token_Kind kind;
+	String content;
+	String identifier;
+	double number;
+};
+
+struct Json_Tokenizer {
+	String buffer;
+	uint8_t *current;
+	Json_Token token;
+};
+
+Json_Tokenizer JsonTokenizerBegin(String content) {
+	Json_Tokenizer tokenizer;
+	tokenizer.buffer = content;
+	tokenizer.current = content.data;
+	return tokenizer;
+}
+
+bool JsonTokenizerEnd(Json_Tokenizer *tokenizer) {
+	return tokenizer->current == (tokenizer->buffer.data + tokenizer->buffer.length);
+}
+
+static inline bool JsonIsNumber(uint32_t value) {
+	return value >= '0' && value <= '9';
+}
+
+static inline bool JsonIsWhitespace(uint32_t value) {
+	return (value == ' ' || value == '\t' || value == '\n' || value == '\r');
+}
+
+static inline String JsonTokenizerMakeTokenContent(Json_Tokenizer *tokenizer, uint8_t *start) {
+	String content;
+	content.data = start;
+	content.length = tokenizer->current - start;
+	return content;
+}
+
+bool JsonTokenize(Json_Tokenizer *tokenizer) {
+	while (*tokenizer->current) {
+		if (JsonIsWhitespace(*tokenizer->current)) {
+			tokenizer->current += 1;
+			while (*tokenizer->current && JsonIsWhitespace(*tokenizer->current)) {
+				tokenizer->current += 1;
+			}
+			continue;
+		}
+
+		uint8_t *start = tokenizer->current;
+		uint8_t value = *start;
+
+		if (value == '{') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_OPEN_CURLY_BRACKET;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == '}') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_CLOSE_CURLY_BRACKET;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == '[') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_OPEN_SQUARE_BRACKET;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == ']') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_CLOSE_SQUARE_BRACKET;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == ':') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_COLON;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == ',') {
+			tokenizer->current += 1;
+
+			tokenizer->token.kind = JSON_TOKEN_COMMA;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (JsonIsNumber(value)) {
+			char *str_end = nullptr;
+			tokenizer->token.number = strtod((char *)tokenizer->current, &str_end);
+			tokenizer->token.kind = JSON_TOKEN_NUMBER;
+			tokenizer->current = (uint8_t *)str_end;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+			return true;
+		}
+
+		if (value == '"') {
+			tokenizer->current += 1;
+
+			bool proper_string = false;
+			for (; *tokenizer->current; ++tokenizer->current) {
+				value = *tokenizer->current;
+				if (value == '"' && *(tokenizer->current - 1) != '\\') {
+					tokenizer->current += 1;
+					proper_string = true;
+					break;
+				}
+			}
+
+			if (proper_string) {
+				tokenizer->token.kind = JSON_TOKEN_IDENTIFIER;
+				tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+				tokenizer->token.identifier = tokenizer->token.content;
+				tokenizer->token.identifier.data += 1;
+				tokenizer->token.identifier.length -= 2;
+				return true;
+			}
+
+			return false;
+		}
+
+		if (value == 't') {
+			tokenizer->current += 1;
+			const String True = "true";
+			for (int i = 1; i < True.length; ++i) {
+				if (*tokenizer->current != True[i])
+					return false;
+				tokenizer->current += 1;
+			}
+
+			tokenizer->token.kind = JSON_TOKEN_TRUE;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+
+			return true;
+		}
+
+		if (value == 'f') {
+			tokenizer->current += 1;
+			const String False = "false";
+			for (int i = 1; i < False.length; ++i) {
+				if (*tokenizer->current != False[i])
+					return false;
+				tokenizer->current += 1;
+			}
+
+			tokenizer->token.kind = JSON_TOKEN_FALSE;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+
+			return true;
+		}
+
+		if (value == 'n') {
+			tokenizer->current += 1;
+			const String Null = "null";
+			for (int i = 1; i < Null.length; ++i) {
+				if (*tokenizer->current != Null[i])
+					return false;
+				tokenizer->current += 1;
+			}
+
+			tokenizer->token.kind = JSON_TOKEN_TRUE;
+			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
+
+			return true;
+		}
+
+		return false;
+	}
+	
+	return false;
+}
+
+static const String NoCheckinJSON = R"foo(
+{
+	"reactions": [
+	{
+		"count": 1,
+			"me": false,
+			"emoji": {
+			"id": null,
+			"name": "í ½í´¥"
+		}
+	}
+	],
+		"attachments": [],
+		"tts": false,
+		"embeds": [],
+		"timestamp": "2017-07-11T17:27:07.299000+00:00",
+		"mention_everyone": false,
+		"id": "334385199974967042",
+		"pinned": false,
+		"edited_timestamp": null,
+		"author": {
+		"username": "Mason",
+			"discriminator": "9999",
+			"id": "53908099506183680",
+			"avatar": "a_bab14f271d565501444b2ca3be944b25"
+	},
+		"mention_roles": [],
+		"mention_channels": [
+	{
+		"id": "278325129692446722",
+			"guild_id": "278325129692446720",
+			"name": "big-news",
+			"type": 5
+	}
+	],
+		"content": "Big news! In this <#278325129692446722> channel!",
+		"channel_id": "290926798999357250",
+		"mentions": [],
+		"type": 0,
+		"flags": 2,
+		"message_reference": {
+		"channel_id": "278325129692446722",
+		"guild_id": "278325129692446720",
+		"message_id": "306588351130107906"
+	}
+}
+)foo";
+
+struct Json_Parser {
+	Json_Tokenizer tokenizer;
+	bool parsing;
+};
+
+bool JsonParsing(Json_Parser *parser) {
+	return parser->parsing;
+}
+
+bool JsonParsePeekToken(Json_Parser *parser, Json_Token_Kind token) {
+	return parser->tokenizer.token.kind == token;
+}
+
+Json_Token JsonParseGetToken(Json_Parser *parser) {
+	return parser->tokenizer.token;
+}
+
+bool JsonParseAcceptToken(Json_Parser *parser, Json_Token_Kind token) {
+	if (JsonParsePeekToken(parser, token)) {
+		parser->parsing = JsonTokenize(&parser->tokenizer);
+		return true;
+	}
+	return false;
+}
+
+bool JsonParseExpectToken(Json_Parser *parser, Json_Token_Kind token) {
+	if (JsonParseAcceptToken(parser, token)) {
+		return true;
+	}
+	parser->parsing = false;
+	return false;
+}
+
+bool JsonParseObject(Json_Parser *parser);
+bool JsonParseArray(Json_Parser *parser);
+
+bool JsonParseValue(Json_Parser *parser) {
+	if (JsonParsing(parser)) {
+		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
+			if (JsonParseObject(parser)) {
+				// got object as value
+				return true;
+			}
+			return false;
+		}
+
+		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
+			if (JsonParseArray(parser)) {
+				// got array as value
+				return true;
+			}
+			return false;
+		}
+
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_NUMBER)) {
+			// got number as value
+			return true;
+		}
+
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_IDENTIFIER)) {
+			// got identifer as value
+			return true;
+		}
+
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_TRUE)) {
+			// got true as value
+			return true;
+		}
+
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_FALSE)) {
+			// got false as value
+			return true;
+		}
+		
+		if (JsonParseAcceptToken(parser, JSON_TOKEN_NULL)) {
+			// got null as value
+			return true;
+		}
+	}
+	return false;
+}
+
+bool JsonParseKeyValuePair(Json_Parser *parser) {
+	if (JsonParsing(parser)) {
+		if (JsonParseExpectToken(parser, JSON_TOKEN_IDENTIFIER)) {
+			auto token = JsonParseGetToken(parser);
+			// got key
+			auto key = token.identifier;
+			if (JsonParseExpectToken(parser, JSON_TOKEN_COLON)) {
+				if (JsonParseValue(parser)) {
+					// got value
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+bool JsonParseBody(Json_Parser *parser) {
+	bool parsed = false;
+	if (JsonParsing(parser)) {
+		while (JsonParsing(parser)) {
+			if (JsonParseKeyValuePair(parser)) {
+				if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
+					parsed = true;
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+	}
+	return parsed;
+}
+
+bool JsonParseObject(Json_Parser *parser) {
+	if (JsonParsing(parser)) {
+		if (JsonParseExpectToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
+			if (JsonParseAcceptToken(parser, JSON_TOKEN_CLOSE_CURLY_BRACKET))
+				return true;
+
+			if (JsonParseBody(parser)) {
+				return JsonParseExpectToken(parser, JSON_TOKEN_CLOSE_CURLY_BRACKET);
+			}
+		}
+	}
+	return false;
+}
+
+bool JsonParseArray(Json_Parser *parser) {
+	if (JsonParsing(parser)) {
+		if (JsonParseExpectToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
+
+			bool parsed = false;
+			while (JsonParsing(parser)) {
+				if (JsonParseAcceptToken(parser, JSON_TOKEN_CLOSE_SQUARE_BRACKET)) {
+					parsed = true;
+					break;
+				}
+
+				if (JsonParseValue(parser)) {
+					if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
+						parsed = JsonParseExpectToken(parser, JSON_TOKEN_CLOSE_SQUARE_BRACKET);
+						break;
+					}
+				} else {
+					break;
+				}
+			}
+
+			return parsed;
+		}
+	}
+	return false;
+}
+
+bool JsonParseRoot(Json_Parser *parser) {
+	parser->parsing = JsonTokenize(&parser->tokenizer);
+
+	if (JsonParsing(parser)) {
+		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
+			return JsonParseObject(parser);
+		}
+
+		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_SQUARE_BRACKET)) {
+			return JsonParseArray(parser);
+		}
+	}
+
+	return false;
+}
+
+int main() {
+	Json_Parser parser;
+	parser.tokenizer = JsonTokenizerBegin(NoCheckinJSON);
+
+	bool parsed = JsonParseRoot(&parser);
+
+	printf("JSON parsed: %s...\n", parsed ? "done" : "failed");
+
+#if 0
+	while (JsonTokenize(&tokenizer)) {
+		auto token = tokenizer.token;
+
+		if (token.kind == JSON_TOKEN_OPEN_CURLY_BRACKET)
+			printf("JSON_TOKEN_OPEN_CURLY_BRACKET");
+		else if (token.kind == JSON_TOKEN_CLOSE_CURLY_BRACKET)
+			printf("JSON_TOKEN_CLOSE_CURLY_BRACKET");
+		else if (token.kind == JSON_TOKEN_OPEN_SQUARE_BRACKET)
+			printf("JSON_TOKEN_OPEN_SQUARE_BRACKET");
+		else if (token.kind == JSON_TOKEN_CLOSE_SQUARE_BRACKET)
+			printf("JSON_TOKEN_CLOSE_SQUARE_BRACKET");
+		else if (token.kind == JSON_TOKEN_COLON)
+			printf("JSON_TOKEN_COLON");
+		else if (token.kind == JSON_TOKEN_COMMA)
+			printf("JSON_TOKEN_COMMA");
+		else if (token.kind == JSON_TOKEN_NUMBER)
+			printf("JSON_TOKEN_NUMBER");
+		else if (token.kind == JSON_TOKEN_IDENTIFIER)
+			printf("JSON_TOKEN_IDENTIFIER");
+		else if (token.kind == JSON_TOKEN_TRUE)
+			printf("JSON_TOKEN_TRUE");
+		else if (token.kind == JSON_TOKEN_FALSE)
+			printf("JSON_TOKEN_FALSE");
+		else
+			Unreachable();
+
+		printf(": %.*s", (int)token.content.length, token.content.data);
+
+		if (token.kind == JSON_TOKEN_NUMBER) {
+			printf(" (%f)", token.number);
+		} else if (token.kind == JSON_TOKEN_IDENTIFIER) {
+			printf(": %.*s", (int)token.identifier.length, token.identifier.data);
+		}
+
+		printf("\n");
+	}
+
+	printf("Tokenizer success: %s", JsonTokenizerEnd(&tokenizer) ? "true" : "false");
+#endif
+}
+
+int main2(int argc, char **argv) {
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
