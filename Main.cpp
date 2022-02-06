@@ -190,6 +190,30 @@ struct Json {
 	Json(Memory_Allocator alloc): keys(alloc), values(alloc), allocator(alloc){}
 };
 
+void JsonFree(Json *json);
+
+void JsonItemFree(Json *json, Json_Item item) {
+	if (item.type == JSON_TYPE_ARRAY)
+		MemoryFree(item.value.array.data, json->allocator);
+	else if (item.type == JSON_TYPE_OBJECT)
+		JsonFree(item.value.object);
+}
+
+void JsonFree(Json *json) {
+	Free(&json->keys);
+	for (auto &item : json->values)
+		JsonItemFree(json, item);
+	Free(&json->values);
+
+	for (auto &buckets : json->index.buckets) {
+		for (auto buk = buckets.next; buk;) {
+			auto next = buk->next;
+			MemoryFree(buk, json->allocator);
+			buk = next;
+		}
+	}
+}
+
 //
 //
 //
@@ -250,7 +274,7 @@ uint32_t JsonGetHashValue(String key) {
 void JsonPutItem(Json *json, String key, Json_Item value) {
 	uint32_t hash = JsonGetHashValue(key);
 
-	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT - 1);
+	uint32_t pos = hash & (JSON_INDEX_BUCKET_COUNT * JSON_INDEX_PER_BUCKET - 1);
 	uint32_t bucket_index = pos >> JSON_INDEX_SHIFT;
 
 	for (auto bucket = &json->index.buckets[bucket_index]; bucket; bucket = bucket->next) {
@@ -260,7 +284,7 @@ void JsonPutItem(Json *json, String key, Json_Item value) {
 
 			if (current_hash == hash) {
 				uint32_t offset = bucket->indices[index];
-				//MemoryFree(json->values[offset].value.data, json->allocator);
+				JsonItemFree(json, json->values[offset]);
 				json->values[offset] = value;	
 				return;
 			} else if (current_hash == 0) {
@@ -284,7 +308,7 @@ void JsonPutItem(Json *json, String key, Json_Item value) {
 template <int64_t _Length>
 void JsonPut(Json *json, String key, const char(&a)[_Length]) {
 	Json_Item item;
-	item.type = Json_Type::STRING;
+	item.type = JSON_TYPE_STRING;
 	item.value.string.length = _Length;
 	item.value.string.data = (uint8_t *)a;
 	JsonPutItem(json, key, item);
