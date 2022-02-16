@@ -165,8 +165,8 @@ constexpr uint32_t JSON_INDEX_MASK = JSON_INDEX_PER_BUCKET - 1;
 constexpr uint32_t JSON_INDEX_SHIFT = 3;
 
 struct Json_Pair {
-	String *key;
-	Json_Item *value;
+	String key;
+	Json_Item value;
 };
 
 struct Json {
@@ -181,13 +181,17 @@ struct Json {
 	};
 
 	Index_Table index;
-	Array<String> keys;
-	Array<Json_Item> values;
+	Array<Json_Pair> pairs;
 
 	Memory_Allocator allocator = ThreadContext.allocator;
 
 	Json() = default;
-	Json(Memory_Allocator alloc): keys(alloc), values(alloc), allocator(alloc){}
+	Json(Memory_Allocator alloc): pairs(alloc), allocator(alloc){}
+
+	inline Json_Pair *begin() { return pairs.begin(); }
+	inline Json_Pair *end() { return pairs.end(); }
+	inline const Json_Pair *begin() const { return pairs.begin(); }
+	inline const Json_Pair *end() const { return pairs.end(); }
 };
 
 void JsonFree(Json *json);
@@ -200,10 +204,9 @@ void JsonItemFree(Json *json, Json_Item item) {
 }
 
 void JsonFree(Json *json) {
-	Free(&json->keys);
-	for (auto &item : json->values)
-		JsonItemFree(json, item);
-	Free(&json->values);
+	for (auto &pair : json->pairs)
+		JsonItemFree(json, pair.value);
+	Free(&json->pairs);
 
 	for (auto &buckets : json->index.buckets) {
 		for (auto buk = buckets.next; buk;) {
@@ -218,18 +221,6 @@ void JsonFree(Json *json) {
 //
 //
 
-Json_Pair IterBegin(Json *json) {
-	return Json_Pair { json->keys.data, json->values.data };
-}
-
-void IterNext(Json_Pair *iter) {
-	iter->key += 1;
-	iter->value += 1;
-}
-
-bool IterEnd(Json *json, Json_Pair iter) {
-	return iter.key <= &json->keys.Last();
-}
 
 static inline uint32_t Murmur32Scramble(uint32_t k) {
     k *= 0xcc9e2d51;
@@ -284,15 +275,14 @@ void JsonPutItem(Json *json, String key, Json_Item value) {
 
 			if (current_hash == hash) {
 				uint32_t offset = bucket->indices[index];
-				JsonItemFree(json, json->values[offset]);
-				json->values[offset] = value;	
+				JsonItemFree(json, json->pairs[offset].value);
+				json->pairs[offset].value = value;	
 				return;
 			} else if (current_hash == 0) {
-				uint32_t offset = (uint32_t)json->values.count;
+				uint32_t offset = (uint32_t)json->pairs.count;
 				bucket->indices[index] = offset;
 				bucket->hashes[index] = hash;
-				json->keys.Add(key);
-				json->values.Add(Json_Item{value});
+				json->pairs.Add({ key, value });
 				return;
 			}
 
@@ -356,7 +346,7 @@ Json_Item *JsonGet(Json *json, String key) {
 
 			if (current_hash == hash) {
 				uint32_t offset = bucket->indices[index];
-				return &json->values[offset];
+				return &json->pairs[offset].value;
 			}
 
 			count += 1;
@@ -821,7 +811,7 @@ bool JsonParseRoot(Json_Parser *parser) {
 	return false;
 }
 
-void JsonPrintItem(Json_Item *item, int depth);
+void JsonPrintItem(const Json_Item *item, int depth);
 
 void JsonPrintArray(Array_View<Json_Item> items, int depth) {
 	printf("[ ");
@@ -842,11 +832,11 @@ void JsonPrintIndent(int depth) {
 void JsonPrintObject(Json *json, int depth) {
 	depth += 1;
 	printf("{\n");
-	ForEach (*json) {
+	for (const auto &it : *json) {
 		JsonPrintIndent(depth);
-		printf("%.*s: ", (int)it.key->length, it.key->data);
-		JsonPrintItem(it.value, depth);
-		if (it.key != &json->keys.Last())
+		printf("%.*s: ", (int)it.key.length, it.key.data);
+		JsonPrintItem(&it.value, depth);
+		if (&it != &json->pairs.Last())
 			printf(",\n");
 	}
 	printf("\n");
@@ -854,7 +844,7 @@ void JsonPrintObject(Json *json, int depth) {
 	printf("}");
 }
 
-void JsonPrintItem(Json_Item *item, int depth = 0) {
+void JsonPrintItem(const Json_Item *item, int depth = 0) {
 	auto type = item->type;
 
 	if (type == JSON_TYPE_NULL) {

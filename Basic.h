@@ -63,6 +63,11 @@ struct Array {
 		}
 	}
 
+	inline void Resize(int64_t new_count) {
+		Reserve(new_count);
+		count = new_count;
+	}
+
 	template <typename... Args> void Emplace(const Args &...args) {
 		if (count == capacity) {
 			int64_t n = GetGrowCapacity(capacity + 1);
@@ -182,3 +187,7 @@ inline int64_t Find(Array_View<T> arr, SearchFunc func, const Args &...args) {
 	}
 	return -1;
 }
+
+//
+//
+//
