@@ -167,19 +167,19 @@ void AssertHandle(const char *reason, const char *file, int line, const char *pr
 
 #if defined(BUILD_DEBUG) || defined(BUILD_DEVELOPER)
 #define Unimplemented() AssertHandle("Unimplemented procedure", __FILE__, __LINE__, __PROCEDURE__);
-#define Unreachable() AssertHandle("Unreachable code path", __FILE__, __LINE__, __PROCEDURE__);
-#define NoDefaultCase()                                                     \
-    default:                                                                \
-        AssertHandle("No default case", __FILE__, __LINE__, __PROCEDURE__); \
-        break
 #else
 #define Unimplemented() TriggerBreakpoint();
-#define Unreachable() TriggerBreakpoint();
-#define NoDefaultCase()      \
-    default:                 \
-        TriggerBreakpoint(); \
-        break
 #endif
+
+#ifdef __GNUC__
+[[noreturn]] inline __attribute__((always_inline)) void Unreachable() { DebugTriggerbreakpoint(); __builtin_unreachable(); }
+#elif defined(_MSC_VER)
+[[noreturn]] __forceinline void Unreachable() { DebugTriggerbreakpoint(); __assume(false); }
+#else // ???
+inline void Unreachable() { TriggerBreakpoint(); }
+#endif
+
+#define NoDefaultCase() default: Unreachable(); break
 
 //
 //
