@@ -6,84 +6,47 @@
 #define ForEach(c) for (auto it = IterBegin(&(c)); IterEnd(&(c), it); IterNext(&it)) 
 #define ForEachTag(name, c) for (auto name = IterBegin(&(c)); IterEnd(&(c), name); IterNext(&name)) 
 
-template <typename T> struct Array_View {
+template <typename T> 
+struct Array_View {
 	int64_t count;
 	T *data;
 
-	inline Array_View() : count(0), data(nullptr) {
-	}
-	inline Array_View(T *p, int64_t n) : count(n), data(p) {
-	}
-	template <int64_t _Count> constexpr Array_View(const T(&a)[_Count]) : count(_Count), data((T *)a) {
-	}
-	inline T &operator[](int64_t index) const {
-		Assert(index < count);
-		return data[index];
-	}
-	inline T *begin() {
-		return data;
-	}
-	inline T *end() {
-		return data + count;
-	}
-	inline const T *begin() const {
-		return data;
-	}
-	inline const T *end() const {
-		return data + count;
-	}
-
-	T *FirstElement() {
-		Assert(count);
-		return data;
-	}
-
-	T *LastElement() {
-		Assert(count);
-		return data + count - 1;
-	}
+	inline Array_View() : count(0), data(nullptr) {}
+	inline Array_View(T *p, int64_t n) : count(n), data(p) {}
+	template <int64_t _Count> constexpr Array_View(const T(&a)[_Count]) : count(_Count), data((T *)a) {}
+	inline T &operator[](int64_t index) const { Assert(index < count); return data[index]; }
+	inline T *begin() { return data; }
+	inline T *end() { return data + count; }
+	inline const T *begin() const { return data; }
+	inline const T *end() const { return data + count; }
+	T &First() { Assert(count); return data[0]; }
+	const T &First() const { Assert(count); return data[0]; }
+	T &Last() { Assert(count); return data[count - 1]; }
+	const T &Last() const { Assert(count); return data[count - 1]; }
 };
 
-template <typename T> struct Array {
-	int64_t            count;
+template <typename T>
+struct Array {
+	int64_t          count;
 	T *data;
 
-	int64_t            capacity;
+	int64_t          capacity;
 	Memory_Allocator allocator;
 
-	inline Array() : count(0), data(nullptr), capacity(0), allocator(ThreadContext.allocator) {
-	}
-	inline Array(Memory_Allocator _allocator) : count(0), data(0), capacity(0), allocator(_allocator) {
-	}
-
-	inline operator Array_View<T>() {
-		return Array_View<T>(data, count);
-	}
-	inline operator const Array_View<T>() const {
-		return Array_View<T>(data, count);
-	}
-
-	inline T &operator[](int64_t i) {
-		Assert(i >= 0 && i < count);
-		return data[i];
-	}
-	inline const T &operator[](int64_t i) const {
-		Assert(i >= 0 && i < count);
-		return data[i];
-	}
-
-	inline T *begin() {
-		return data;
-	}
-	inline T *end() {
-		return data + count;
-	}
-	inline const T *begin() const {
-		return data;
-	}
-	inline const T *end() const {
-		return data + count;
-	}
+	inline Array() : count(0), data(nullptr), capacity(0), allocator(ThreadContext.allocator) {}
+	inline Array(Memory_Allocator _allocator) : count(0), data(0), capacity(0), allocator(_allocator) {}
+	inline operator Array_View<T>() { return Array_View<T>(data, count); }
+	inline operator const Array_View<T>() const { return Array_View<T>(data, count); }
+	inline T &operator[](int64_t i) { Assert(i >= 0 && i < count); return data[i]; }
+	inline const T &operator[](int64_t i) const { Assert(i >= 0 && i < count); return data[i]; }
+	inline T *begin() { return data; }
+	inline T *end() { return data + count; }
+	inline const T *begin() const { return data; }
+	inline const T *end() const { return data + count; }
+	T &First() { Assert(count); return data[0]; }
+	const T &First() const { Assert(count); return data[0]; }
+	T &Last() { Assert(count); return data[count - 1]; }
+	const T &Last() const { Assert(count); return data[count - 1]; }
 
 	inline int64_t GetGrowCapacity(int64_t size) const {
 		int64_t new_capacity = capacity ? (capacity + capacity / 2) : 8;
@@ -98,16 +61,6 @@ template <typename T> struct Array {
 			data = new_data;
 			capacity = new_capacity;
 		}
-	}
-
-	T *FirstElement() {
-		Assert(count);
-		return data;
-	}
-
-	T *LastElement() {
-		Assert(count);
-		return data + count - 1;
 	}
 
 	template <typename... Args> void Emplace(const Args &...args) {
@@ -201,6 +154,12 @@ template <typename T>
 inline void Free(Array<T> *a) {
 	if (a->data)
 		MemoryFree(a->data, a->allocator);
+}
+
+template <typename T>
+inline void Free(Array_View<T> *a) {
+	if (a->data)
+		MemoryFree(a->data);
 }
 
 template <typename T>

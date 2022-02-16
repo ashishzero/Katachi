@@ -204,7 +204,7 @@ void IterNext(Json_Pair *iter) {
 }
 
 bool IterEnd(Json *json, Json_Pair iter) {
-	return iter.key <= json->keys.LastElement();
+	return iter.key <= &json->keys.Last();
 }
 
 static inline uint32_t Murmur32Scramble(uint32_t k) {
@@ -803,7 +803,7 @@ void JsonPrintArray(Array_View<Json_Item> items, int depth) {
 	printf("[ ");
 	for (auto &item : items) {
 		JsonPrintItem(&item, depth);
-		if (&item != items.LastElement())
+		if (&item != &items.Last())
 			printf(", ");
 	}
 	printf(" ]");
@@ -822,7 +822,7 @@ void JsonPrintObject(Json *json, int depth) {
 		JsonPrintIndent(depth);
 		printf("%.*s: ", (int)it.key->length, it.key->data);
 		JsonPrintItem(it.value, depth);
-		if (it.key != json->keys.LastElement())
+		if (it.key != &json->keys.Last())
 			printf(",\n");
 	}
 	printf("\n");

@@ -208,7 +208,7 @@ void AssertHandle(const char *reason, const char *file, int line, const char *pr
 #define KiloBytes(n) ((n)*1024u)
 #define MegaBytes(n) (KiloBytes(n) * 1024u)
 #define GigaBytes(n) (MegaBytes(n) * 1024u)
-#define MEMORY_ALLOCATOR_COMMIT_SIZE MegaBytes(64)
+#define MEMORY_ARENA_COMMIT_SIZE MegaBytes(64)
 
 struct String {
 	int64_t length;
@@ -250,20 +250,19 @@ uint8_t *AlignPointer(uint8_t *location, size_t alignment);
 size_t AlignSize(size_t location, size_t alignment);
 
 struct Memory_Arena {
-	size_t current_pos;
-	size_t commit_pos;
+	size_t current;
 	size_t reserved;
-	uint8_t *memory;
+	size_t committed;
 };
 
-Memory_Arena MemoryArenaCreate(size_t max_size);
+Memory_Arena *MemoryArenaCreate(size_t max_size);
 void MemoryArenaDestroy(Memory_Arena *arena);
 void MemoryArenaReset(Memory_Arena *arena);
 size_t MemoryArenaSizeLeft(Memory_Arena *arena);
 
 void *PushSize(Memory_Arena *arena, size_t size);
 void *PushSizeAligned(Memory_Arena *arena, size_t size, uint32_t alignment);
-void SetAllocationPosition(Memory_Arena *arena, size_t pos);
+bool SetAllocationPosition(Memory_Arena *arena, size_t pos);
 
 #define PushType(arena, type) (type *)PushSize(arena, sizeof(type))
 #define PushArray(arena, type, count) (type *)PushSize(arena, sizeof(type) * count)
@@ -284,7 +283,7 @@ void FreeTemporaryMemory(Temporary_Memory *temp);
 #endif // !THREAD_CONTEXT_SCRATCHPAD_MAX_ARENAS
 
 struct Thread_Scratchpad {
-	Memory_Arena arena[THREAD_CONTEXT_SCRATCHPAD_MAX_ARENAS];
+	Memory_Arena *arena[THREAD_CONTEXT_SCRATCHPAD_MAX_ARENAS];
 };
 
 //
@@ -319,7 +318,7 @@ extern thread_local Thread_Context ThreadContext;
 
 Memory_Arena *ThreadScratchpad();
 Memory_Arena *ThreadScratchpadI(uint32_t i);
-Memory_Arena *ThreadUnusedScratchpad(Memory_Arena *arenas, uint32_t count);
+Memory_Arena *ThreadUnusedScratchpad(Memory_Arena **arenas, uint32_t count);
 void ResetThreadScratchpad();
 
 Memory_Allocator MemoryArenaAllocator(Memory_Arena *arena);

@@ -13,72 +13,91 @@ size_t AlignSize(size_t location, size_t alignment) {
 	return ((location + (alignment - 1)) & ~(alignment - 1));
 }
 
-Memory_Arena MemoryArenaCreate(size_t max_size) {
-	Memory_Arena arena;
-	arena.reserved = max_size;
-	arena.memory = (uint8_t *)VirtualMemoryAllocate(0, arena.reserved);
-	arena.commit_pos = 0;
-	arena.current_pos = 0;
-	return arena;
+Memory_Arena *MemoryArenaCreate(size_t max_size) {
+	max_size = AlignPower2Up(max_size, 64 * 1024);
+	uint8_t *mem = (uint8_t *)VirtualMemoryAllocate(0, max_size);
+	if (mem) {
+		if (VirtualMemoryCommit(mem, MEMORY_ARENA_COMMIT_SIZE)) {
+			Memory_Arena *arena = (Memory_Arena *)mem;
+			arena->current = sizeof(Memory_Arena);
+			arena->reserved = max_size;
+			arena->committed = MEMORY_ARENA_COMMIT_SIZE;
+			return arena;
+		}
+	}
+	return nullptr;
 }
 
 void MemoryArenaDestroy(Memory_Arena *arena) {
-	VirtualMemoryFree(arena->memory, arena->reserved);
+	VirtualMemoryFree(arena, arena->reserved);
 }
 
 void MemoryArenaReset(Memory_Arena *arena) {
-	arena->current_pos = 0;
+	arena->current = 0;
 }
 
 size_t MemoryArenaSizeLeft(Memory_Arena *arena) {
-	return arena->reserved - arena->current_pos;
+	return arena->reserved - arena->current;
 }
 
 void *PushSize(Memory_Arena *arena, size_t size) {
 	void *ptr = 0;
-	if (arena->current_pos + size <= arena->reserved) {
-		ptr = arena->memory + arena->current_pos;
-		arena->current_pos += size;
-		if (arena->current_pos > arena->commit_pos) {
-			size_t commit_pos = AlignPower2Up(arena->current_pos, MEMORY_ALLOCATOR_COMMIT_SIZE - 1);
-			commit_pos = Minimum(commit_pos, arena->reserved);
-			VirtualMemoryCommit(arena->memory + arena->commit_pos, commit_pos - arena->commit_pos);
-			arena->commit_pos = commit_pos;
+	uint8_t *mem = (uint8_t *)arena;
+	if (arena->current + size <= arena->reserved) {
+		ptr = mem + arena->current;
+		arena->current += size;
+		if (arena->current > arena->committed) {
+			size_t committed = AlignPower2Up(arena->current, MEMORY_ARENA_COMMIT_SIZE);
+			committed = Minimum(committed, arena->reserved);
+			if (VirtualMemoryCommit(mem + arena->committed, committed - arena->committed)) {
+				arena->committed = committed;
+			} else {
+				arena->current -= size;
+				ptr = 0;
+			}
 		}
 	}
 	return ptr;
 }
 
 void *PushSizeAligned(Memory_Arena *arena, size_t size, uint32_t alignment) {
-	size_t aligned_current_pos = AlignSize(arena->current_pos, alignment);
-	size_t alloc_size = aligned_current_pos - arena->current_pos + size;
+	uint8_t *mem = (uint8_t *)arena;
+	uint8_t *aligned_current = AlignPointer(mem + arena->current, alignment);
+	uint8_t *next_current = aligned_current + size;
+	size_t alloc_size = next_current - (mem + arena->current);
 	if (PushSize(arena, alloc_size))
-		return arena->memory + aligned_current_pos;
+		return aligned_current;
 	return 0;
 }
 
-void SetAllocationPosition(Memory_Arena *arena, size_t pos) {
-	if (pos < arena->current_pos) {
-		arena->current_pos = pos;
-		size_t commit_pos = AlignPower2Up(pos, MEMORY_ALLOCATOR_COMMIT_SIZE - 1);
-		commit_pos = Minimum(commit_pos, arena->reserved);
+bool SetAllocationPosition(Memory_Arena *arena, size_t pos) {
+	if (pos < arena->current) {
+		arena->current = pos;
+		size_t committed = AlignPower2Up(pos, MEMORY_ARENA_COMMIT_SIZE);
+		committed = Minimum(committed, arena->reserved);
 
-		if (commit_pos < arena->commit_pos) {
-			VirtualMemoryDecommit(arena->memory + commit_pos, arena->commit_pos - commit_pos);
-			arena->commit_pos = commit_pos;
+		if (committed < arena->committed) {
+			VirtualMemoryDecommit(arena + committed, arena->committed - committed);
+			arena->committed = committed;
 		}
+		return true;
+	} else {
+		Assert(pos >= sizeof(Memory_Arena));
+		if (PushSize(arena, pos - arena->current))
+			return true;
+		return false;
 	}
 }
 
 Temporary_Memory BeginTemporaryMemory(Memory_Arena *arena) {
 	Temporary_Memory mem;
 	mem.arena = arena;
-	mem.position = arena->current_pos;
+	mem.position = arena->current;
 	return mem;
 }
 
 void EndTemporaryMemory(Temporary_Memory *temp) {
-	temp->arena->current_pos = temp->position;
+	temp->arena->current = temp->position;
 }
 
 void FreeTemporaryMemory(Temporary_Memory *temp) {
@@ -86,25 +105,25 @@ void FreeTemporaryMemory(Temporary_Memory *temp) {
 }
 
 Memory_Arena *ThreadScratchpad() {
-	return &ThreadContext.scratchpad.arena[0];
+	return ThreadContext.scratchpad.arena[0];
 }
 
 Memory_Arena *ThreadScratchpadI(uint32_t i) {
 	Assert(i < ArrayCount(ThreadContext.scratchpad.arena));
-	return &ThreadContext.scratchpad.arena[i];
+	return ThreadContext.scratchpad.arena[i];
 }
 
-Memory_Arena *ThreadUnusedScratchpad(Memory_Arena *arenas, uint32_t count) {
-	for (auto &thread_arena : ThreadContext.scratchpad.arena) {
+Memory_Arena *ThreadUnusedScratchpad(Memory_Arena **arenas, uint32_t count) {
+	for (auto thread_arena : ThreadContext.scratchpad.arena) {
 		bool conflict = false;
 		for (uint32_t index = 0; index < count; ++index) {
-			if (&thread_arena == &arenas[index]) {
+			if (thread_arena == arenas[index]) {
 				conflict = true;
 				break;
 			}
 		}
 		if (!conflict)
-			return &thread_arena;
+			return thread_arena;
 	}
 
 	return nullptr;
@@ -112,7 +131,7 @@ Memory_Arena *ThreadUnusedScratchpad(Memory_Arena *arenas, uint32_t count) {
 
 void ResetThreadScratchpad() {
 	for (auto &thread_arena : ThreadContext.scratchpad.arena) {
-		MemoryArenaReset(&thread_arena);
+		MemoryArenaReset(thread_arena);
 	}
 }
 
@@ -127,14 +146,19 @@ static void *MemoryArenaAllocatorReallocate(void *ptr, size_t previous_size, siz
 	if (previous_size > new_size)
 		return ptr;
 
-	if (arena->memory + arena->current_pos == ((uint8_t *)ptr + previous_size)) {
-		PushSize(arena, new_size - previous_size);
-		return ptr;
+	uint8_t *mem = (uint8_t *)arena;
+	if (mem + arena->current == ((uint8_t *)ptr + previous_size)) {
+		if (PushSize(arena, new_size - previous_size))
+			return ptr;
+		return 0;
 	}
 
 	void *new_ptr = PushSizeAligned(arena, new_size, sizeof(size_t));
-	memmove(ptr, new_ptr, previous_size);
-	return new_ptr;
+	if (new_ptr) {
+		memmove(ptr, new_ptr, previous_size);
+		return new_ptr;
+	}
+	return 0;
 }
 
 static void MemoryArenaAllocatorFree(void *ptr, void *context) {}
