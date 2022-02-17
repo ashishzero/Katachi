@@ -30,11 +30,11 @@ struct Array {
 	int64_t          count;
 	T *data;
 
-	int64_t          capacity;
+	int64_t          allocated;
 	Memory_Allocator allocator;
 
-	inline Array() : count(0), data(nullptr), capacity(0), allocator(ThreadContext.allocator) {}
-	inline Array(Memory_Allocator _allocator) : count(0), data(0), capacity(0), allocator(_allocator) {}
+	inline Array() : count(0), data(nullptr), allocated(0), allocator(ThreadContext.allocator) {}
+	inline Array(Memory_Allocator _allocator) : count(0), data(0), allocated(0), allocator(_allocator) {}
 	inline operator Array_View<T>() { return Array_View<T>(data, count); }
 	inline operator const Array_View<T>() const { return Array_View<T>(data, count); }
 	inline T &operator[](int64_t i) { Assert(i >= 0 && i < count); return data[i]; }
@@ -49,17 +49,17 @@ struct Array {
 	const T &Last() const { Assert(count); return data[count - 1]; }
 
 	inline int64_t GetGrowCapacity(int64_t size) const {
-		int64_t new_capacity = capacity ? (capacity + capacity / 2) : 8;
+		int64_t new_capacity = allocated ? (allocated + allocated / 2) : 8;
 		return new_capacity > size ? new_capacity : size;
 	}
 
 	inline void Reserve(int64_t new_capacity) {
-		if (new_capacity <= capacity)
+		if (new_capacity <= allocated)
 			return;
-		T *new_data = (T *)MemoryReallocate(capacity * sizeof(T), new_capacity * sizeof(T), data, allocator);
+		T *new_data = (T *)MemoryReallocate(allocated * sizeof(T), new_capacity * sizeof(T), data, allocator);
 		if (new_data) {
 			data = new_data;
-			capacity = new_capacity;
+			allocated = new_capacity;
 		}
 	}
 
@@ -69,8 +69,8 @@ struct Array {
 	}
 
 	template <typename... Args> void Emplace(const Args &...args) {
-		if (count == capacity) {
-			int64_t n = GetGrowCapacity(capacity + 1);
+		if (count == allocated) {
+			int64_t n = GetGrowCapacity(allocated + 1);
 			Reserve(n);
 		}
 		data[count] = T(args...);
@@ -78,8 +78,8 @@ struct Array {
 	}
 
 	T *Add() {
-		if (count == capacity) {
-			int64_t c = GetGrowCapacity(capacity + 1);
+		if (count == allocated) {
+			int64_t c = GetGrowCapacity(allocated + 1);
 			Reserve(c);
 		}
 		count += 1;
@@ -87,7 +87,7 @@ struct Array {
 	}
 
 	T *AddN(uint32_t n) {
-		if (count + n > capacity) {
+		if (count + n > allocated) {
 			int64_t c = GetGrowCapacity(count + n);
 			Reserve(c);
 		}
@@ -102,7 +102,7 @@ struct Array {
 	}
 
 	void Copy(Array_View<T> src) {
-		if (src.count + count >= capacity) {
+		if (src.count + count >= allocated) {
 			int64_t c = GetGrowCapacity(src.count + count + 1);
 			Reserve(c);
 		}
@@ -144,9 +144,9 @@ struct Array {
 	}
 
 	void Pack() {
-		if (count != capacity) {
-			data = (T *)MemoryReallocate(capacity * sizeof(T), count * sizeof(T), data, allocator);
-			capacity = count;
+		if (count != allocated) {
+			data = (T *)MemoryReallocate(allocated * sizeof(T), count * sizeof(T), data, allocator);
+			allocated = count;
 		}
 	}
 

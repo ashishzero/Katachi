@@ -163,6 +163,9 @@
     <ClInclude Include="Network.h" />
     <ClInclude Include="StringBuilder.h" />
   </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="KrVisualizer.natvis" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

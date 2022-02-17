@@ -865,12 +865,29 @@ void JsonPrintItem(const Json_Item *item, int depth = 0) {
 }
 
 int main(int argc, char **argv) {
+	InitThreadContext(MegaBytes(64));
+
+	Array<int> numbers;
+
+	numbers.Add(6);
+	numbers.Add(7);
+	numbers.Add(8);
+	numbers.Add(9);
+	numbers.Add(0);
+
+	Array_View<int> view = numbers;
+	view.count -= 1;
+
+	String str = "The cake is a lie.";
+
+	String dup = str;
+	str.length -= 4;
+
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
 	}
 
-	InitThreadContext(MegaBytes(64));
 
 	Json_Parser parser = JsonParserBegin(NoCheckinJSON);
 	bool parsed = JsonParseRoot(&parser);
