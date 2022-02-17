@@ -864,24 +864,319 @@ void JsonPrintItem(const Json_Item *item, int depth = 0) {
 	}
 }
 
+constexpr size_t TABLE_BUCKET_SIZE = 8;
+constexpr size_t TABLE_BUCKET_SHIFT = 3;
+constexpr size_t TABLE_BUCKET_MASK = TABLE_BUCKET_SIZE - 1;
+
+struct Index_Bucket {
+	size_t hash[TABLE_BUCKET_SIZE] = {};
+	ptrdiff_t index[TABLE_BUCKET_SIZE] = {};
+};
+
+constexpr size_t TABLE_BUCKET_HASH_EMPTY = 0;
+constexpr size_t TABLE_BUCKET_HASH_DELETED = 1;
+
+struct Index_Table {
+	size_t slot_count_pow2 = 0;
+	size_t used_count = 0;
+	size_t used_count_threshold = 0;
+	size_t used_count_shrink_threshold = 0;
+	size_t tombstone_count = 0;
+	size_t tombstone_count_threshold = 0;
+
+	Index_Bucket *buckets = nullptr;
+};
+
+static inline void IndexTableResize(Index_Table *table, size_t slot_count_pow2, Memory_Allocator allocator) {
+	auto count = slot_count_pow2 >> TABLE_BUCKET_SHIFT;
+	Index_Bucket *buckets = new(allocator) Index_Bucket[count];
+
+	if (table->buckets) {
+		auto old_slot_count_pow2 = table->slot_count_pow2;
+		auto old_count = old_slot_count_pow2 >> TABLE_BUCKET_SHIFT;
+
+		for (size_t i = 0; i < old_count; ++i) {
+			auto src_bucket = &table->buckets[i];
+			for (size_t j = 0; j < TABLE_BUCKET_SIZE; ++j) {
+				auto hash = src_bucket->hash[j];
+				auto pos = hash & (old_slot_count_pow2 - 1);
+				auto step = TABLE_BUCKET_SIZE;
+
+				while (1) {
+					auto bucket_index = pos >> TABLE_BUCKET_SHIFT;
+					auto dst_bucket = &buckets[bucket_index];
+
+					for (auto iter = pos & TABLE_BUCKET_MASK; iter < TABLE_BUCKET_SIZE; ++iter) {
+						if (dst_bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+							dst_bucket->hash[iter] = hash;
+							dst_bucket->index[iter] = src_bucket->index[j];
+							goto Inserted;
+						}
+					}
+
+					auto limit = pos & TABLE_BUCKET_MASK;
+					for (auto iter = 0; iter < limit; ++iter) {
+						if (dst_bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+							dst_bucket->hash[iter] = hash;
+							dst_bucket->index[iter] = src_bucket->index[j];
+							goto Inserted;
+						}
+					}
+
+					pos += step;
+					pos &= (old_slot_count_pow2 - 1);
+					step += TABLE_BUCKET_SIZE;
+				}
+
+			Inserted:
+				continue;
+			}
+		}
+
+		MemoryFree(table->buckets, allocator);
+	}
+
+	table->slot_count_pow2 = slot_count_pow2;
+	table->tombstone_count = 0;
+	table->used_count_threshold = slot_count_pow2 - (slot_count_pow2 >> 2);
+	table->tombstone_count_threshold = (slot_count_pow2 >> 3) + (slot_count_pow2 >> 4);
+	table->used_count_shrink_threshold = slot_count_pow2 >> 2;
+	table->buckets = buckets;
+
+	if (table->slot_count_pow2 <= TABLE_BUCKET_SIZE)
+		table->used_count_shrink_threshold = 0;
+
+	table->buckets = buckets;
+}
+
+struct Table {
+	using Key_Type = String;
+	using Value_Type = int;
+
+	struct Pair {
+		Key_Type key;
+		Value_Type value;
+	};
+
+	Index_Table index;
+	Array<Pair> storage;
+
+	Table() = default;
+	Table(Memory_Allocator allocator): storage(allocator){}
+
+	inline Pair *begin() { return storage.begin(); }
+	inline Pair *end() { return storage.end(); }
+	inline const Pair *begin() const { return storage.begin(); }
+	inline const Pair *end() const { return storage.end(); }
+	
+	ptrdiff_t IndexTableFindSlotPosition(const Key_Type key) {
+		auto hash = Murmur3Hash32(key.data, key.length, 0x1b873593);
+
+		if (hash < 2) // 0=EMPTY, 1=DELETED
+			hash += 2;
+
+		auto step = TABLE_BUCKET_SIZE;
+
+		auto pos = hash & (index.slot_count_pow2 - 1);
+
+		while (1) {
+			auto bucket_index = pos >> TABLE_BUCKET_SHIFT;
+			auto bucket = &index.buckets[bucket_index];
+
+			for (auto iter = pos & TABLE_BUCKET_MASK; iter < TABLE_BUCKET_SIZE; ++iter) {
+				if (bucket->hash[iter] == hash) {
+					auto si = bucket->index[iter];
+					if (storage[si].key == key) {
+						return (pos & ~TABLE_BUCKET_MASK) + iter;
+					}
+				} else if (bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+					return -1;
+				}
+			}
+
+			auto limit = pos & TABLE_BUCKET_MASK;
+			for (auto iter = 0; iter < limit; ++iter) {
+				if (bucket->hash[iter] == hash) {
+					auto si = bucket->index[iter];
+					if (storage[si].key == key) {
+						return (pos & ~TABLE_BUCKET_MASK) + iter;
+					}
+				} else if (bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+					return -1;
+				}
+			}
+
+			pos += step;
+			pos &= (index.slot_count_pow2 - 1);
+			step += TABLE_BUCKET_SIZE;
+		}
+
+		Unreachable();
+		return -1;
+	}
+
+	Value_Type *Find(const Key_Type key) {
+		auto pos = IndexTableFindSlotPosition(key);
+		if (pos >= 0) {
+			auto bucket = &index.buckets[pos >> TABLE_BUCKET_SHIFT];
+			auto si = bucket->index[pos & TABLE_BUCKET_MASK];
+			return &storage[si].value;
+		}
+		return nullptr;
+	}
+
+	Value_Type *FindOrPut(const Key_Type key) {
+		if (index.used_count >= index.used_count_threshold) {
+			auto new_slot_count_pow2 = index.slot_count_pow2 ? index.slot_count_pow2 * 2 : TABLE_BUCKET_SIZE;
+			IndexTableResize(&index, new_slot_count_pow2, storage.allocator);
+		}
+
+		auto hash = Murmur3Hash32(key.data, key.length, 0x1b873593);
+
+		if (hash < 2) // 0=EMPTY, 1=DELETED
+			hash += 2;
+
+		auto step = TABLE_BUCKET_SIZE;
+
+		auto pos = hash & (index.slot_count_pow2 - 1);
+
+		ptrdiff_t tombstone = -1;
+
+		while (1) {
+			auto bucket_index = pos >> TABLE_BUCKET_SHIFT;
+			auto bucket = &index.buckets[bucket_index];
+
+			for (auto iter = pos & TABLE_BUCKET_MASK; iter < TABLE_BUCKET_SIZE; ++iter) {
+				if (bucket->hash[iter] == hash) {
+					auto si = bucket->index[iter];
+					if (storage[si].key == key) {
+						return &storage[si].value;
+					}
+				} else if (bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+					pos = (pos & ~TABLE_BUCKET_MASK) + iter;
+					goto EmptyFound;
+				} else if (tombstone < 0 && bucket->hash[iter] == TABLE_BUCKET_HASH_DELETED) {
+					tombstone = (pos & ~TABLE_BUCKET_MASK) + iter;
+				}
+			}
+
+			auto limit = pos & TABLE_BUCKET_MASK;
+			for (auto iter = 0; iter < limit; ++iter) {
+				if (bucket->hash[iter] == hash) {
+					auto si = bucket->index[iter];
+					if (storage[si].key == key) {
+						return &storage[si].value;
+					}
+				} else if (bucket->hash[iter] == TABLE_BUCKET_HASH_EMPTY) {
+					pos = (pos & ~TABLE_BUCKET_MASK) + iter;
+					goto EmptyFound;
+				} else if (tombstone < 0 && bucket->hash[iter] == TABLE_BUCKET_HASH_DELETED) {
+					tombstone = (pos & ~TABLE_BUCKET_MASK) + iter;
+				}
+			}
+
+			pos += step;
+			pos &= (index.slot_count_pow2 - 1);
+			step += TABLE_BUCKET_SIZE;
+		}
+
+	EmptyFound:
+		if (tombstone >= 0) {
+			pos = tombstone;
+			index.tombstone_count -= 1;
+		}
+
+		index.used_count += 1;
+
+		auto bucket = &index.buckets[pos >> TABLE_BUCKET_SHIFT];
+
+		bucket->hash[pos & TABLE_BUCKET_MASK] = hash;
+		bucket->index[pos & TABLE_BUCKET_MASK] = (ptrdiff_t)storage.count;
+		
+		auto pair = storage.Add();
+		pair->key = key;
+		pair->value = Value_Type{};
+		return &pair->value;
+	}
+
+	void Put(const Key_Type key, const Value_Type &value) {
+		auto dst = FindOrPut(key);
+		*dst = value;
+	}
+
+	void Remove(const Key_Type key) {
+		if (!index.buckets) return;
+
+		auto pos = IndexTableFindSlotPosition(key);
+		if (pos < 0) return;
+
+		Assert(pos < (ptrdiff_t)index.slot_count_pow2);
+
+		auto bucket = &index.buckets[pos >> TABLE_BUCKET_SHIFT];
+		auto iter = pos & TABLE_BUCKET_MASK;
+
+		ptrdiff_t old_offset = bucket->index[iter];
+		ptrdiff_t last_offset = (ptrdiff_t)storage.count - 1;
+
+		bucket->hash[iter] = TABLE_BUCKET_HASH_DELETED;
+		bucket->index[iter] = -1;
+
+		index.used_count -= 1;
+		index.tombstone_count += 1;
+
+		if (old_offset != last_offset) {
+			storage[old_offset] = storage[last_offset];
+
+			pos = IndexTableFindSlotPosition(storage[old_offset].key);
+			Assert(pos >= 0);
+
+			bucket = &index.buckets[pos >> TABLE_BUCKET_SHIFT];
+			iter = pos & TABLE_BUCKET_MASK;
+			Assert(bucket->index[iter] == last_offset);
+			bucket->index[iter] = old_offset;
+		}
+
+		storage.count -= 1;
+
+		if (index.used_count < index.used_count_shrink_threshold && index.slot_count_pow2 > TABLE_BUCKET_SIZE) {
+			IndexTableResize(&index, index.slot_count_pow2 >> 2, storage.allocator);
+		} else if (index.tombstone_count > index.tombstone_count_threshold) {
+			IndexTableResize(&index, index.slot_count_pow2, storage.allocator);
+		}
+	}
+};
+
+void Free(Table *table) {
+	MemoryFree(table->index.buckets, table->storage.allocator);
+	Free(&table->storage);
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
 
-	Array<int> numbers;
+	Table table;
 
-	numbers.Add(6);
-	numbers.Add(7);
-	numbers.Add(8);
-	numbers.Add(9);
-	numbers.Add(0);
+	table.Put("one", 1);
+	table.Put("two", 2);
+	table.Put("three", 3);
 
-	Array_View<int> view = numbers;
-	view.count -= 1;
+	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
 
-	String str = "The cake is a lie.";
+	table.Remove("one");
 
-	String dup = str;
-	str.length -= 4;
+	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
+
+	table.Put("zero", 0);
+
+	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
+
+	auto two = table.FindOrPut("two");
+
+	auto five = table.Find("five");
+
+	auto zero = table.Find("zero");
+
+	Free(&table);
 
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);

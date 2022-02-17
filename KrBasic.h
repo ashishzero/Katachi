@@ -110,7 +110,7 @@ struct Array {
 		count += src.count;
 	}
 
-	void RemoveBack() {
+	void RemoveLast() {
 		Assert(count > 0);
 		count -= 1;
 	}
