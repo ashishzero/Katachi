@@ -18,7 +18,7 @@
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Common.cpp">
+    <ClCompile Include="KrCommon.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="StringBuilder.cpp">
@@ -29,7 +29,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Common.h">
+    <ClInclude Include="KrCommon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="StringBuilder.h">
@@ -41,7 +41,10 @@
     <ClInclude Include="Discord.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Basic.h">
+    <ClInclude Include="KrBasic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="KrString.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

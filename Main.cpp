@@ -1,4 +1,4 @@
-﻿#include "Basic.h"
+﻿#include "KrBasic.h"
 #include "StringBuilder.h"
 #include "Network.h"
 #include "Discord.h"

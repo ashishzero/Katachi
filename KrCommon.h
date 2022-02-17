@@ -218,6 +218,7 @@ struct String {
 	template <int64_t _Length>
 	constexpr String(const char(&a)[_Length]) : data((uint8_t *)a), length(_Length - 1) {}
 	String(const uint8_t *_Data, int64_t _Length) : data((uint8_t *)_Data), length(_Length) {}
+	String(const char *_Data, int64_t _Length) : data((uint8_t *)_Data), length(_Length) {}
 	const uint8_t &operator[](const int64_t index) const { Assert(index < length); return data[index]; }
 	uint8_t &operator[](const int64_t index) { Assert(index < length); return data[index]; }
 };

@@ -1,5 +1,5 @@
 #pragma once
-#include "Common.h"
+#include "KrCommon.h"
 
 #include <string.h>
 

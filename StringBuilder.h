@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Common.h"
+#include "KrCommon.h"
 
 constexpr uint32_t STRING_BUILDER_BUCKET_SIZE = 16 * 1024;
 
