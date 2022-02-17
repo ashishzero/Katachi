@@ -290,14 +290,11 @@ struct Thread_Scratchpad {
 //
 //
 
-typedef void *(*Memory_Allocate_Proc)(size_t size, void *context);
-typedef void *(*Memory_Reallocate_Proc)(void *ptr, size_t previous_size, size_t new_size, void *context);
-typedef void (*Memory_Free_Proc)(void *ptr, void *context);
+enum Allocation_Kind { ALLOCATION_KIND_ALLOC, ALLOCATION_KIND_REALLOC, ALLOCATION_KIND_FREE };
+typedef void *(*Memory_Allocator_Proc)(Allocation_Kind kind, void *mem, size_t prev_size, size_t new_size, void *context);
 
 struct Memory_Allocator {
-	Memory_Allocate_Proc allocate;
-	Memory_Reallocate_Proc reallocate;
-	Memory_Free_Proc free;
+	Memory_Allocator_Proc proc;
 	void *context;
 };
 
@@ -335,16 +332,16 @@ struct Thread_Context_Params {
 void InitThreadContext(uint32_t scratchpad_size, Thread_Context_Params *params = nullptr);
 
 
-void *MemoryAllocate(size_t size, Memory_Allocator &allocator = ThreadContext.allocator);
-void *MemoryReallocate(size_t old_size, size_t new_size, void *ptr, Memory_Allocator &allocator = ThreadContext.allocator);
-void MemoryFree(void *ptr, Memory_Allocator &allocator = ThreadContext.allocator);
+void *MemoryAllocate(size_t size, Memory_Allocator allocator = ThreadContext.allocator);
+void *MemoryReallocate(size_t old_size, size_t new_size, void *ptr, Memory_Allocator allocator = ThreadContext.allocator);
+void MemoryFree(void *ptr, Memory_Allocator allocator = ThreadContext.allocator);
 
-void *operator new(size_t size, Memory_Allocator &allocator);
-void *operator new[](size_t size, Memory_Allocator &allocator);
+void *operator new(size_t size, Memory_Allocator allocator);
+void *operator new[](size_t size, Memory_Allocator allocator);
 void *operator new(size_t size);
 void *operator new[](size_t size);
-void  operator delete(void *ptr, Memory_Allocator &allocator);
-void  operator delete[](void *ptr, Memory_Allocator &allocator);
+void  operator delete(void *ptr, Memory_Allocator allocator);
+void  operator delete[](void *ptr, Memory_Allocator allocator);
 void  operator delete(void *ptr) noexcept;
 void  operator delete[](void *ptr) noexcept;
 

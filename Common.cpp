@@ -163,31 +163,49 @@ static void *MemoryArenaAllocatorReallocate(void *ptr, size_t previous_size, siz
 
 static void MemoryArenaAllocatorFree(void *ptr, void *context) {}
 
+static void *MemoryArenaAllocatorProc(Allocation_Kind kind, void *mem, size_t prev_size, size_t new_size, void *context) {
+	if (kind == ALLOCATION_KIND_ALLOC) {
+		return MemoryArenaAllocatorAllocate(new_size, context);
+	} else if (kind == ALLOCATION_KIND_REALLOC) {
+		return MemoryArenaAllocatorReallocate(mem, prev_size, new_size, context);
+	} else {
+		MemoryArenaAllocatorFree(mem, context);
+		return nullptr;
+	}
+}
+
 Memory_Allocator MemoryArenaAllocator(Memory_Arena *arena) {
 	Memory_Allocator allocator;
-	allocator.allocate = MemoryArenaAllocatorAllocate;
-	allocator.reallocate = MemoryArenaAllocatorReallocate;
-	allocator.free = MemoryArenaAllocatorFree;
+	allocator.proc = MemoryArenaAllocatorProc;
 	allocator.context = arena;
 	return allocator;
 }
 
-static void *NullMemoryAllocate(size_t size, void *ptr) { return nullptr; }
-static void *NullMemoryReallocate(void *ptr, size_t prev_size, size_t size, void *ctx) { return nullptr; }
-static void NullMemoryFree(void *ptr, void *context) {}
+static void *NullMemoryAllocatorProc(Allocation_Kind kind, void *mem, size_t prev_size, size_t new_size, void *context) {
+	return nullptr;
+}
 
 Memory_Allocator NullMemoryAllocator() {
 	Memory_Allocator allocator;
-	allocator.allocate = NullMemoryAllocate;
-	allocator.reallocate = NullMemoryReallocate;
-	allocator.free = NullMemoryFree;
+	allocator.proc = NullMemoryAllocatorProc;
 	allocator.context = NULL;
 	return allocator;
 }
 
-static void *DefaultMemoryAllocateProc(size_t size, void *context);
-static void *DefaultMemoryReallocateProc(void *ptr, size_t previous_size, size_t new_size, void *context);
-static void DefaultMemoryFreeProc(void *ptr, void *context);
+static void *DefaultMemoryAllocate(size_t size, void *context);
+static void *DefaultMemoryReallocate(void *ptr, size_t previous_size, size_t new_size, void *context);
+static void DefaultMemoryFree(void *ptr, void *context);
+
+static void *DefaultMemorAllocatorProc(Allocation_Kind kind, void *mem, size_t prev_size, size_t new_size, void *context) {
+	if (kind == ALLOCATION_KIND_ALLOC) {
+		return DefaultMemoryAllocate(new_size, context);
+	} else if (kind == ALLOCATION_KIND_REALLOC) {
+		return DefaultMemoryReallocate(mem, prev_size, new_size, context);
+	} else {
+		DefaultMemoryFree(mem, context);
+		return nullptr;
+	}
+}
 
 static void InitOSContent();
 
@@ -203,10 +221,8 @@ void InitThreadContext(uint32_t scratchpad_size, Thread_Context_Params *params) 
 	}
 
 	if (!params) {
-		if (!ThreadContextDefaultParams.allocator.allocate) {
-			ThreadContextDefaultParams.allocator.allocate = DefaultMemoryAllocateProc;
-			ThreadContextDefaultParams.allocator.reallocate = DefaultMemoryReallocateProc;
-			ThreadContextDefaultParams.allocator.free = DefaultMemoryFreeProc;
+		if (!ThreadContextDefaultParams.allocator.proc) {
+			ThreadContextDefaultParams.allocator.proc = DefaultMemorAllocatorProc;
 		}
 
 		params = &ThreadContextDefaultParams;
@@ -219,48 +235,48 @@ void InitThreadContext(uint32_t scratchpad_size, Thread_Context_Params *params) 
 //
 //
 
-void *MemoryAllocate(size_t size, Memory_Allocator &allocator) {
-	return allocator.allocate(size, allocator.context);
+void *MemoryAllocate(size_t size, Memory_Allocator allocator) {
+	return allocator.proc(ALLOCATION_KIND_ALLOC, nullptr, 0, size, allocator.context);
 }
 
-void *MemoryReallocate(size_t old_size, size_t new_size, void *ptr, Memory_Allocator &allocator) {
-	return allocator.reallocate(ptr, old_size, new_size, allocator.context);
+void *MemoryReallocate(size_t old_size, size_t new_size, void *ptr, Memory_Allocator allocator) {
+	return allocator.proc(ALLOCATION_KIND_REALLOC, ptr, old_size, new_size, allocator.context);
 }
 
-void MemoryFree(void *ptr, Memory_Allocator &allocator) {
-	allocator.free(ptr, allocator.context);
+void MemoryFree(void *ptr, Memory_Allocator allocator) {
+	allocator.proc(ALLOCATION_KIND_FREE, ptr, 0, 0, allocator.context);
 }
 
-void *operator new(size_t size, Memory_Allocator &allocator) {
-	return allocator.allocate(size, allocator.context);
+void *operator new(size_t size, Memory_Allocator allocator) {
+	return allocator.proc(ALLOCATION_KIND_ALLOC, nullptr, 0, size, allocator.context);
 }
 
-void *operator new[](size_t size, Memory_Allocator &allocator) {
-	return allocator.allocate(size, allocator.context);
+void *operator new[](size_t size, Memory_Allocator allocator) {
+	return allocator.proc(ALLOCATION_KIND_ALLOC, nullptr, 0, size, allocator.context);
 }
 
 void *operator new(size_t size) {
-	return ThreadContext.allocator.allocate(size, ThreadContext.allocator.context);
+	return ThreadContext.allocator.proc(ALLOCATION_KIND_ALLOC, nullptr, 0, size, ThreadContext.allocator.context);
 }
 
 void *operator new[](size_t size) {
-	return ThreadContext.allocator.allocate(size, ThreadContext.allocator.context);
+	return ThreadContext.allocator.proc(ALLOCATION_KIND_ALLOC, nullptr, 0, size, ThreadContext.allocator.context);
 }
 
-void operator delete(void *ptr, Memory_Allocator &allocator) {
-	allocator.free(ptr, allocator.context);
+void operator delete(void *ptr, Memory_Allocator allocator) {
+	allocator.proc(ALLOCATION_KIND_FREE, ptr, 0, 0, allocator.context);
 }
 
-void operator delete[](void *ptr, Memory_Allocator &allocator) {
-	allocator.free(ptr, allocator.context);
+void operator delete[](void *ptr, Memory_Allocator allocator) {
+	allocator.proc(ALLOCATION_KIND_FREE, ptr, 0, 0, allocator.context);
 }
 
 void operator delete(void *ptr) noexcept {
-	ThreadContext.allocator.free(ptr, ThreadContext.allocator.context);
+	ThreadContext.allocator.proc(ALLOCATION_KIND_FREE, ptr, 0, 0, ThreadContext.allocator.context);
 }
 
 void operator delete[](void *ptr) noexcept {
-	ThreadContext.allocator.free(ptr, ThreadContext.allocator.context);
+	ThreadContext.allocator.proc(ALLOCATION_KIND_FREE, ptr, 0, 0, ThreadContext.allocator.context);
 }
 
 //
@@ -275,12 +291,12 @@ static void InitOSContent() {
 	SetConsoleCP(CP_UTF8);
 }
 
-static void *DefaultMemoryAllocateProc(size_t size, void *context) {
+static void *DefaultMemoryAllocate(size_t size, void *context) {
 	HANDLE heap = GetProcessHeap();
 	return HeapAlloc(heap, 0, size);
 }
 
-static void *DefaultMemoryReallocateProc(void *ptr, size_t previous_size, size_t new_size, void *context) {
+static void *DefaultMemoryReallocate(void *ptr, size_t previous_size, size_t new_size, void *context) {
 	HANDLE heap = GetProcessHeap();
 	if (ptr) {
 		return HeapReAlloc(heap, 0, ptr, new_size);
@@ -289,7 +305,7 @@ static void *DefaultMemoryReallocateProc(void *ptr, size_t previous_size, size_t
 	}
 }
 
-static void DefaultMemoryFreeProc(void *ptr, void *context) {
+static void DefaultMemoryFree(void *ptr, void *context) {
 	HANDLE heap = GetProcessHeap();
 	HeapFree(heap, 0, ptr);
 }
@@ -318,15 +334,15 @@ bool VirtualMemoryFree(void *ptr, size_t size) {
 
 static void InitOSContent() {}
 
-static void *DefaultMemoryAllocateProc(size_t size, void *context) {
+static void *DefaultMemoryAllocate(size_t size, void *context) {
 	return malloc(size);
 }
 
-static void *DefaultMemoryReallocateProc(void *ptr, size_t previous_size, size_t new_size, void *context) {
+static void *DefaultMemoryReallocate(void *ptr, size_t previous_size, size_t new_size, void *context) {
 	return realloc(ptr, new_size);
 }
 
-static void DefaultMemoryFreeProc(void *ptr, void *context) {
+static void DefaultMemoryFree(void *ptr, void *context) {
 	free(ptr);
 }
 
