@@ -13,6 +13,7 @@ int JsonWriteEndObject(Json_Builder *json);
 int JsonWriteBeginArray(Json_Builder *json);
 int JsonWriteEndArray(Json_Builder *json);
 int JsonWriteKey(Json_Builder *json, String key);
+int JsonWriteNull(Json_Builder *json);
 int JsonWriteString(Json_Builder *json, String value);
 int JsonWriteBool(Json_Builder *json, bool value);
 int JsonWriteNumber(Json_Builder *json, int64_t value);
@@ -74,3 +75,9 @@ Json *JsonObjectFind(Json_Object *json, String key);
 //
 
 bool JsonParse(String json_string, Json *out_json, Memory_Allocator allocator = ThreadContext.allocator);
+
+//
+//
+//
+
+void JsonBuild(Json_Builder *builder, const Json &json);

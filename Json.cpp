@@ -56,6 +56,12 @@ int JsonWriteKey(Json_Builder *json, String key) {
 	return written;
 }
 
+int JsonWriteNull(Json_Builder *json) {
+	int written = Write(json->builder, "null");
+	json->depth |= 0x1;
+	return written;
+}
+
 int JsonWriteString(Json_Builder *json, String value) {
 	int written = WriteFormatted(json->builder, "\"%\"", value);
 	json->depth |= 0x1;
@@ -631,4 +637,38 @@ bool JsonParse(String json_string, Json *out_json, Memory_Allocator allocator) {
 		*out_json = {};
 	}
 	return parsed;
+}
+
+//
+//
+//
+
+void JsonBuild(Json_Builder *builder, const Json &json) {
+	auto type = json.type;
+
+	if (type == JSON_TYPE_NULL)
+		JsonWriteNull(builder);
+	else if (type == JSON_TYPE_BOOL)
+		JsonWriteBool(builder, json.value.boolean);
+	else if (type == JSON_TYPE_NUMBER)
+		JsonWriteNumber(builder, json.value.number);
+	else if (type == JSON_TYPE_STRING)
+		JsonWriteString(builder, json.value.string);
+	else if (type == JSON_TYPE_ARRAY) {
+		JsonWriteBeginArray(builder);
+		for (auto &e : json.value.array)
+			JsonBuild(builder, e);
+		JsonWriteEndArray(builder);
+	}
+	else if (type == JSON_TYPE_OBJECT) {
+		JsonWriteBeginObject(builder);
+		for (auto &p : json.value.object) {
+			JsonWriteKey(builder, p.key);
+			JsonBuild(builder, p.value);
+		}
+		JsonWriteEndObject(builder);
+	}
+	else {
+		Unreachable();
+	}
 }
