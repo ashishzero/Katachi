@@ -35,6 +35,11 @@ int Write(String_Builder *builder, void *value);
 int Write(String_Builder *builder, const char *value);
 int Write(String_Builder *builder, String value);
 
+template <int64_t _Length>
+int Write(String_Builder *builder, const char(&a)[_Length]) {
+	return Write(builder, String(a, _Length));
+}
+
 int WriteFormatted(String_Builder *builder, const char *format);
 
 template <typename Type, typename ...Args>

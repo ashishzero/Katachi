@@ -151,6 +151,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Json.cpp" />
     <ClCompile Include="KrBasic.cpp" />
     <ClCompile Include="KrCommon.cpp" />
     <ClCompile Include="Main.cpp" />
@@ -158,6 +159,7 @@
     <ClCompile Include="StringBuilder.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Json.h" />
     <ClInclude Include="KrBasic.h" />
     <ClInclude Include="KrCommon.h" />
     <ClInclude Include="Discord.h" />
