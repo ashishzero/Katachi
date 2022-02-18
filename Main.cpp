@@ -755,7 +755,7 @@ void JsonPrint(const Json *json, int depth = 0) {
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
 
-	Table<String, int> table;
+	STable<int> table;
 
 	table.Put("one", 1);
 	table.Put("two", 2);
