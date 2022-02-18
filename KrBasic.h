@@ -224,7 +224,7 @@ struct Index_Table {
 void IndexTableResize(Index_Table *table, size_t slot_count_pow2, Memory_Allocator allocator);
 
 //
-//
+// https://github.com/nothings/stb/blob/master/stb_ds.h
 //
 
 template <typename T> 

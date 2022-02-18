@@ -36,7 +36,7 @@
 		</Expand>
 	</Type>
 
-	<Type Name="Table">
+	<Type Name="Table&lt;*&gt;">
 		<DisplayString>{{ count={storage.count} }}</DisplayString>
 		<Expand>
 			<Item Name="[index]" ExcludeView="simple">index</Item>
