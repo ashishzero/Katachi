@@ -27,6 +27,9 @@
     <ClCompile Include="Network.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="KrBasic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="KrCommon.h">
