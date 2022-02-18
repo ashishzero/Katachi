@@ -840,12 +840,12 @@ int main(int argc, char **argv) {
 
 	// Send header
 	for (auto buk = &builder.head; buk; buk = buk->next) {
-		int bytes_sent = NetWriteSecured(&net, buk->data, buk->written);
+		int bytes_sent = NetWriteSecured(&net, buk->data, (int)buk->written);
 	}
 
 	// Send Content
 	for (auto buk = &content_builder.head; buk; buk = buk->next) {
-		int bytes_sent = NetWriteSecured(&net, buk->data, buk->written);
+		int bytes_sent = NetWriteSecured(&net, buk->data, (int)buk->written);
 	}
 
 	static char buffer[4096 * 2];

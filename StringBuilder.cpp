@@ -5,20 +5,7 @@
 
 static String_Builder::Bucket *StringBuilderNewBucket(String_Builder *builder) {
 	if (builder->free_list == nullptr) {
-		const int bucket_allocation_count = 4;
-
-		const size_t allocation_size = sizeof(String_Builder::Bucket) * bucket_allocation_count;
-		auto buckets = (String_Builder::Bucket *)MemoryAllocate(allocation_size, builder->allocator);
-
-		for (int i = 0; i < bucket_allocation_count - 1; ++i) {
-			buckets[i].next = &buckets[i + 1];
-			buckets[i].flags = 0;
-		}
-
-		buckets[0].flags |= STRING_BUILDER_BUCKET_ALLOCATED;
-		buckets[bucket_allocation_count - 1].next = nullptr;
-		buckets[bucket_allocation_count - 1].flags = 0;
-		builder->free_list = buckets;
+		builder->free_list = new(builder->allocator) String_Builder::Bucket;
 	}
 
 	auto buk = builder->free_list;
@@ -79,12 +66,6 @@ int Write(String_Builder *builder, uint32_t value) {
 int Write(String_Builder *builder, int64_t value) {
 	char buffer[128];
 	int written = snprintf(buffer, sizeof(buffer), "%zd", value);
-	return WriteBuffer(builder, &buffer, written);
-}
-
-int Write(String_Builder *builder, FormatHex value) {
-	char buffer[128];
-	int written = snprintf(buffer, sizeof(buffer), "%zx", value.value);
 	return WriteBuffer(builder, &buffer, written);
 }
 
@@ -156,31 +137,7 @@ void ResetBuilder(String_Builder *builder) {
 void FreeBuilder(String_Builder *builder) {
 	ResetBuilder(builder);
 
-	// Find the first allocated bucket
 	auto root = builder->free_list;
-	while (root) {
-		if (root->flags & STRING_BUILDER_BUCKET_ALLOCATED) {
-			break;
-		}
-		root = root->next;
-	}
-
-	if (root) {
-		// Remove the buckets that are not allocated from the free-list
-		auto parent = root;
-		for (auto iter = parent->next; iter; ) {
-			if (iter->flags & STRING_BUILDER_BUCKET_ALLOCATED) {
-				parent = iter;
-				iter = iter->next;
-			}
-			else {
-				parent->next = iter->next;
-				iter = iter->next;
-			}
-		}
-	}
-
-	// Finally free the buckets
 	while (root) {
 		auto ptr = root;
 		root = root->next;

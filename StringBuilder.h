@@ -4,15 +4,10 @@
 
 constexpr uint32_t STRING_BUILDER_BUCKET_SIZE = 16 * 1024;
 
-enum {
-	STRING_BUILDER_BUCKET_ALLOCATED = 0x1
-};
-
 struct String_Builder {
 	struct Bucket {
 		Bucket *next = nullptr;
 		int32_t written = 0;
-		int32_t flags = 0;
 		uint8_t data[STRING_BUILDER_BUCKET_SIZE];
 	};
 
@@ -27,19 +22,12 @@ struct String_Builder {
 };
 
 int WriteBuffer(String_Builder *builder, void *buffer, int64_t size);
-
-struct FormatHex {
-	int64_t value;
-	FormatHex(int64_t v): value(v){}
-};
-
 int Write(String_Builder *builder, bool value);
 int Write(String_Builder *builder, char value);
 int Write(String_Builder *builder, uint8_t value);
 int Write(String_Builder *builder, int32_t value);
 int Write(String_Builder *builder, uint32_t value);
 int Write(String_Builder *builder, int64_t value);
-int Write(String_Builder *builder, FormatHex value);
 int Write(String_Builder *builder, uint64_t value);
 int Write(String_Builder *builder, float value);
 int Write(String_Builder *builder, double value);
