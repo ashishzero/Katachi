@@ -752,20 +752,6 @@ void JsonPrint(const Json *json, int depth = 0) {
 	}
 }
 
-constexpr uint32_t STRING_MEMORY_ARENA_BLOCK_SIZE_MIN = 512;
-constexpr uint32_t STRING_MEMORY_ARENA_BLOCK_SIZE_MAX = 1u << 20;
-
-struct String_Memory_Arena {
-	struct Block {
-		Block *next;
-		char storage[8];
-	};
-
-	Block *block;
-	uint32_t remaining;
-	uint32_t block_size;
-};
-
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
 
