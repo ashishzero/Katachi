@@ -33,7 +33,7 @@ int JsonWriteNextElement(Json_Builder *json) {
 }
 
 int JsonWriteBeginObject(Json_Builder *json) {
-	//Assert(json->depth & 0x8000000000000000 == 0);
+	Assert((json->depth & 0x8000000000000000) == 0);
 	int written = JsonWriteNextElement(json);
 	json->depth = json->depth << 1;
 	return written + Write(json->builder, "{");
@@ -45,7 +45,7 @@ int JsonWriteEndObject(Json_Builder *json) {
 }
 
 int JsonWriteBeginArray(Json_Builder *json) {
-	//Assert(json->depth & 0x8000000000000000 == 0);
+	Assert((json->depth & 0x8000000000000000) == 0);
 	int written = JsonWriteNextElement(json);
 	json->depth = json->depth << 1;
 	return written + Write(json->builder, "[");
