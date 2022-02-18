@@ -807,6 +807,7 @@ int main(int argc, char **argv) {
 
 	JsonPrint(&parser.parsed_json);
 
+	JsonFree(&parser.parsed_json);
 
 	NetInit();
 
