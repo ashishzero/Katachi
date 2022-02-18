@@ -155,7 +155,7 @@ union Json_Value {
 	Json_Number number;
 	Json_String string;
 	Json_Array array;
-	Json_Object *object;
+	Json_Object object;
 	Json_Value() {}
 };
 
@@ -169,10 +169,10 @@ void JsonFree(Json *json) {
 	if (type == JSON_TYPE_ARRAY) {
 		Free(&json->value.array);
 	} else if (type == JSON_TYPE_OBJECT) {
-		for (auto &item : *json->value.object) {
+		for (auto &item : json->value.object) {
 			JsonFree(&item.value);
 		}
-		Free(json->value.object);
+		Free(&json->value.object);
 	}
 }
 
@@ -183,7 +183,7 @@ Json JsonFromArray(Json_Array arr) {
 	return json;
 }
 
-Json JsonFromObject(Json_Object *object) {
+Json JsonFromObject(Json_Object object) {
 	Json json;
 	json.type = JSON_TYPE_OBJECT;
 	json.value.object = object;
@@ -233,7 +233,7 @@ void JsonObjectPutArray(Json_Object *json, String key, Json_Array array) {
 	JsonObjectPut(json, key, value);
 }
 
-void JsonObjectPutObject(Json_Object *json, String key, Json_Object *object) {
+void JsonObjectPutObject(Json_Object *json, String key, Json_Object object) {
 	Json value;
 	value.type = JSON_TYPE_OBJECT;
 	value.value.object = object;
@@ -638,9 +638,9 @@ bool JsonParseObject(Json_Parser *parser, Json *json) {
 				return true;
 
 			json->type = JSON_TYPE_OBJECT;
-			json->value.object = new(parser->allocator) Json_Object(parser->allocator);
+			json->value.object = Json_Object(parser->allocator);
 
-			if (JsonParseBody(parser, json->value.object)) {
+			if (JsonParseBody(parser, &json->value.object)) {
 				return JsonParseExpectToken(parser, JSON_TOKEN_CLOSE_CURLY_BRACKET);
 			}
 		}
@@ -717,14 +717,14 @@ void JsonPrintArray(Array_View<struct Json> arr, int depth) {
 	printf(" ]");
 }
 
-void JsonPrintObject(Json_Object *json, int depth) {
+void JsonPrintObject(Array_View<Json_Object::Pair> json, int depth) {
 	depth += 1;
 	printf("{\n");
-	for (const auto &it : *json) {
+	for (const auto &it : json) {
 		JsonPrintIndent(depth);
 		printf("%.*s: ", (int)it.key.length, it.key.data);
 		JsonPrint(&it.value, depth);
-		if (&it != &json->storage.Last())
+		if (&it != &json.Last())
 			printf(",\n");
 	}
 	printf("\n");
@@ -746,7 +746,7 @@ void JsonPrint(const Json *json, int depth = 0) {
 	} else if (type == JSON_TYPE_ARRAY) {
 		JsonPrintArray(json->value.array, depth);
 	} else if (type == JSON_TYPE_OBJECT) {
-		JsonPrintObject(json->value.object, depth);
+		JsonPrintObject(json->value.object.storage, depth);
 	} else {
 		Unreachable();
 	}
