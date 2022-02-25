@@ -65,13 +65,13 @@ int Write(String_Builder *builder, uint32_t value) {
 
 int Write(String_Builder *builder, int64_t value) {
 	char buffer[128];
-	int written = snprintf(buffer, sizeof(buffer), "%ld", value);
+	int written = snprintf(buffer, sizeof(buffer), "%lld", value);
 	return WriteBuffer(builder, &buffer, written);
 }
 
 int Write(String_Builder *builder, uint64_t value) {
 	char buffer[128];
-	int written = snprintf(buffer, sizeof(buffer), "%lu", value);
+	int written = snprintf(buffer, sizeof(buffer), "%llu", value);
 	return WriteBuffer(builder, &buffer, written);
 }
 

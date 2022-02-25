@@ -227,10 +227,11 @@ void NetCloseConnection(Net_Socket *net) {
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
 	#if PLATFORM_WINDOWS
-	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	int flags = 0;
 	#else
-	int written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
+	int flags = MSG_NOSIGNAL;
 	#endif
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, flags);
 
 	if (written <= 0) {
 		#if PLATFORM_WINDOWS
@@ -240,7 +241,7 @@ int NetWrite(Net_Socket *net, void *buffer, int length) {
 		#endif
 
 		if (should_reconnect && NetReconnect(net) == Net_Ok) {
-			written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
+			int written = send((SOCKET)net->descriptor, (char *)buffer, length, flags);
 		}
 	}
 

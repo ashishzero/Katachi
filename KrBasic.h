@@ -202,7 +202,7 @@ constexpr size_t TABLE_BUCKET_SIZE = sizeof(size_t);
 constexpr size_t TABLE_BUCKET_SHIFT = (TABLE_BUCKET_SIZE == 8 ? 3 : 2);
 constexpr size_t TABLE_BUCKET_MASK = TABLE_BUCKET_SIZE - 1;
 
-static_assert(TABLE_BUCKET_SIZE == 8 || TABLE_BUCKET_SIZE == 4);
+static_assert(TABLE_BUCKET_SIZE == 8 || TABLE_BUCKET_SIZE == 4, "Invalid size for table buckets");
 
 struct Index_Bucket {
 	int8_t flags[TABLE_BUCKET_SIZE] = {};
