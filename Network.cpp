@@ -104,7 +104,7 @@ void NetShutdown() {
 //
 //
 
-Net_Result NetConnect(Net_Socket *net) {
+static Net_Result NetConnect(Net_Socket *net) {
     addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -146,15 +146,19 @@ Net_Result NetConnect(Net_Socket *net) {
 	}
 
 	net->descriptor = (int64_t)socket_handle;
-
-	if (net->handle) {
-		SSL *ssl = (SSL *)net->handle;
-		SSL_shutdown(ssl);
-		SSL_free(ssl);
-	}
-
 	net->handle = nullptr;
 
+	return Net_Ok;
+}
+
+static Net_Result NetReconnect(Net_Socket *net) {
+	bool handshake = (net->handle != nullptr);
+	NetCloseConnection(net);
+	if (NetConnect(net) == Net_Ok) {
+		if (handshake) {
+			return NetPerformTSLHandshake(net);
+		}
+	}
 	return Net_Ok;
 }
 
@@ -217,18 +221,25 @@ void NetCloseConnection(Net_Socket *net) {
 		SSL_free(ssl);
 	}
 	closesocket((SOCKET)net->descriptor);
+	net->handle = nullptr;
+	net->descriptor = INVALID_SOCKET;
 }
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
+	#if PLATFORM_WINDOWS
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	#else
 	int written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
+	#endif
 
-	if (written <= 0 && errno == EPIPE) {
-		bool handshake = (net->handle != nullptr);
-		if (NetConnect(net) == Net_Ok) {
-			if (handshake) {
-				if (NetPerformTSLHandshake(net) != Net_Ok)
-					return written;
-			}
+	if (written <= 0) {
+		#if PLATFORM_WINDOWS
+		bool should_reconnect = (WSAGetLastError() == WSAECONNRESET);
+		#else
+		bool should_reconnect = (errno == EPIPE);
+		#endif
+
+		if (should_reconnect && NetReconnect(net) == Net_Ok) {
 			written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
 		}
 	}
@@ -244,12 +255,7 @@ int NetWriteSecured(Net_Socket *net, void *buffer, int length) {
 	int written = SSL_write((SSL *)net->handle, (char *)buffer, length);
 
 	if (written <= 0 && SSL_get_error((SSL *)net->handle, written) == SSL_ERROR_WANT_CONNECT) {
-		bool handshake = (net->handle != nullptr);
-		if (NetConnect(net) == Net_Ok) {
-			if (handshake) {
-				if (NetPerformTSLHandshake(net) != Net_Ok)
-					return written;
-			}
+		if (NetReconnect(net) == Net_Ok) {
 			written = SSL_write((SSL *)net->handle, (char *)buffer, length);
 		}
 	}
