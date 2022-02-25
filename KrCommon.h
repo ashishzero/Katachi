@@ -38,7 +38,7 @@
 #elif defined(macintosh) || defined(Macintosh)
 #define PLATFORM_MAC 1
 #elif defined(__APPLE__) && defined(__MACH__)
-#define PLATFORM_MAC 1
+#defined PLATFORM_MAC 1
 #elif defined(__APPLE__)
 #define PLATFORM_IOS 1
 #elif defined(_WIN64) || defined(_WIN32)
@@ -269,8 +269,8 @@ void *PushSizeAligned(Memory_Arena *arena, size_t size, uint32_t alignment);
 bool SetAllocationPosition(Memory_Arena *arena, size_t pos);
 
 #define PushType(arena, type) (type *)PushSize(arena, sizeof(type))
-#define PushArray(arena, type, count) (type *)PushSize(arena, sizeof(type) * count)
-#define PushArrayAligned(arena, type, count, alignment) (type *)PushSizeAligned(arena, sizeof(type) * count, alignment)
+#define PushArray(arena, type, count) (type *)PushSize(arena, sizeof(type) * (count))
+#define PushArrayAligned(arena, type, count, alignment) (type *)PushSizeAligned(arena, sizeof(type) * (count), alignment)
 
 typedef struct Temporary_Memory {
 	Memory_Arena *arena;
