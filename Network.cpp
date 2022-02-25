@@ -14,7 +14,7 @@
 #pragma comment(lib, "openssl/libssl_static.lib")
 #endif
 
-#if PLATFORM_LINUX
+#if PLATFORM_LINUX || PLATFORM_MAC
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -36,6 +36,10 @@ Net_Result NetInit() {
 		Unimplemented();
 		return Net_Error;
 	}
+#endif
+
+#if PALTFORM_LINUX || PLATFORM_MAC
+	signal(SIGPIPE, SIG_IGN);
 #endif
 
 	SSL_library_init();
@@ -76,7 +80,7 @@ Net_Result NetInit() {
 	CertFreeCertificateContext(cert_context);
 #endif
 
-#if PLATFORM_LINUX
+#if PLATFORM_LINUX || PLATFORM_MAC
 	long res = SSL_CTX_set_default_verify_paths(DefaultClientContext);
 
 	if (res != 1) {
@@ -100,18 +104,9 @@ void NetShutdown() {
 //
 //
 
-Net_Result NetOpenClientConnection(const String hostname, const String port, Net_Socket *net) {
-	Assert(hostname.length < ArrayCount(net->info.hostname) && port.length < 8);
-
-    net->info.hostname_length = (uint16_t)hostname.length;
-    memcpy(net->info.hostname, hostname.data, hostname.length);
-    net->info.hostname[hostname.length] = 0;
-
+Net_Result NetConnect(Net_Socket *net) {
 	char cport[8];
-	memcpy(cport, port.data, port.length);
-	cport[port.length] = 0;
-
-	net->info.port = htons((uint16_t)atoi(cport));
+	snprintf(cport, sizeof(cport), "%d", (int)net->info.port);
 
     addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
@@ -154,9 +149,33 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 	}
 
 	net->descriptor = (int64_t)socket_handle;
+
+	if (net->handle) {
+		SSL *ssl = (SSL *)net->handle;
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+	}
+
 	net->handle = nullptr;
 
 	return Net_Ok;
+}
+
+Net_Result NetOpenClientConnection(const String hostname, const String port, Net_Socket *net) {
+	Assert(hostname.length < ArrayCount(net->info.hostname) && port.length < 8);
+
+    net->info.hostname_length = (uint16_t)hostname.length;
+    memcpy(net->info.hostname, hostname.data, hostname.length);
+    net->info.hostname[hostname.length] = 0;
+	
+	char cport[8];
+	memcpy(cport, port.data, port.length);
+	cport[port.length] = 0;
+	net->info.port = htons((uint16_t)atoi(cport));
+
+	net->handle = nullptr;
+
+	return NetConnect(net);
 }
 
 Net_Result NetPerformTSLHandshake(Net_Socket *net) {
@@ -206,7 +225,20 @@ void NetCloseConnection(Net_Socket *net) {
 }
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
-	return send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+
+	if (written <= 0 && errno == EPIPE) {
+		bool handshake = (net->handle != nullptr);
+		if (NetConnect(net) == Net_Ok) {
+			if (handshake) {
+				if (NetPerformTSLHandshake(net) != Net_Ok)
+					return written;
+			}
+			written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+		}
+	}
+
+	return written;
 }
 
 int NetRead(Net_Socket *net, void *buffer, int length) {
@@ -214,7 +246,20 @@ int NetRead(Net_Socket *net, void *buffer, int length) {
 }
 
 int NetWriteSecured(Net_Socket *net, void *buffer, int length) {
-	return SSL_write((SSL *)net->handle, buffer, length);
+	int written = SSL_write((SSL *)net->handle, (char *)buffer, length);
+
+	if (written <= 0 && errno == EPIPE) {
+		bool handshake = (net->handle != nullptr);
+		if (NetConnect(net) == Net_Ok) {
+			if (handshake) {
+				if (NetPerformTSLHandshake(net) != Net_Ok)
+					return written;
+			}
+			written = SSL_write((SSL *)net->handle, (char *)buffer, length);
+		}
+	}
+
+	return written;
 }
 
 int NetReadSecured(Net_Socket *net, void *buffer, int length) {

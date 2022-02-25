@@ -3,7 +3,6 @@
 struct Net_Socket {
     int64_t descriptor;
 	void *handle;
-	void *context;
 
     struct {
 	    char hostname[256];
