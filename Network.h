@@ -7,7 +7,7 @@ struct Net_Socket {
     struct {
 	    char hostname[256];
         uint16_t hostname_length;
-	    uint16_t port;
+	    char port[8];
     } info;
 };
 

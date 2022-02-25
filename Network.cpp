@@ -105,16 +105,13 @@ void NetShutdown() {
 //
 
 Net_Result NetConnect(Net_Socket *net) {
-	char cport[8];
-	snprintf(cport, sizeof(cport), "%d", (int)net->info.port);
-
     addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
 	addrinfo *address = nullptr;
-	int error = getaddrinfo(net->info.hostname, cport, &hints, &address);
+	int error = getaddrinfo(net->info.hostname, net->info.port, &hints, &address);
 	if (error) {
 		Unimplemented();
 		return Net_Error;
@@ -167,12 +164,10 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
     net->info.hostname_length = (uint16_t)hostname.length;
     memcpy(net->info.hostname, hostname.data, hostname.length);
     net->info.hostname[hostname.length] = 0;
-	
-	char cport[8];
-	memcpy(cport, port.data, port.length);
-	cport[port.length] = 0;
-	net->info.port = htons((uint16_t)atoi(cport));
 
+	memcpy(net->info.port, port.data, port.length);
+	net->info.port[port.length] = 0;
+	
 	net->handle = nullptr;
 
 	return NetConnect(net);
@@ -225,7 +220,7 @@ void NetCloseConnection(Net_Socket *net) {
 }
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
-	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
 
 	if (written <= 0 && errno == EPIPE) {
 		bool handshake = (net->handle != nullptr);
@@ -234,7 +229,7 @@ int NetWrite(Net_Socket *net, void *buffer, int length) {
 				if (NetPerformTSLHandshake(net) != Net_Ok)
 					return written;
 			}
-			written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+			written = send((SOCKET)net->descriptor, (char *)buffer, length, MSG_NOSIGNAL);
 		}
 	}
 
@@ -248,7 +243,7 @@ int NetRead(Net_Socket *net, void *buffer, int length) {
 int NetWriteSecured(Net_Socket *net, void *buffer, int length) {
 	int written = SSL_write((SSL *)net->handle, (char *)buffer, length);
 
-	if (written <= 0 && errno == EPIPE) {
+	if (written <= 0 && SSL_get_error((SSL *)net->handle, written) == SSL_ERROR_WANT_CONNECT) {
 		bool handshake = (net->handle != nullptr);
 		if (NetConnect(net) == Net_Ok) {
 			if (handshake) {
