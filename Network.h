@@ -20,7 +20,7 @@ Net_Result NetInit();
 void NetShutdown();
 
 Net_Result NetOpenClientConnection(const String hostname, const String port, Net_Socket *net);
-Net_Result NetPerformTSLHandshake(Net_Socket *net);
+Net_Result NetPerformTLSHandshake(Net_Socket *net);
 void NetCloseConnection(Net_Socket *net);
 
 int NetWrite(Net_Socket *net, void *buffer, int length);

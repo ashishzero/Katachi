@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	NetPerformTSLHandshake(&net);
+	NetPerformTLSHandshake(&net);
 
 	const char *token = argv[1];
 

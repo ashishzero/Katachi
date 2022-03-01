@@ -38,7 +38,7 @@ Net_Result NetInit() {
 	}
 #endif
 
-#if PALTFORM_LINUX || PLATFORM_MAC
+#if PLATFORM_LINUX || PLATFORM_MAC
 	signal(SIGPIPE, SIG_IGN);
 #endif
 
@@ -156,7 +156,7 @@ static Net_Result NetReconnect(Net_Socket *net) {
 	NetCloseConnection(net);
 	if (NetConnect(net) == Net_Ok) {
 		if (handshake) {
-			return NetPerformTSLHandshake(net);
+			return NetPerformTLSHandshake(net);
 		}
 	}
 	return Net_Ok;
@@ -177,7 +177,7 @@ Net_Result NetOpenClientConnection(const String hostname, const String port, Net
 	return NetConnect(net);
 }
 
-Net_Result NetPerformTSLHandshake(Net_Socket *net) {
+Net_Result NetPerformTLSHandshake(Net_Socket *net) {
 	SSL *ssl = SSL_new(DefaultClientContext);
 
 	if (!ssl) {
@@ -226,12 +226,7 @@ void NetCloseConnection(Net_Socket *net) {
 }
 
 int NetWrite(Net_Socket *net, void *buffer, int length) {
-	#if PLATFORM_WINDOWS
-	int flags = 0;
-	#else
-	int flags = MSG_NOSIGNAL;
-	#endif
-	int written = send((SOCKET)net->descriptor, (char *)buffer, length, flags);
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
 
 	if (written <= 0) {
 		#if PLATFORM_WINDOWS
@@ -241,7 +236,7 @@ int NetWrite(Net_Socket *net, void *buffer, int length) {
 		#endif
 
 		if (should_reconnect && NetReconnect(net) == Net_Ok) {
-			int written = send((SOCKET)net->descriptor, (char *)buffer, length, flags);
+			written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
 		}
 	}
 

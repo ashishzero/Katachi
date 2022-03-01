@@ -258,7 +258,7 @@ static bool JsonTokenizerEnd(Json_Tokenizer *tokenizer) {
 }
 
 static inline bool JsonIsNumber(uint32_t value) {
-	return value >= '0' && value <= '9';
+	return (value >= '0' && value <= '9') || value == '-' || value == '+';
 }
 
 static inline bool JsonIsWhitespace(uint32_t value) {
