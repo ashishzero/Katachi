@@ -1,4 +1,4 @@
-#include "KrBasic.h"
+#include "Kr/KrBasic.h"
 
 namespace Discord {
 	struct Snowflake {

@@ -1,4 +1,4 @@
-﻿#include "KrBasic.h"
+﻿#include "Kr/KrBasic.h"
 #include "StringBuilder.h"
 #include "Network.h"
 #include "Discord.h"
@@ -25,54 +25,22 @@ static const String Message = u8R"foo(
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
 
-	STable<int> table;
-
-	table.Put("one", 1);
-	table.Put("two", 2);
-	table.Put("three", 3);
-
-	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
-
-	table.Remove("one");
-
-	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
-
-	table.Put("zero", 0);
-
-	for (auto &p : table) { printf("\t%s: %d\n", p.key.data, p.value); }
-
-	auto two = table.FindOrPut("two");
-
-	auto five = table.Find("five");
-
-	auto zero = table.Find("zero");
-
-	Free(&table);
-
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
 	}
 
-	Json parsed_json;
-	bool parsed = JsonParse(Message, &parsed_json);
-
-	printf("JSON parsed: %s...\n", parsed ? "done" : "failed");
-
-	NetInit();
+	Net_Initialize();
 
 	Net_Socket net;
-	if (NetOpenClientConnection("discord.com", "443", &net) != Net_Ok) {
+	if (Net_OpenConnection("discord.com", "443", NET_SOCKET_STREAM, &net) != NET_OK) {
 		return 1;
 	}
 
-	NetPerformTLSHandshake(&net);
+	Net_CreateSecureChannel(&net);
+	Net_VerifyRemoteCertificate(&net);
 
 	const char *token = argv[1];
-
-	String_Builder content_builder;
-	Json_Builder json = JsonBuilderCreate(&content_builder);
-	JsonBuild(&json, parsed_json);
 
 	String_Builder builder;
 
@@ -83,25 +51,23 @@ int main(int argc, char **argv) {
 	WriteFormatted(&builder, "Authorization: Bot %\r\n", token);
 	Write(&builder, "User-Agent: KatachiBot\r\n");
 	Write(&builder, "Connection: keep-alive\r\n");
-	WriteFormatted(&builder, "Host: %\r\n", net.info.hostname);
+	WriteFormatted(&builder, "Host: %\r\n", net.node);
 	WriteFormatted(&builder, "Content-Type: %\r\n", "application/json");
-	WriteFormatted(&builder, "Content-Length: %\r\n", content_builder.written);
+	WriteFormatted(&builder, "Content-Length: %\r\n", Message.length);
 	Write(&builder, "\r\n");
+	WriteBuffer(&builder, Message.data, Message.length);
 
 	// Send header
+	int bytes_sent = 0;
 	for (auto buk = &builder.head; buk; buk = buk->next) {
-		int bytes_sent = NetWriteSecured(&net, buk->data, (int)buk->written);
-	}
-
-	// Send Content
-	for (auto buk = &content_builder.head; buk; buk = buk->next) {
-		int bytes_sent = NetWriteSecured(&net, buk->data, (int)buk->written);
+		Net_WriteSecured(&net, buk->data, (int)buk->written, &bytes_sent);
 	}
 
 	static char buffer[4096 * 2];
 
-	int bytes_received = NetReadSecured(&net, buffer, sizeof(buffer) - 1);
-	bytes_received += NetReadSecured(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received);
+	int bytes_received = 0;
+	Net_ReadSecured(&net, buffer, sizeof(buffer) - 1, &bytes_received);
+	Net_ReadSecured(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received, &bytes_received);
 	if (bytes_received < 1) {
 		Unimplemented();
 	}
@@ -110,11 +76,10 @@ int main(int argc, char **argv) {
 
 	printf("\n%s\n", buffer);
 
-	JsonFree(&parsed_json);
 
-	NetCloseConnection(&net);
+	Net_CloseConnection(&net);
 
-	NetShutdown();
+	Net_Shutdown();
 
 	return 0;
 }

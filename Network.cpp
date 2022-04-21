@@ -1,20 +1,10 @@
 #include "Network.h"
 
-#include <string.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-
 #if PLATFORM_WINDOWS
 #include <Winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
-#pragma comment(lib, "Crypt32.lib")
-
-#pragma comment(lib, "openssl/libcrypto_static.lib")
-#pragma comment(lib, "openssl/libssl_static.lib")
-#endif
-
-#if PLATFORM_LINUX || PLATFORM_MAC
+#elif PLATFORM_LINUX || PLATFORM_MAC
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -25,16 +15,263 @@
 #define INVALID_SOCKET -1
 #endif
 
+#ifdef NETWORK_OPENSSL_ENABLE
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#if PLATFORM_WINDOWS
+#pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "openssl/libcrypto_static.lib")
+#pragma comment(lib, "openssl/libssl_static.lib")
+#endif
+#endif
+
+//
+//
+//
+
+#if PLATFORM_WINDOWS
+static wchar_t *INet_UnicodeToWideChar(Memory_Arena *arena, const char *msg, int length) {
+	wchar_t *result = (wchar_t *)PushSize(arena, (length + 1) * sizeof(wchar_t));
+	int wlen        = MultiByteToWideChar(CP_UTF8, 0, msg, length, result, length + 1);
+	result[wlen]    = 0;
+	return result;
+}
+
+static Net_Result INet_ConvertNativeError(int error) {
+	switch (error) {
+		case WSANOTINITIALISED:     return NET_E_INIT;
+		case WSATRY_AGAIN:          return NET_E_AGAIN;
+		case WSANO_RECOVERY:        return NET_E_FAIL;
+		case WSA_NOT_ENOUGH_MEMORY: return NET_E_MEMORY;
+		case WSAHOST_NOT_FOUND:     return NET_E_NO_NAME;
+		case WSATYPE_NOT_FOUND:     return NET_E_SERVICE;
+		case WSAESOCKTNOSUPPORT:    return NET_E_SOCK_TYPE;
+		case WSAENETDOWN:           return NET_E_DOWN;
+		case WSAEMFILE:             return NET_E_MFILE;
+		case WSAENOBUFS:            return NET_E_NO_BUFFER;
+		case WSAEAFNOSUPPORT:       return NET_E_UNSUPPORTED;
+		case WSAEINVAL:             return NET_E_INVALID_PARAM;
+		case WSAEPROTONOSUPPORT:    return NET_E_UNSUPPORTED_PROTO;
+		case WSAEPROTOTYPE:         return NET_E_UNSUPPORTED_PROTO;
+		case WSAEADDRINUSE:         return NET_E_ADDR_IN_USE;
+		case WSAEALREADY:           return NET_E_ALREADY;
+		case WSAEADDRNOTAVAIL:      return NET_E_INVALID_ADDR;
+		case WSAECONNREFUSED:       return NET_E_CONNECTION_REFUSED;
+		case WSAEFAULT:             return NET_E_FAULT;
+		case WSAEISCONN:            return NET_E_IS_CONNECTED;
+		case WSAENETUNREACH:        return NET_E_NET_UNREACHABLE;
+		case WSAEHOSTUNREACH:       return NET_E_HOST_UNREACHABLE;
+		case WSAENOTSOCK:           return NET_E_INVALID_PARAM;
+		case WSAETIMEDOUT:          return NET_E_TIMED_OUT;
+		case WSAEWOULDBLOCK:        return NET_E_WOULD_BLOCK;
+		case WSAEACCES:             return NET_E_ACCESS;
+		case WSAENETRESET:          return NET_E_RESET;
+		case WSAEOPNOTSUPP:         return NET_E_OP_UNSUPPORTED;
+		case WSAESHUTDOWN:          return NET_E_SHUTDOWN;
+		case WSAEMSGSIZE:           return NET_E_MSG_SIZE;
+		case WSAECONNABORTED:       return NET_E_CONNECTION_ABORTED;
+		case WSAECONNRESET:         return NET_E_CONNECTION_RESET;
+		default:                    return NET_E_SYSTEM;
+	}
+	return NET_E_SYSTEM;
+}
+
+static Net_Result INet_GetLastError() {
+	return INet_ConvertNativeError(WSAGetLastError());
+}
+
+static bool INet_ShouldReconnect() {
+	int error = WSAGetLastError();
+	return error == WSAECONNRESET || error == WSAECONNABORTED;
+}
+
+static Net_Result INet_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, int64_t *pdescriptor) {
+	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
+
+	*pdescriptor = INVALID_SOCKET;
+
+	ADDRINFOW hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SocketTypeMap[type];
+
+	Memory_Arena *scratch = ThreadScratchpad();
+	Temporary_Memory temp = BeginTemporaryMemory(scratch);
+	Defer{ EndTemporaryMemory(&temp); };
+
+	wchar_t *nodename = INet_UnicodeToWideChar(scratch, (char *)node.data, (int)node.length);
+	wchar_t *servicename = INet_UnicodeToWideChar(scratch, (char *)service.data, (int)service.length);
+
+	ADDRINFOW *address = nullptr;
+	int error = GetAddrInfoW(nodename, servicename, &hints, &address);
+	if (error) {
+		return INet_ConvertNativeError(error);
+	}
+
+	SOCKET descriptor = INVALID_SOCKET;
+	for (auto ptr = address; ptr; ptr = ptr->ai_next) {
+		descriptor = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+
+		if (descriptor == INVALID_SOCKET) {
+			FreeAddrInfoW(address);
+			error = WSAGetLastError();
+			return INet_ConvertNativeError(error);
+		}
+
+		error = connect(descriptor, ptr->ai_addr, (int)ptr->ai_addrlen);
+		if (error) {
+			closesocket(descriptor);
+			descriptor = INVALID_SOCKET;
+			continue;
+		}
+
+		break;
+	}
+
+	FreeAddrInfoW(address);
+
+	*pdescriptor = descriptor;
+
+	if (error)
+		return INet_ConvertNativeError(error);
+
+	return NET_OK;
+}
+
+#elif PLATFORM_LINUX || PLATFORM_MAC
+
+static char *INet_StringToCString(Memory_Arena *arena, String src) {
+	char *dst = (char *)PushSize(arena, src.length + 1);
+	memcpy(dst, src.data, src.length);
+	dst[src.length] = 0;
+	return dst;
+}
+
+static Net_Result INet_ConvertNativeError(int error) {
+	Unimplemented();
+	return NET_E_SYSTEM;
+}
+
+static Net_Result INet_GetLastError() {
+	return INet_ConvertNativeError(errno);
+}
+
+static bool Net_ShouldReconnect() {
+	return errno == EPIPE;
+}
+
+static Net_Result INet_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, int32_t *pdescriptor) {
+	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
+
+	*pdescriptor = INVALID_SOCKET;
+
+	addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SocketTypeMap[type];
+
+	Memory_Arena *scratch = ThreadScratchpad();
+	Temporary_Memory temp = BeginTemporaryMemory(scratch);
+	Defer{ EndTemporaryMemory(&temp); };
+
+	char *nodename = INet_StringToCString(scratch, node);
+	char *servicename = INet_StringToCString(scratch, service);
+
+	addrinfo *address = nullptr;
+	int error = getaddrinfo(nodename, servicename, &hints, &address);
+	if (error) {
+		return INet_ConvertNativeError(error);
+	}
+
+	SOCKET descriptor = INVALID_SOCKET;
+	for (auto ptr = address; ptr; ptr = ptr->ai_next) {
+		descriptor = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+
+		if (descriptor == INVALID_SOCKET) {
+			freeaddrinfo(address);
+			return INet_GetLastError();
+		}
+
+		error = connect(descriptor, ptr->ai_addr, (int)ptr->ai_addrlen);
+		if (error) {
+			closesocket(descriptor);
+			descriptor = INVALID_SOCKET;
+			continue;
+		}
+
+		break;
+	}
+
+	freeaddrinfo(address);
+
+	*pdescriptor = descriptor;
+
+	if (error)
+		return INet_ConvertNativeError(error);
+
+	return NET_OK;
+}
+
+#endif
+
+#ifdef NETWORK_OPENSSL_ENABLE
+struct Net_Secure_Channel { ptrdiff_t __unused; };
+
 static SSL_CTX *DefaultClientContext;
 
-Net_Result NetInit() {
+static void INet_LogOpenSSLError() {
+	char message[1024];
+	unsigned long error = ERR_peek_last_error();
+	ERR_error_string_n(error, message, sizeof(message));
+	WriteLogErrorEx("Net:OpenSSL", "%s", message);
+}
+
+static bool INet_ShouldReconnectOpenSSL(SSL *ssl, int written) {
+	return SSL_get_error(ssl, written) == SSL_ERROR_WANT_CONNECT;
+}
+#endif
+
+static Net_Result INet_TryReconnecting(Net_Socket *net) {
+#ifdef NETWORK_OPENSSL_ENABLE
+	bool secure_channel = net->secure_channel ? 1 : 0;
+	uint32_t secure_flags = net->flags;
+#endif
+
+	Net_CloseConnection(net);
+	Net_Result result = INet_OpenSocketDescriptor(net->node, net->service, net->type, &net->descriptor);
+	if (result != NET_OK)
+		return result;
+
+#ifdef NETWORK_OPENSSL_ENABLE
+	if (secure_channel) {
+		Net_CreateSecureChannel(net);
+		if (result != NET_OK)
+			return result;
+
+		if (secure_flags) {
+			return Net_VerifyRemoteCertificate(net);
+		}
+	}
+#endif
+
+	return NET_OK;
+}
+
+inline static SSL *INet_ToSSL(Net_Secure_Channel *channel) { return (SSL *)channel; }
+inline static Net_Secure_Channel *INet_ToSecureChannel(SSL *ssl) { return (Net_Secure_Channel *)ssl; }
+
+//
+//
+//
+
+Net_Result Net_Initialize() {
 #if PLATFORM_WINDOWS
 	WSADATA wsaData;
 	int error = WSAStartup(MAKEWORD(2, 2), &wsaData);
 
 	if (error != 0) {
-		Unimplemented();
-		return Net_Error;
+		WriteLogErrorEx("Net:Windows", "WSAStartup failed with error code: %d", error);
+		return NET_E_INIT;
 	}
 #endif
 
@@ -42,14 +279,15 @@ Net_Result NetInit() {
 	signal(SIGPIPE, SIG_IGN);
 #endif
 
+#ifdef NETWORK_OPENSSL_ENABLE
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
 
 	DefaultClientContext = SSL_CTX_new(TLS_client_method());
 
 	if (!DefaultClientContext) {
-		Unimplemented();
-		return Net_Error;
+		INet_LogOpenSSLError();
+		return NET_E_INIT;
 	}
 
 	SSL_CTX_set_verify(DefaultClientContext, SSL_VERIFY_PEER, nullptr);
@@ -57,14 +295,15 @@ Net_Result NetInit() {
 #if PLATFORM_WINDOWS
 	X509_STORE *store = SSL_CTX_get_cert_store(DefaultClientContext);
 	if (!store) {
-		Unimplemented();
-		return Net_Error;
+		INet_LogOpenSSLError();
+		return NET_E_INIT;
 	}
 
 	HCERTSTORE cert_store = CertOpenSystemStoreW(0, L"ROOT");
 	if (!cert_store) {
-		Unimplemented();
-		return Net_Error;
+		error = GetLastError();
+		WriteLogErrorEx("Net:Windows", "CertOpenSystemStoreW failed with error code: %d", error);
+		return NET_E_INIT;
 	}
 	Defer{ CertCloseStore(cert_store, 0); };
 
@@ -84,16 +323,19 @@ Net_Result NetInit() {
 	long res = SSL_CTX_set_default_verify_paths(DefaultClientContext);
 
 	if (res != 1) {
-		Unimplemented();
-		return Net_Error;
+		Net_LogOpenSSLError();
+		return NET_E_INIT;
 	}
 #endif
+#endif
 
-	return Net_Ok;
+	return NET_OK;
 }
 
-void NetShutdown() {
+void Net_Shutdown() {
+#ifdef NETWORK_OPENSSL_ENABLE
 	SSL_CTX_free(DefaultClientContext);
+#endif
 
 #if PLATFORM_WINDOWS
 	WSACleanup();
@@ -104,161 +346,152 @@ void NetShutdown() {
 //
 //
 
-static Net_Result NetConnect(Net_Socket *net) {
-    addrinfo hints;
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
+Net_Result Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Net_Socket *net, Memory_Allocator allocator) {
+	memset(net, 0, sizeof(*net));
 
-	addrinfo *address = nullptr;
-	int error = getaddrinfo(net->info.hostname, net->info.port, &hints, &address);
-	if (error) {
-		Unimplemented();
-		return Net_Error;
-	}
+	Net_Result result = INet_OpenSocketDescriptor(node, service, type, &net->descriptor);
+	if (result != NET_OK)
+		return result;
 
-	SOCKET socket_handle = INVALID_SOCKET;
+	net->type      = type;
+	net->allocator = allocator;
 
-	for (auto ptr = address; ptr; ptr = ptr->ai_next) {
-		socket_handle = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+	uint8_t *mem = (uint8_t *)MemoryAllocate(node.length + service.length + 2, net->allocator);
 
-		if (socket_handle == -1) {
-			Unimplemented();
-			freeaddrinfo(address);
-			return Net_Error;
-		}
-
-		error = connect(socket_handle, ptr->ai_addr, (int)ptr->ai_addrlen);
-		if (error) {
-			closesocket(socket_handle);
-			socket_handle = INVALID_SOCKET;
-			continue;
-		}
-
-		break;
-	}
-
-	freeaddrinfo(address);
-
-	if (socket_handle == INVALID_SOCKET) {
-		Unimplemented();
-		return Net_Error;
-	}
-
-	net->descriptor = (int64_t)socket_handle;
-	net->handle = nullptr;
-
-	return Net_Ok;
-}
-
-static Net_Result NetReconnect(Net_Socket *net) {
-	bool handshake = (net->handle != nullptr);
-	NetCloseConnection(net);
-	if (NetConnect(net) == Net_Ok) {
-		if (handshake) {
-			return NetPerformTLSHandshake(net);
-		}
-	}
-	return Net_Ok;
-}
-
-Net_Result NetOpenClientConnection(const String hostname, const String port, Net_Socket *net) {
-	Assert(hostname.length < ArrayCount(net->info.hostname) && port.length < 8);
-
-    net->info.hostname_length = (uint16_t)hostname.length;
-    memcpy(net->info.hostname, hostname.data, hostname.length);
-    net->info.hostname[hostname.length] = 0;
-
-	memcpy(net->info.port, port.data, port.length);
-	net->info.port[port.length] = 0;
+	net->node.data      = mem;
+	net->service.data   = mem + node.length + 1;
+	net->node.length    = node.length;
+	net->service.length = service.length;
 	
-	net->handle = nullptr;
+	memcpy(net->node.data, node.data, node.length);
+	memcpy(net->service.data, service.data, service.length);
+	net->node.data[node.length]       = 0;
+	net->service.data[service.length] = 0;
 
-	return NetConnect(net);
+	return NET_OK;
 }
 
-Net_Result NetPerformTLSHandshake(Net_Socket *net) {
+void Net_CloseConnection(Net_Socket *net) {
+#ifdef NETWORK_OPENSSL_ENABLE
+	if (net->secure_channel) {
+		SSL *ssl = INet_ToSSL(net->secure_channel);
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+		net->secure_channel = nullptr;
+	}
+#endif
+
+	closesocket((SOCKET)net->descriptor);
+	net->descriptor = INVALID_SOCKET;
+
+	MemoryFree(net->node.data, net->node.length + net->service.length + 2, net->allocator);
+	net->node    = {};
+	net->service = {};
+	net->flags   = 0;
+}
+
+Net_Result Net_Write(Net_Socket *net, void *buffer, int length, int *written) {
+	*written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+
+	if (*written > 0)
+		return NET_OK;
+
+	if (INet_ShouldReconnect()) {
+		Net_Result result = INet_TryReconnecting(net);
+		if (result == NET_OK) {
+			*written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+			if (*written > 0)
+				return NET_OK;
+			return INet_GetLastError();
+		}
+		return result;
+	}
+
+	return INet_GetLastError();
+}
+
+Net_Result Net_Read(Net_Socket *net, void *buffer, int length, int *read) {
+	*read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	if (*read > 0)
+		return NET_OK;
+	return INet_GetLastError();
+}
+
+
+#ifdef NETWORK_OPENSSL_ENABLE
+Net_Result Net_CreateSecureChannel(Net_Socket *net) {
 	SSL *ssl = SSL_new(DefaultClientContext);
 
 	if (!ssl) {
-		Unimplemented();
-		return Net_Error;
+		INet_LogOpenSSLError();
+		return NET_E_OPENSSL;
 	}
 
-	if (!SSL_set_tlsext_host_name(ssl, net->info.hostname)) {
-		Unimplemented();
-		return Net_Error;
+	if (!SSL_set_tlsext_host_name(ssl, (char *)net->node.data)) {
+		SSL_free(ssl);
+		INet_LogOpenSSLError();
+		return NET_E_OPENSSL;
 	}
 
 	SSL_set_fd(ssl, (int)net->descriptor);
 	if (SSL_connect(ssl) == -1) {
-		Unimplemented();
-		return Net_Error;
+		SSL_free(ssl);
+		INet_LogOpenSSLError();
+		return NET_E_OPENSSL;
 	}
+
+	net->secure_channel = INet_ToSecureChannel(ssl);
+
+	return NET_OK;
+}
+
+Net_Result Net_VerifyRemoteCertificate(Net_Socket *net) {
+	Assert(net->secure_channel);
+
+	SSL *ssl = INet_ToSSL(net->secure_channel);
 
 	X509 *x509 = SSL_get_peer_certificate(ssl);
 	Defer{ X509_free(x509); };
 	if (!x509) {
-		Unimplemented();
-		return Net_Error;
+		INet_LogOpenSSLError();
+		return NET_E_OPENSSL;
 	}
 
 	long res = SSL_get_verify_result(ssl);
 	if (res != X509_V_OK) {
-		Unimplemented();
-		return Net_Error;
+		INet_LogOpenSSLError();
+		return NET_E_OPENSSL;
 	}
 
-	net->handle = ssl;
+	net->flags = 1;
 
-	return Net_Ok;
+	return NET_OK;
 }
 
-void NetCloseConnection(Net_Socket *net) {
-	if (net->handle) {
-		SSL *ssl = (SSL *)net->handle;
-		SSL_shutdown(ssl);
-		SSL_free(ssl);
-	}
-	closesocket((SOCKET)net->descriptor);
-	net->handle = nullptr;
-	net->descriptor = INVALID_SOCKET;
-}
+Net_Result Net_WriteSecured(Net_Socket *net, void *buffer, int length, int *written) {
+	SSL *ssl = INet_ToSSL(net->secure_channel);
+	*written = SSL_write(ssl, (char *)buffer, length);
 
-int NetWrite(Net_Socket *net, void *buffer, int length) {
-	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	if (*written > 0)
+		return NET_OK;
 
-	if (written <= 0) {
-		#if PLATFORM_WINDOWS
-		bool should_reconnect = (WSAGetLastError() == WSAECONNRESET);
-		#else
-		bool should_reconnect = (errno == EPIPE);
-		#endif
-
-		if (should_reconnect && NetReconnect(net) == Net_Ok) {
-			written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
-		}
+	if (INet_ShouldReconnectOpenSSL(ssl, *written)) {
+		*written = SSL_write(ssl, (char *)buffer, length);
+		if (*written > 0)
+			return NET_OK;
 	}
 
-	return written;
+	INet_LogOpenSSLError();
+	return NET_E_OPENSSL;
 }
 
-int NetRead(Net_Socket *net, void *buffer, int length) {
-	return recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+Net_Result Net_ReadSecured(Net_Socket *net, void *buffer, int length, int *read) {
+	SSL *ssl = INet_ToSSL(net->secure_channel);
+	*read = SSL_read(ssl, buffer, length);
+	if (*read > 0)
+		return NET_OK;
+	INet_LogOpenSSLError();
+	return NET_E_OPENSSL;
 }
 
-int NetWriteSecured(Net_Socket *net, void *buffer, int length) {
-	int written = SSL_write((SSL *)net->handle, (char *)buffer, length);
-
-	if (written <= 0 && SSL_get_error((SSL *)net->handle, written) == SSL_ERROR_WANT_CONNECT) {
-		if (NetReconnect(net) == Net_Ok) {
-			written = SSL_write((SSL *)net->handle, (char *)buffer, length);
-		}
-	}
-
-	return written;
-}
-
-int NetReadSecured(Net_Socket *net, void *buffer, int length) {
-	return SSL_read((SSL *)net->handle, buffer, length);
-}
+#endif

@@ -18,26 +18,23 @@
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="KrCommon.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="StringBuilder.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Network.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="KrBasic.cpp">
+    <ClCompile Include="Json.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Json.cpp">
+    <ClCompile Include="Kr\KrBasic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Kr\KrCommon.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="KrCommon.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="StringBuilder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -47,17 +44,20 @@
     <ClInclude Include="Discord.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="KrBasic.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="KrString.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Json.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Kr\KrBasic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Kr\KrCommon.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Kr\KrString.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="KrVisualizer.natvis" />
+    <Natvis Include="Kr\KrVisualizer.natvis" />
   </ItemGroup>
 </Project>
