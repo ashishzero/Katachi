@@ -52,7 +52,6 @@ struct Net_Socket {
 	Net_Secure_Channel *secure_channel;
 #endif
 	int64_t            descriptor;
-	uint32_t           flags;
 	Net_Socket_Type    type;
 	String             node;
 	String             service;
@@ -74,7 +73,6 @@ int          Net_Read(Net_Socket *net, void *buffer, int length);
 
 #ifdef NETWORK_OPENSSL_ENABLE
 uint64_t     Net_CreateSecureChannel(Net_Socket *net);
-uint64_t     Net_VerifyRemoteCertificate(Net_Socket *net);
 int          Net_WriteSecured(Net_Socket *net, void *buffer, int length);
 int          Net_ReadSecured(Net_Socket *net, void *buffer, int length);
 #endif

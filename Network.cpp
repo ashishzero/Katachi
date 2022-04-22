@@ -6,6 +6,7 @@
 #pragma comment(lib, "Ws2_32.lib")
 #elif PLATFORM_LINUX || PLATFORM_MAC
 #include <unistd.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -156,11 +157,11 @@ static Net_Result INet_GetLastError() {
 	return INet_ConvertNativeError(errno);
 }
 
-static bool Net_ShouldReconnect() {
+static bool INet_ShouldReconnect() {
 	return errno == EPIPE;
 }
 
-static Net_Result INet_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, int32_t *pdescriptor) {
+static Net_Result INet_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, int64_t *pdescriptor) {
 	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
 
 	*pdescriptor = INVALID_SOCKET;
@@ -235,7 +236,6 @@ static bool INet_ShouldReconnectOpenSSL(SSL *ssl, int written) {
 static uint64_t INet_TryReconnecting(Net_Socket *net) {
 #ifdef NETWORK_OPENSSL_ENABLE
 	bool secure_channel = net->secure_channel ? 1 : 0;
-	uint32_t secure_flags = net->flags;
 #endif
 
 	Net_CloseConnection(net);
@@ -250,10 +250,6 @@ static uint64_t INet_TryReconnecting(Net_Socket *net) {
 		uint64_t error = Net_CreateSecureChannel(net);
 		if (net->result != NET_OK)
 			return error;
-
-		if (secure_flags) {
-			return Net_VerifyRemoteCertificate(net);
-		}
 	}
 #endif
 
@@ -326,7 +322,7 @@ Net_Result Net_Initialize() {
 	long res = SSL_CTX_set_default_verify_paths(DefaultClientContext);
 
 	if (res != 1) {
-		Net_LogOpenSSLError();
+		INet_LogOpenSSLError();
 		return NET_E_INIT;
 	}
 #endif
@@ -407,7 +403,6 @@ void Net_CloseConnection(Net_Socket *net) {
 	MemoryFree(net->node.data, net->node.length + net->service.length + 2, net->allocator);
 	net->node    = {};
 	net->service = {};
-	net->flags   = 0;
 }
 
 int Net_Write(Net_Socket *net, void *buffer, int length) {
@@ -467,29 +462,6 @@ uint64_t Net_CreateSecureChannel(Net_Socket *net) {
 	}
 
 	net->secure_channel = INet_ToSecureChannel(ssl);
-
-	return NET_OK;
-}
-
-uint64_t Net_VerifyRemoteCertificate(Net_Socket *net) {
-	Assert(net->secure_channel);
-
-	SSL *ssl = INet_ToSSL(net->secure_channel);
-
-	X509 *x509 = SSL_get_peer_certificate(ssl);
-	Defer{ X509_free(x509); };
-	if (!x509) {
-		net->result = NET_E_OPENSSL;
-		return INet_LogOpenSSLError();
-	}
-
-	long res = SSL_get_verify_result(ssl);
-	if (res != X509_V_OK) {
-		net->result = NET_E_OPENSSL;
-		return INet_LogOpenSSLError();
-	}
-
-	net->flags = 1;
 
 	return NET_OK;
 }

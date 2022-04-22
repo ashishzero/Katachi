@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SOURCEFILES="KrCommon.cpp KrBasic.cpp Main.cpp Json.cpp Network.cpp StringBuilder.cpp"
+SOURCEFILES="Kr/KrCommon.cpp Kr/KrBasic.cpp Kr/Main.cpp Kr/Json.cpp Kr/Network.cpp Kr/StringBuilder.cpp"
 OUTPUTFILE=Katachi_Debug
 GCCFLAGS="-g"
 CLANGFLAGS="-gcodeview -Od"

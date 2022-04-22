@@ -22,8 +22,16 @@ static const String Message = u8R"foo(
 }
 )foo";
 
+void LogProcedure(void *context, Log_Level level, const char *source, const char *fmt, va_list args) {
+	FILE *fp = level == LOG_LEVEL_INFO ? stdout : stderr;
+	fprintf(fp, "[%s] ", source);
+	vfprintf(fp, fmt, args);
+	fprintf(fp, "\n");
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
+	ThreadContextSetLogger({ LogProcedure, nullptr });
 
 	if (argc != 2) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
@@ -38,7 +46,6 @@ int main(int argc, char **argv) {
 	}
 
 	Net_CreateSecureChannel(&net);
-	Net_VerifyRemoteCertificate(&net);
 
 	const char *token = argv[1];
 
