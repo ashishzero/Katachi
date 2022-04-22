@@ -219,11 +219,12 @@ struct Net_Secure_Channel { ptrdiff_t __unused; };
 
 static SSL_CTX *DefaultClientContext;
 
-static void INet_LogOpenSSLError() {
+static uint64_t INet_LogOpenSSLError() {
 	char message[1024];
 	unsigned long error = ERR_peek_last_error();
 	ERR_error_string_n(error, message, sizeof(message));
 	WriteLogErrorEx("Net:OpenSSL", "%s", message);
+	return error;
 }
 
 static bool INet_ShouldReconnectOpenSSL(SSL *ssl, int written) {
@@ -231,7 +232,7 @@ static bool INet_ShouldReconnectOpenSSL(SSL *ssl, int written) {
 }
 #endif
 
-static Net_Result INet_TryReconnecting(Net_Socket *net) {
+static uint64_t INet_TryReconnecting(Net_Socket *net) {
 #ifdef NETWORK_OPENSSL_ENABLE
 	bool secure_channel = net->secure_channel ? 1 : 0;
 	uint32_t secure_flags = net->flags;
@@ -239,14 +240,16 @@ static Net_Result INet_TryReconnecting(Net_Socket *net) {
 
 	Net_CloseConnection(net);
 	Net_Result result = INet_OpenSocketDescriptor(net->node, net->service, net->type, &net->descriptor);
-	if (result != NET_OK)
-		return result;
+	if (result != NET_OK) {
+		net->result = result;
+		return -1;
+	}
 
 #ifdef NETWORK_OPENSSL_ENABLE
 	if (secure_channel) {
-		Net_CreateSecureChannel(net);
-		if (result != NET_OK)
-			return result;
+		uint64_t error = Net_CreateSecureChannel(net);
+		if (net->result != NET_OK)
+			return error;
 
 		if (secure_flags) {
 			return Net_VerifyRemoteCertificate(net);
@@ -254,7 +257,7 @@ static Net_Result INet_TryReconnecting(Net_Socket *net) {
 	}
 #endif
 
-	return NET_OK;
+	return 0;
 }
 
 inline static SSL *INet_ToSSL(Net_Secure_Channel *channel) { return (SSL *)channel; }
@@ -346,29 +349,46 @@ void Net_Shutdown() {
 //
 //
 
-Net_Result Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Net_Socket *net, Memory_Allocator allocator) {
-	memset(net, 0, sizeof(*net));
+Net_Result Net_GetLastError(Net_Socket *net) {
+	return net->result;
+}
 
-	Net_Result result = INet_OpenSocketDescriptor(node, service, type, &net->descriptor);
-	if (result != NET_OK)
-		return result;
+void Net_ClearError(Net_Socket *net) {
+	net->result = NET_OK;
+}
 
-	net->type      = type;
-	net->allocator = allocator;
+Net_Socket Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator) {
+	Net_Socket net;
+	memset(&net, 0, sizeof(net));
 
-	uint8_t *mem = (uint8_t *)MemoryAllocate(node.length + service.length + 2, net->allocator);
+	Net_Result result = INet_OpenSocketDescriptor(node, service, type, &net.descriptor);
+	if (result != NET_OK) {
+		net.result = result;
+		return net;
+	}
 
-	net->node.data      = mem;
-	net->service.data   = mem + node.length + 1;
-	net->node.length    = node.length;
-	net->service.length = service.length;
-	
-	memcpy(net->node.data, node.data, node.length);
-	memcpy(net->service.data, service.data, service.length);
-	net->node.data[node.length]       = 0;
-	net->service.data[service.length] = 0;
+	net.type      = type;
+	net.allocator = allocator;
 
-	return NET_OK;
+	uint8_t *mem = (uint8_t *)MemoryAllocate(node.length + service.length + 2, net.allocator);
+
+	if (mem) {
+		net.node.data = mem;
+		net.service.data = mem + node.length + 1;
+		net.node.length = node.length;
+		net.service.length = service.length;
+
+		memcpy(net.node.data, node.data, node.length);
+		memcpy(net.service.data, service.data, service.length);
+		net.node.data[node.length] = 0;
+		net.service.data[service.length] = 0;
+	} else {
+		closesocket((SOCKET)net.descriptor);
+		net.descriptor = INVALID_SOCKET;
+		net.result     = NET_E_MEMORY;
+	}
+
+	return net;
 }
 
 void Net_CloseConnection(Net_Socket *net) {
@@ -390,54 +410,60 @@ void Net_CloseConnection(Net_Socket *net) {
 	net->flags   = 0;
 }
 
-Net_Result Net_Write(Net_Socket *net, void *buffer, int length, int *written) {
-	*written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+int Net_Write(Net_Socket *net, void *buffer, int length) {
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
 
-	if (*written > 0)
-		return NET_OK;
-
-	if (INet_ShouldReconnect()) {
-		Net_Result result = INet_TryReconnecting(net);
-		if (result == NET_OK) {
-			*written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
-			if (*written > 0)
-				return NET_OK;
-			return INet_GetLastError();
-		}
-		return result;
+	if (written > 0) {
+		net->result = NET_OK;
+		return written;
 	}
 
-	return INet_GetLastError();
+	if (INet_ShouldReconnect()) {
+		INet_TryReconnecting(net);
+		if (net->result == NET_OK) {
+			written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+			if (written > 0)
+				net->result = NET_OK;
+			else
+				net->result = INet_GetLastError();
+			return written;
+		}
+		return written;
+	}
+
+	net->result = INet_GetLastError();
+	return written;
 }
 
-Net_Result Net_Read(Net_Socket *net, void *buffer, int length, int *read) {
-	*read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
-	if (*read > 0)
-		return NET_OK;
-	return INet_GetLastError();
+int Net_Read(Net_Socket *net, void *buffer, int length) {
+	int read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	if (read > 0)
+		net->result = NET_OK;
+	else
+		net->result= INet_GetLastError();
+	return read;
 }
-
 
 #ifdef NETWORK_OPENSSL_ENABLE
-Net_Result Net_CreateSecureChannel(Net_Socket *net) {
+uint64_t Net_CreateSecureChannel(Net_Socket *net) {
 	SSL *ssl = SSL_new(DefaultClientContext);
 
 	if (!ssl) {
-		INet_LogOpenSSLError();
-		return NET_E_OPENSSL;
+		net->result = NET_E_OPENSSL;
+		return INet_LogOpenSSLError();
 	}
 
 	if (!SSL_set_tlsext_host_name(ssl, (char *)net->node.data)) {
 		SSL_free(ssl);
-		INet_LogOpenSSLError();
-		return NET_E_OPENSSL;
+		net->result = NET_E_OPENSSL;
+		return INet_LogOpenSSLError();
 	}
 
 	SSL_set_fd(ssl, (int)net->descriptor);
 	if (SSL_connect(ssl) == -1) {
 		SSL_free(ssl);
-		INet_LogOpenSSLError();
-		return NET_E_OPENSSL;
+		net->result = NET_E_OPENSSL;
+		return INet_LogOpenSSLError();
 	}
 
 	net->secure_channel = INet_ToSecureChannel(ssl);
@@ -445,7 +471,7 @@ Net_Result Net_CreateSecureChannel(Net_Socket *net) {
 	return NET_OK;
 }
 
-Net_Result Net_VerifyRemoteCertificate(Net_Socket *net) {
+uint64_t Net_VerifyRemoteCertificate(Net_Socket *net) {
 	Assert(net->secure_channel);
 
 	SSL *ssl = INet_ToSSL(net->secure_channel);
@@ -453,14 +479,14 @@ Net_Result Net_VerifyRemoteCertificate(Net_Socket *net) {
 	X509 *x509 = SSL_get_peer_certificate(ssl);
 	Defer{ X509_free(x509); };
 	if (!x509) {
-		INet_LogOpenSSLError();
-		return NET_E_OPENSSL;
+		net->result = NET_E_OPENSSL;
+		return INet_LogOpenSSLError();
 	}
 
 	long res = SSL_get_verify_result(ssl);
 	if (res != X509_V_OK) {
-		INet_LogOpenSSLError();
-		return NET_E_OPENSSL;
+		net->result = NET_E_OPENSSL;
+		return INet_LogOpenSSLError();
 	}
 
 	net->flags = 1;
@@ -468,30 +494,38 @@ Net_Result Net_VerifyRemoteCertificate(Net_Socket *net) {
 	return NET_OK;
 }
 
-Net_Result Net_WriteSecured(Net_Socket *net, void *buffer, int length, int *written) {
+int Net_WriteSecured(Net_Socket *net, void *buffer, int length) {
 	SSL *ssl = INet_ToSSL(net->secure_channel);
-	*written = SSL_write(ssl, (char *)buffer, length);
+	int written = SSL_write(ssl, (char *)buffer, length);
 
-	if (*written > 0)
-		return NET_OK;
+	if (written > 0) {
+		net->result = NET_OK;
+		return written;
+	}
 
-	if (INet_ShouldReconnectOpenSSL(ssl, *written)) {
-		*written = SSL_write(ssl, (char *)buffer, length);
-		if (*written > 0)
-			return NET_OK;
+	if (INet_ShouldReconnectOpenSSL(ssl, written)) {
+		written = SSL_write(ssl, (char *)buffer, length);
+		if (written > 0) {
+			net->result = NET_OK;
+			return written;
+		}
 	}
 
 	INet_LogOpenSSLError();
-	return NET_E_OPENSSL;
+	net->result = NET_E_OPENSSL;
+	return written;
 }
 
-Net_Result Net_ReadSecured(Net_Socket *net, void *buffer, int length, int *read) {
+int Net_ReadSecured(Net_Socket *net, void *buffer, int length) {
 	SSL *ssl = INet_ToSSL(net->secure_channel);
-	*read = SSL_read(ssl, buffer, length);
-	if (*read > 0)
-		return NET_OK;
+	int read = SSL_read(ssl, buffer, length);
+	if (read > 0) {
+		net->result = NET_OK;
+		return read;
+	}
 	INet_LogOpenSSLError();
-	return NET_E_OPENSSL;
+	net->result = NET_E_OPENSSL;
+	return read;
 }
 
 #endif

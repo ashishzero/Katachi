@@ -32,8 +32,8 @@ int main(int argc, char **argv) {
 
 	Net_Initialize();
 
-	Net_Socket net;
-	if (Net_OpenConnection("discord.com", "443", NET_SOCKET_STREAM, &net) != NET_OK) {
+	Net_Socket net = Net_OpenConnection("discord.com", "443", NET_SOCKET_TCP);
+	if (Net_GetLastError(&net) != NET_OK) {
 		return 1;
 	}
 
@@ -60,14 +60,14 @@ int main(int argc, char **argv) {
 	// Send header
 	int bytes_sent = 0;
 	for (auto buk = &builder.head; buk; buk = buk->next) {
-		Net_WriteSecured(&net, buk->data, (int)buk->written, &bytes_sent);
+		bytes_sent += Net_WriteSecured(&net, buk->data, (int)buk->written);
 	}
 
 	static char buffer[4096 * 2];
 
 	int bytes_received = 0;
-	Net_ReadSecured(&net, buffer, sizeof(buffer) - 1, &bytes_received);
-	Net_ReadSecured(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received, &bytes_received);
+	bytes_received += Net_ReadSecured(&net, buffer, sizeof(buffer) - 1);
+	bytes_received += Net_ReadSecured(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received);
 	if (bytes_received < 1) {
 		Unimplemented();
 	}

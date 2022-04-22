@@ -1,22 +1,8 @@
 #include "Kr/KrCommon.h"
 
 enum Net_Socket_Type {
-	NET_SOCKET_STREAM,
-	NET_SOCKET_DGRAM
-};
-
-struct Net_Secure_Channel;
-
-struct Net_Socket {
-#ifdef NETWORK_OPENSSL_ENABLE
-	Net_Secure_Channel *secure_channel;
-#endif
-	int64_t            descriptor;
-	uint32_t           flags;
-	Net_Socket_Type    type;
-	String             node;
-	String             service;
-	Memory_Allocator   allocator;
+	NET_SOCKET_TCP,
+	NET_SOCKET_UDP
 };
 
 enum Net_Result {
@@ -59,18 +45,36 @@ enum Net_Result {
 	_NET_RESULT_COUNT
 };
 
+struct Net_Secure_Channel;
+
+struct Net_Socket {
+#ifdef NETWORK_OPENSSL_ENABLE
+	Net_Secure_Channel *secure_channel;
+#endif
+	int64_t            descriptor;
+	uint32_t           flags;
+	Net_Socket_Type    type;
+	String             node;
+	String             service;
+	Net_Result         result;
+	Memory_Allocator   allocator;
+};
+
 Net_Result   Net_Initialize();
 void         Net_Shutdown();
 
-Net_Result   Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Net_Socket *net, Memory_Allocator allocator = ThreadContext.allocator);
+Net_Result   Net_GetLastError(Net_Socket *net);
+void         Net_ClearError(Net_Socket *net);
+
+Net_Socket   Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator = ThreadContext.allocator);
 void         Net_CloseConnection(Net_Socket *net);
 
-Net_Result   Net_Write(Net_Socket *net, void *buffer, int length, int *written);
-Net_Result   Net_Read(Net_Socket *net, void *buffer, int length, int *read);
+int          Net_Write(Net_Socket *net, void *buffer, int length);
+int          Net_Read(Net_Socket *net, void *buffer, int length);
 
 #ifdef NETWORK_OPENSSL_ENABLE
-Net_Result   Net_CreateSecureChannel(Net_Socket *net);
-Net_Result   Net_VerifyRemoteCertificate(Net_Socket *net);
-Net_Result   Net_WriteSecured(Net_Socket *net, void *buffer, int length, int *written);
-Net_Result   Net_ReadSecured(Net_Socket *net, void *buffer, int length, int *read);
+uint64_t     Net_CreateSecureChannel(Net_Socket *net);
+uint64_t     Net_VerifyRemoteCertificate(Net_Socket *net);
+int          Net_WriteSecured(Net_Socket *net, void *buffer, int length);
+int          Net_ReadSecured(Net_Socket *net, void *buffer, int length);
 #endif
