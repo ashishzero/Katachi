@@ -40,12 +40,12 @@ int main(int argc, char **argv) {
 
 	Net_Initialize();
 
-	Net_Socket net = Net_OpenConnection("discord.com", "443", NET_SOCKET_TCP);
-	if (Net_GetLastError(&net) != NET_OK) {
+	Net_Socket *net = Net_OpenConnection("discord.com", "443", NET_SOCKET_TCP);
+	if (!net) {
 		return 1;
 	}
 
-	Net_CreateSecureChannel(&net);
+	Net_OpenSecureChannel(net);
 
 	const char *token = argv[1];
 
@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
 	WriteFormatted(&builder, "Authorization: Bot %\r\n", token);
 	Write(&builder, "User-Agent: KatachiBot\r\n");
 	Write(&builder, "Connection: keep-alive\r\n");
-	WriteFormatted(&builder, "Host: %\r\n", net.node);
+	WriteFormatted(&builder, "Host: %\r\n", Net_GetHostname(net));
 	WriteFormatted(&builder, "Content-Type: %\r\n", "application/json");
 	WriteFormatted(&builder, "Content-Length: %\r\n", Message.length);
 	Write(&builder, "\r\n");
@@ -67,14 +67,14 @@ int main(int argc, char **argv) {
 	// Send header
 	int bytes_sent = 0;
 	for (auto buk = &builder.head; buk; buk = buk->next) {
-		bytes_sent += Net_WriteSecured(&net, buk->data, (int)buk->written);
+		bytes_sent += Net_Write(net, buk->data, (int)buk->written);
 	}
 
 	static char buffer[4096 * 2];
 
 	int bytes_received = 0;
-	bytes_received += Net_ReadSecured(&net, buffer, sizeof(buffer) - 1);
-	bytes_received += Net_ReadSecured(&net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received);
+	bytes_received += Net_Read(net, buffer, sizeof(buffer) - 1);
+	bytes_received += Net_Read(net, buffer + bytes_received, sizeof(buffer) - 1 - bytes_received);
 	if (bytes_received < 1) {
 		Unimplemented();
 	}
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
 	printf("\n%s\n", buffer);
 
 
-	Net_CloseConnection(&net);
+	Net_CloseConnection(net);
 
 	Net_Shutdown();
 
