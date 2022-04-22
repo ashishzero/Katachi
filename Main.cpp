@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	Net_OpenSecureChannel(net);
+	Net_OpenSecureChannel(net, false);
 
 	const char *token = argv[1];
 

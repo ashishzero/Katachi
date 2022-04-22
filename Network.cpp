@@ -158,6 +158,9 @@ static int PL_Net_Write(Net_Socket *net, void *buffer, int length) {
 
 static int PL_Net_Read(Net_Socket *net, void *buffer, int length) {
 	int read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	if (read > 0)
+		return read;
+	PL_Net_ReportLastWinsockError();
 	return read;
 }
 
@@ -169,32 +172,49 @@ static char *PL_Net_StringToCString(Memory_Arena *arena, String src) {
 	return dst;
 }
 
+static void PL_Net_ReportError(int error) {
+	const char *source = "";
+	#if PLATFORM_LINUX
+	source = "Net:Linux";
+	#elif PLATFORM_MAC
+	source = "Net:Mac"
+	#endif
+	const char *msg = "";
+	if (error == EAI_SYSTEM)
+		msg = strerror(errno);
+	else
+		msg = gai_strerror(error);
+	WriteLogErrorEx(source, "%s", msg);
+}
+#define PL_Net_ReportErrorErrno(EAI_SYSTEM)
+
+static void PL_Net_Shutdown() {}
+
 static bool PL_Net_Initialize() {
 	signal(SIGPIPE, SIG_IGN);
 	return true;
 }
 
-static Net_Result PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, int64_t *pdescriptor) {
+static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type) {
 	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
-
-	*pdescriptor = INVALID_SOCKET;
 
 	addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family   = AF_UNSPEC;
 	hints.ai_socktype = SocketTypeMap[type];
 
 	Memory_Arena *scratch = ThreadScratchpad();
 	Temporary_Memory temp = BeginTemporaryMemory(scratch);
 	Defer{ EndTemporaryMemory(&temp); };
 
-	char *nodename = PL_Net_StringToCString(scratch, node);
+	char *nodename    = PL_Net_StringToCString(scratch, node);
 	char *servicename = PL_Net_StringToCString(scratch, service);
 
 	addrinfo *address = nullptr;
 	int error = getaddrinfo(nodename, servicename, &hints, &address);
 	if (error) {
-		return PL_Net_ConvertNativeError(error);
+		PL_Net_ReportError(error);
+		return INVALID_SOCKET;
 	}
 
 	SOCKET descriptor = INVALID_SOCKET;
@@ -203,12 +223,13 @@ static Net_Result PL_Net_OpenSocketDescriptor(const String node, const String se
 
 		if (descriptor == INVALID_SOCKET) {
 			freeaddrinfo(address);
-			return PL_Net_GetLastError();
+			PL_Net_ReportError(error);
+			return INVALID_SOCKET;
 		}
 
 		error = connect(descriptor, ptr->ai_addr, (int)ptr->ai_addrlen);
 		if (error) {
-			closesocket(descriptor);
+			close(descriptor);
 			descriptor = INVALID_SOCKET;
 			continue;
 		}
@@ -218,12 +239,14 @@ static Net_Result PL_Net_OpenSocketDescriptor(const String node, const String se
 
 	freeaddrinfo(address);
 
-	*pdescriptor = descriptor;
-
 	if (error)
-		return PL_Net_ConvertNativeError(error);
+		PL_Net_ReportError(error);
 
-	return NET_OK;
+	return descriptor;
+}
+
+static void PL_Net_CloseSocketDescriptor(SOCKET descriptor) {
+	close(descriptor);
 }
 
 static int PL_Net_Write(Net_Socket *net, void *buffer, int length) {
@@ -239,12 +262,15 @@ static int PL_Net_Write(Net_Socket *net, void *buffer, int length) {
 		}
 	}
 
-	PL_Net_ReportError(error);
+	PL_Net_ReportErrorErrno();
 	return written;
 }
 
 static int PL_Net_Read(Net_Socket *net, void *buffer, int length) {
 	int read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	if (read > 0)
+		return read;
+	PL_Net_ReportErrorErrno();
 	return read;
 }
 #endif
@@ -322,9 +348,9 @@ static bool PL_Net_OpenSSLInitialize() {
 	long res = SSL_CTX_set_default_verify_paths(DefaultClientVerifyContext);
 
 	if (res != 1) {
-		PL_Net_LogOpenSSLError();
+		PL_Net_ReportOpenSSLError();
 		PL_Net_OpenSSLShutdown();
-		return NET_E_INIT;
+		return false;
 	}
 #endif
 
@@ -350,6 +376,9 @@ static int PL_Net_OpenSSLWrite(Net_Socket *net, void *buffer, int length) {
 
 static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length) {
 	int read = SSL_read(net->ssl, buffer, length);
+	if (read > 0)
+		return read;
+	PL_Net_ReportOpenSSLError();
 	return read;
 }
 
@@ -363,15 +392,15 @@ static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
 
 	const char *hostname = (char *)net->node.data;
 	if (!SSL_set_tlsext_host_name(ssl, hostname)) {
-		SSL_free(ssl);
 		PL_Net_ReportOpenSSLError();
+		SSL_free(ssl);
 		return false;
 	}
 
 	SSL_set_fd(ssl, (int)net->descriptor);
 	if (SSL_connect(ssl) == -1) {
-		SSL_free(ssl);
 		PL_Net_ReportOpenSSLError();
+		SSL_free(ssl);
 		return false;
 	}
 
