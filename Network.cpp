@@ -331,37 +331,6 @@ static bool PL_Net_OpenSSLInitialize() {
 	return true;
 }
 
-static SSL *PL_Net_OpenSSLOpenChannel(SOCKET descriptor, const char *hostname, bool verify) {
-	SSL *ssl = SSL_new(verify ? DefaultClientVerifyContext : DefaultClientContext);
-
-	if (!ssl) {
-		PL_Net_ReportOpenSSLError();
-		return nullptr;
-	}
-
-	if (!SSL_set_tlsext_host_name(ssl, hostname)) {
-		SSL_free(ssl);
-		PL_Net_ReportOpenSSLError();
-		return nullptr;
-	}
-
-	SSL_set_fd(ssl, (int)descriptor);
-	if (SSL_connect(ssl) == -1) {
-		SSL_free(ssl);
-		PL_Net_ReportOpenSSLError();
-		return nullptr;
-	}
-
-	return ssl;
-}
-
-static void PL_Net_OpenSSLCloseChannel(SSL *ssl) {
-	if (ssl) {
-		SSL_shutdown(ssl);
-		SSL_free(ssl);
-	}
-}
-
 static int PL_Net_OpenSSLWrite(Net_Socket *net, void *buffer, int length) {
 	int written = SSL_write(net->ssl, buffer, length);
 
@@ -383,6 +352,59 @@ static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length) {
 	int read = SSL_read(net->ssl, buffer, length);
 	return read;
 }
+
+static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
+	SSL *ssl = SSL_new(verify ? DefaultClientVerifyContext : DefaultClientContext);
+
+	if (!ssl) {
+		PL_Net_ReportOpenSSLError();
+		return false;
+	}
+
+	const char *hostname = (char *)net->node.data;
+	if (!SSL_set_tlsext_host_name(ssl, hostname)) {
+		SSL_free(ssl);
+		PL_Net_ReportOpenSSLError();
+		return false;
+	}
+
+	SSL_set_fd(ssl, (int)net->descriptor);
+	if (SSL_connect(ssl) == -1) {
+		SSL_free(ssl);
+		PL_Net_ReportOpenSSLError();
+		return false;
+	}
+
+	net->ssl   = ssl;
+	net->read  = PL_Net_OpenSSLRead;
+	net->write = PL_Net_OpenSSLWrite;
+
+	return true;
+}
+
+static void PL_Net_OpenSSLCloseChannel(Net_Socket *net) {
+	if (net->ssl) {
+		SSL_shutdown(net->ssl);
+		SSL_free(net->ssl);
+	}
+}
+
+static bool PL_Net_OpenSSLResetDescriptor(Net_Socket *net) {
+	if (net->ssl) {
+		SSL_set_fd(net->ssl, (int)net->descriptor);
+		if (SSL_connect(net->ssl) == -1) {
+			PL_Net_ReportOpenSSLError();
+			return false;
+		}
+	}
+	return true;
+}
+#else
+#define PL_Net_OpenSSLInitialize(...) (true)
+#define PL_Net_OpenSSLShutdown(...)
+#define PL_Net_OpenSSLOpenChannel(...) (false)
+#define PL_Net_OpenSSLCloseChannel(...)
+#define PL_Net_OpenSSLResetDescriptor(...) (true)
 #endif
 
 //
@@ -391,20 +413,10 @@ static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length) {
 
 static bool Net_Reconnect(Net_Socket *net) {
 	PL_Net_CloseSocketDescriptor(net->descriptor);
-
 	net->descriptor = PL_Net_OpenSocketDescriptor(net->node, net->service, net->type);
 	if (net->descriptor == INVALID_SOCKET)
 		return false;
-
-	if (net->ssl) {
-		SSL_set_fd(net->ssl, (int)net->descriptor);
-		if (SSL_connect(net->ssl) == -1) {
-			PL_Net_ReportOpenSSLError();
-			return false;
-		}
-	}
-
-	return true;
+	return PL_Net_OpenSSLResetDescriptor(net);
 }
 
 //
@@ -465,17 +477,11 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 }
 
 bool Net_OpenSecureChannel(Net_Socket *net, bool verify) {
-	net->ssl = PL_Net_OpenSSLOpenChannel(net->descriptor, (char *)net->node.data, verify);
-	if (net->ssl) {
-		net->write = PL_Net_OpenSSLWrite;
-		net->read  = PL_Net_OpenSSLRead;
-		return true;
-	}
-	return false;
+	return PL_Net_OpenSSLOpenChannel(net, verify);
 }
 
 void Net_CloseConnection(Net_Socket *net) {
-	PL_Net_OpenSSLCloseChannel(net->ssl);
+	PL_Net_OpenSSLCloseChannel(net);
 	PL_Net_CloseSocketDescriptor(net->descriptor);
 
 	MemoryFree(net, Net_SocketAllocationSize(net->node, net->service), net->allocator);
