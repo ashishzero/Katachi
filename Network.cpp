@@ -517,8 +517,12 @@ void Net_CloseConnection(Net_Socket *net) {
 	net->descriptor = INVALID_SOCKET;
 }
 
-const String Net_GetHostname(Net_Socket *net) {
+String Net_GetHostname(Net_Socket *net) {
 	return net->node;
+}
+
+ptrdiff_t Net_GetSocketDescriptor(Net_Socket *net) {
+	return net->descriptor;
 }
 
 int Net_Write(Net_Socket *net, void *buffer, int length) {

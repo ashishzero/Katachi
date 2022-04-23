@@ -231,6 +231,8 @@ struct String {
 	inline const uint8_t *end() const { return data + length; }
 };
 
+typedef String Buffer;
+
 bool operator==(const String a, const String b);
 bool operator!=(const String a, const String b);
 
@@ -284,9 +286,11 @@ size_t MemoryArenaCapSize(Memory_Arena *arena);
 size_t MemoryArenaUsedSize(Memory_Arena *arena);
 size_t MemoryArenaEmptySize(Memory_Arena *arena);
 
-bool MemoryArenaEnsureCommit(Memory_Arena *arena, size_t pos);
-bool MemoryArenaEnsurePos(Memory_Arena *arena, size_t pos);
-bool MemoryArenaResize(Memory_Arena *arena, size_t pos);
+bool  MemoryArenaEnsureCommit(Memory_Arena *arena, size_t pos);
+bool  MemoryArenaSetPos(Memory_Arena *arena, size_t pos);
+bool  MemoryArenaPackToPos(Memory_Arena *arena, size_t pos);
+bool  MemoryArenaAlignCurrent(Memory_Arena *arena, size_t alignment);
+void *MemoryArenaGetCurrent(Memory_Arena *arena);
 
 #define MemoryZeroSize(mem, size) memset(mem, 0, size)
 #define MemoryZero(var) MemoryZeroSize(&var, sizeof(var))
@@ -302,6 +306,8 @@ void *PushSizeAlignedZero(Memory_Arena *arena, size_t size, uint32_t alignment);
 #define PushArrayZero(arena, type, count) (type *)PushSizeAlignedZero(arena, sizeof(type) * (count). alignof(type))
 #define PushArrayAligned(arena, type, count, alignment) (type *)PushSizeAligned(arena, sizeof(type) * (count), alignment)
 #define PushArrayAlignedZero(arena, type, count, alignment) (type *)PushSizeAlignedZero(arena, sizeof(type) * (count), alignment)
+
+void PopSize(Memory_Arena *arena, size_t size);
 
 typedef struct Temporary_Memory {
 	Memory_Arena *arena;

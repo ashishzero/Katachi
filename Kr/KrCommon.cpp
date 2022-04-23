@@ -81,7 +81,7 @@ bool MemoryArenaEnsureCommit(Memory_Arena *arena, size_t pos) {
 	return false;
 }
 
-bool MemoryArenaEnsurePos(Memory_Arena *arena, size_t pos) {
+bool MemoryArenaSetPos(Memory_Arena *arena, size_t pos) {
 	if (MemoryArenaEnsureCommit(arena, pos)) {
 		arena->current = pos;
 		return true;
@@ -89,8 +89,8 @@ bool MemoryArenaEnsurePos(Memory_Arena *arena, size_t pos) {
 	return false;
 }
 
-bool MemoryArenaResize(Memory_Arena *arena, size_t pos) {
-	if (MemoryArenaEnsurePos(arena, pos)) {
+bool MemoryArenaPackToPos(Memory_Arena *arena, size_t pos) {
+	if (MemoryArenaSetPos(arena, pos)) {
 		size_t committed = AlignPower2Up(pos, MemoryArenaCommitSize);
 		committed = Clamp(MemoryArenaCommitSize, arena->reserved, committed);
 
@@ -104,24 +104,32 @@ bool MemoryArenaResize(Memory_Arena *arena, size_t pos) {
 	return false;
 }
 
+bool MemoryArenaAlignCurrent(Memory_Arena *arena, size_t alignment) {
+	uint8_t *mem     = (uint8_t *)arena + arena->current;
+	uint8_t *aligned = AlignPointer(mem, alignment);
+	size_t pos       = arena->current + (aligned - mem);
+	if (MemoryArenaSetPos(arena, pos))
+		return true;
+	return false;
+}
+
+void *MemoryArenaGetCurrent(Memory_Arena *arena) {
+	uint8_t *mem = (uint8_t *)arena;
+	return mem + arena->current;
+}
+
 void *PushSize(Memory_Arena *arena, size_t size) {
 	uint8_t *mem = (uint8_t *)arena + arena->current;
 	size_t pos   = arena->current + size;
-	if (MemoryArenaEnsurePos(arena, pos))
+	if (MemoryArenaSetPos(arena, pos))
 		return mem;
 	return 0;
 }
 
 void *PushSizeAligned(Memory_Arena *arena, size_t size, uint32_t alignment) {
-	uint8_t *mem = (uint8_t *)arena + arena->current;
-
-	uint8_t *aligned = AlignPointer(mem, alignment);
-	uint8_t *next    = aligned + size;
-	size_t pos       = arena->current + (next - mem);
-
-	if (MemoryArenaEnsurePos(arena, pos))
-		return aligned;
-	return 0;
+	if (MemoryArenaAlignCurrent(arena, alignment))
+		return PushSize(arena, size);
+	return nullptr;
 }
 
 Temporary_Memory BeginTemporaryMemory(Memory_Arena *arena) {
@@ -143,13 +151,19 @@ void *PushSizeAlignedZero(Memory_Arena *arena, size_t size, uint32_t alignment) 
 	return result;
 }
 
+void PopSize(Memory_Arena *arena, size_t size) {
+	size_t pos = arena->current - size;
+	Assert(pos >= sizeof(Memory_Arena) && pos <= arena->reserved);
+	MemoryArenaSetPos(arena, pos);
+}
+
 void EndTemporaryMemory(Temporary_Memory *temp) {
 	temp->arena->current = temp->position;
 }
 
 void FreeTemporaryMemory(Temporary_Memory *temp) {
-	MemoryArenaEnsurePos(temp->arena, temp->position);
-	MemoryArenaResize(temp->arena, temp->position);
+	MemoryArenaSetPos(temp->arena, temp->position);
+	MemoryArenaPackToPos(temp->arena, temp->position);
 }
 
 Memory_Arena *ThreadScratchpad() {

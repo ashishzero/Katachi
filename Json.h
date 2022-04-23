@@ -6,7 +6,7 @@ struct Json_Builder {
 	uint64_t depth;
 };
 
-Json_Builder JsonBuilderCreate(String_Builder *builder);
+Json_Builder JsonBuilderCreate(struct String_Builder *builder);
 int JsonWriteNextElement(Json_Builder *json);
 int JsonWriteBeginObject(Json_Builder *json);
 int JsonWriteEndObject(Json_Builder *json);

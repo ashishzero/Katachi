@@ -88,9 +88,15 @@ INLINE_PROCEDURE String StrDuplicateArena(String src, Memory_Arena *arena) {
 	return dst;
 }
 
-INLINE_PROCEDURE String SubStr(String str, ptrdiff_t index, ptrdiff_t count) {
+INLINE_PROCEDURE String SubStr(const String str, ptrdiff_t index, ptrdiff_t count) {
 	Assert(index < str.length);
 	count = (ptrdiff_t)Minimum(str.length - index, count);
+	return String(str.data + index, count);
+}
+
+INLINE_PROCEDURE String SubStr(const String str, ptrdiff_t index) {
+	Assert(index < str.length);
+	ptrdiff_t count = str.length - index;
 	return String(str.data + index, count);
 }
 
@@ -172,19 +178,19 @@ INLINE_PROCEDURE char *StrNullTerminatedArena(Memory_Arena *arena, String str) {
 	return StrNullTerminated((char *)PushSize(arena, str.length + 1), str);
 }
 
-INLINE_PROCEDURE ptrdiff_t StrFind(String str, String key, ptrdiff_t pos) {
-	ptrdiff_t index = Clamp(0, str.length - 1, pos);
+INLINE_PROCEDURE ptrdiff_t StrFind(String str, const String key, ptrdiff_t pos = 0) {
+	str = SubStr(str, pos);
 	while (str.length >= key.length) {
 		if (StrCompare(String(str.data, key.length), key) == 0) {
-			return index;
+			return pos;
 		}
-		index += 1;
+		pos += 1;
 		str = StrRemovePrefix(str, 1);
 	}
 	return -1;
 }
 
-INLINE_PROCEDURE ptrdiff_t StrFindCharacter(String str, uint8_t key, ptrdiff_t pos) {
+INLINE_PROCEDURE ptrdiff_t StrFindCharacter(String str, uint8_t key, ptrdiff_t pos = 0) {
 	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index < str.length; ++index)
 		if (str.data[index] == key)
 			return index;
