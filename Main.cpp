@@ -617,7 +617,7 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 						return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
 				}
 			} else {
-				const String prefixes[] = { "HTTP/1.1 ", "HTTP/1.0" };
+				const String prefixes[] = { "HTTP/1.1 ", "HTTP/1.0 " };
 
 				bool prefix_present = false;
 				for (auto prefix : prefixes) {
