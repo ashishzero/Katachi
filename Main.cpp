@@ -2,6 +2,7 @@
 #include "Network.h"
 #include "Discord.h"
 #include "Kr/KrString.h"
+#include "StringBuilder.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -148,6 +149,12 @@ static int Websocket_ReadMinimum(Net_Socket *websocket, uint8_t *read_ptr, int b
 	return bytes_received;
 }
 
+
+void Websocket_MaskPayload(uint8_t *payload, uint64_t length, uint8_t(&mask)[4]) {
+	for (uint64_t i = 0; i < length; ++i)
+		payload[i] = payload[i] ^ mask[i % 4];
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -159,7 +166,7 @@ int main(int argc, char **argv) {
 
 	Net_Initialize();
 
-	//srand(time(nullptr));
+	srand(time(nullptr));
 
 	Memory_Arena *arena = MemoryArenaAllocate(MegaBytes(64));
 
@@ -168,7 +175,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	const String token = FmtStr(arena, "Bot %s", argv[1]);
+	const String token = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
 
 	Http_Request *req = Http_CreateRequest(http, arena);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
@@ -325,6 +332,86 @@ int main(int argc, char **argv) {
 				WriteLogInfo("Got JSON");
 			}
 
+			Assert(json.type == JSON_TYPE_OBJECT);
+
+			Json *d = JsonObjectFind(&json.value.object, "d");
+			Assert(d && d->type == JSON_TYPE_OBJECT);
+
+			Json *hi = JsonObjectFind(&d->value.object, "heartbeat_interval");
+			Assert(hi &&hi->type == JSON_TYPE_NUMBER);
+
+			int heartbeat_interval = hi->value.number.value.integer;
+
+			MemoryArenaReset(arena);
+
+			String_Builder builder;
+			builder.allocator = MemoryArenaAllocator(arena);
+
+			uint8_t header[8];
+			memset(header, 0, sizeof(header));
+			WriteBuffer(&builder, header, sizeof(header));
+
+			Json_Builder identity = JsonBuilderCreate(&builder);
+
+			JsonWriteBeginObject(&identity);
+			JsonWriteKeyNumber(&identity, "op", 2);
+			JsonWriteKey(&identity, "d");
+			JsonWriteBeginObject(&identity);
+			JsonWriteKeyString(&identity, "token", String(argv[1], strlen(argv[1])));
+			JsonWriteKeyNumber(&identity, "intents", 513);
+			JsonWriteKey(&identity, "properties");
+			JsonWriteBeginObject(&identity);
+			JsonWriteKeyString(&identity, "$os", "windows");
+			JsonWriteEndObject(&identity);
+			JsonWriteEndObject(&identity);
+			JsonWriteEndObject(&identity);
+
+			payload = BuildString(&builder, builder.allocator);
+
+			header[0] |= 0x80; // fin
+			header[0] |= WEBSOCKET_OP_TEXT_FRAME;
+			header[1] |= 0x80;
+			header[1] |= 126;
+
+			union Payload_Length2 {
+				uint8_t  parts[2];
+				uint16_t combined;
+			};
+
+			Payload_Length2 len2;
+			len2.combined = (uint16_t)payload.length - sizeof(header);
+			header[2] = len2.parts[1];
+			header[3] = len2.parts[0];
+
+			//uint32_t mask_value = (uint32_t)rand();
+			//uint8_t *mask_ptr = (uint8_t *)&mask_value;
+
+			uint8_t mask_se[4] = { 50, 76, 88, 100 };
+
+			header[4] = mask_se[0];
+			header[5] = mask_se[1];
+			header[6] = mask_se[2];
+			header[7] = mask_se[3];
+
+			Websocket_MaskPayload(payload.data + sizeof(header), payload.length - sizeof(header), mask_se);
+			//Websocket_MaskPayload(payload.data + sizeof(header), payload.length - sizeof(header), mask_se);
+
+			char *thing = (char *)payload.data + 8;
+
+			memcpy(payload.data, header, sizeof(header));
+
+			int bytes_written = 0;
+			//bytes_written += Net_Write(websocket, header, sizeof(header));
+			bytes_written += Net_Write(websocket, payload.data, payload.length);
+
+			while (true) {
+				uint8_t *read_ptr = stream;
+				int bytes_read = Net_Read(websocket, stream, WEBSOCKET_STREAM_SIZE);
+				
+				String payload(stream + 4, bytes_read - 4);
+
+				int fuck_visual_studio = 42;
+			}
 
 
 			int fuck_visual_studio = 42;
