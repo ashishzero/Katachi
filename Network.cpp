@@ -128,8 +128,12 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 
 	FreeAddrInfoW(address);
 
-	if (error)
+	if (descriptor != INVALID_SOCKET) {
+		DWORD timeout = NET_TIMEOUT_SECS * 1000;
+		setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof timeout);
+	} else {
 		PL_Net_ReportError(error);
+	}
 
 	return descriptor;
 }
@@ -239,8 +243,14 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 
 	freeaddrinfo(address);
 
-	if (error)
+	if (descriptor) {
+		struct timeval tv;
+		tv.tv_sec  = NET_TIMEOUT_SECS;
+		tv.tv_usec = 0;
+		setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+	} else {
 		PL_Net_ReportError(error);
+	}
 
 	return descriptor;
 }

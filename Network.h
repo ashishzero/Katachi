@@ -1,5 +1,7 @@
 #include "Kr/KrCommon.h"
 
+constexpr int NET_TIMEOUT_SECS = 1;
+
 enum Net_Socket_Type {
 	NET_SOCKET_TCP,
 	NET_SOCKET_UDP

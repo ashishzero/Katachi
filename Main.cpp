@@ -314,8 +314,15 @@ struct Http_Header {
 typedef Buffer(*Http_Body_Reader_Proc)(void *content);
 
 struct Http_Body_Reader {
-	void *context;
 	Http_Body_Reader_Proc proc;
+	void *context;
+};
+
+typedef void(*Http_Body_Writer_Proc)(uint8_t *buffer, int length, void *context);
+
+struct Http_Body_Writer {
+	Http_Body_Writer_Proc proc;
+	void *context;
 };
 
 struct Http_Request {
@@ -453,7 +460,7 @@ static inline bool Http_ReadBytes(Net_Socket *http, uint8_t *buffer, ptrdiff_t b
 	return true;
 }
 
-Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, const String endpoint, Http_Request *req) {
+Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr) {
 	Memory_Arena *arena = Http_RequestGetArena(req);
 
 	{
@@ -531,7 +538,7 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 		while (read_more) {
 			int bytes_read = Net_Read(http, read_ptr, buffer_size);
-			if (bytes_read < 0) return ResponseFailed();
+			if (bytes_read <= 0) return ResponseFailed();
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -583,29 +590,54 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 		if (content_length < body_read)
 			return ResponseFailed("Invalid Content-Length in the header");
 
-		uint8_t *read_ptr = nullptr;
-		if (body_ptr + body_read == MemoryArenaGetCurrent(arena)) {
-			// Since header and body are allocated using the same arena
-			// at this point, the allocation should be serial.
-			// But in case we decide to change the flow of the code later
-			// this might not be true, thus check is added here to ensure
-			// serial and copy is the allocation is serial
-			read_ptr = (uint8_t *)PushSize(arena, content_length - body_read);
-		} else {
-			read_ptr = (uint8_t *)PushSize(arena, content_length);
-			if (read_ptr) {
-				memcpy(read_ptr, body_ptr, body_read);
-				body_ptr = read_ptr;
-				read_ptr += body_read;
+		if (writer == nullptr) {
+			uint8_t *read_ptr = nullptr;
+			if (body_ptr + body_read == MemoryArenaGetCurrent(arena)) {
+				// Since header and body are allocated using the same arena
+				// at this point, the allocation should be serial.
+				// But in case we decide to change the flow of the code later
+				// this might not be true, thus check is added here to ensure
+				// serial and copy is the allocation is serial
+				read_ptr = (uint8_t *)PushSize(arena, content_length - body_read);
+			} else {
+				read_ptr = (uint8_t *)PushSize(arena, content_length);
+				if (read_ptr) {
+					memcpy(read_ptr, body_ptr, body_read);
+					body_ptr = read_ptr;
+					read_ptr += body_read;
+				}
 			}
+
+			if (!read_ptr)
+				return ResponseFailed("Reading header failed: Out of Memory");
+
+			if (!Http_ReadBytes(http, read_ptr, content_length - body_read))
+				return ResponseFailed();
+			res->body = Buffer(body_ptr, content_length);
+		} else {
+			Assert(body_read < HTTP_MAX_HEADER_SIZE);
+
+			writer->proc(body_ptr, (int)body_read, writer->context);
+
+			uint8_t *read_ptr = nullptr;
+			if (body_ptr + body_read == MemoryArenaGetCurrent(arena))
+				read_ptr = (uint8_t *)PushSize(arena, HTTP_MAX_HEADER_SIZE - body_read);
+			else
+				read_ptr = (uint8_t *)PushSize(arena, HTTP_MAX_HEADER_SIZE);
+
+			if (!read_ptr)
+				return ResponseFailed("Reading header failed: Out of Memory");
+
+			ptrdiff_t remaining = content_length - body_read;
+			while (remaining) {
+				int bytes_read = Net_Read(http, read_ptr, (int)Minimum(remaining, HTTP_MAX_HEADER_SIZE));
+				if (bytes_read <= 0) ResponseFailed();
+				writer->proc(read_ptr, bytes_read, writer->context);
+				remaining -= bytes_read;
+			}
+
+			PopSize(arena, HTTP_MAX_HEADER_SIZE);
 		}
-
-		if (!read_ptr)
-			return ResponseFailed("Reading header failed: Out of Memory");
-
-		if (!Http_ReadBytes(http, read_ptr, content_length - body_read))
-			return ResponseFailed();
-		res->body = Buffer(body_ptr, content_length);
 	} else {
 		// Transfer-Encoding: chunked
 		name_pos = StrFind(header, HttpHeaderMap[HTTP_HEADER_TRANSFER_ENCODING]);
@@ -636,7 +668,7 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 			while (true) {
 				while (chunk_read < 2) {
 					int bytes_read = Net_Read(http, streaming_buffer + chunk_read, (int)(sizeof(streaming_buffer) - chunk_read));
-					if (bytes_read < 0) return ResponseFailed();
+					if (bytes_read <= 0) return ResponseFailed();
 					chunk_read += bytes_read;
 				}
 
@@ -671,8 +703,16 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 						return ResponseFailed();
 					chunk_read = 0;
 				}
+
+				// Reset the buffer if the writer is present
+				if (writer) {
+					writer->proc(dst_ptr, (int)length, writer->context);
+					PopSize(arena, length);
+					last_ptr = dst_ptr;
+				}
 			}
-			res->body = Buffer(body_ptr, last_ptr - body_ptr);
+			if (writer == nullptr)
+				res->body = Buffer(body_ptr, last_ptr - body_ptr);
 		}
 	}
 
@@ -752,16 +792,20 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 	return res;
 }
 
-Http_Response *Http_Get(Net_Socket *http, const String endpoint, Http_Request *req) {
-	return Http_SendCustomMethod(http, "GET", endpoint, req);
+Http_Response *Http_Get(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr) {
+	return Http_SendCustomMethod(http, "GET", endpoint, req, writer);
 }
 
-Http_Response *Http_Post(Net_Socket *http, const String endpoint, Http_Request *req) {
-	return Http_SendCustomMethod(http, "POST", endpoint, req);
+Http_Response *Http_Post(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr) {
+	return Http_SendCustomMethod(http, "POST", endpoint, req, writer);
 }
 
-Http_Response *Http_Put(Net_Socket *http, const String endpoint, Http_Request *req) {
-	return Http_SendCustomMethod(http, "PUT", endpoint, req);
+Http_Response *Http_Put(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr) {
+	return Http_SendCustomMethod(http, "PUT", endpoint, req, writer);
+}
+
+void Dump(uint8_t *buffer, int length, void *content) {
+	printf("%.*s", length, buffer);
 }
 
 int main(int argc, char **argv) {
@@ -790,10 +834,12 @@ int main(int argc, char **argv) {
 	Http_RequestSet(req, HTTP_HEADER_CONNECTION, "keep-alive");
 	Http_RequestSetContent(req, "application/json", Message);
 
-	Http_Response *res = Http_Post(http, "/api/v9/channels/850062383266136065/messages", req);
+	Http_Body_Writer writer = { Dump };
+
+	Http_Response *res = Http_Post(http, "/api/v9/channels/850062383266136065/messages", req, &writer);
 	
 	if (res) {
-		printf("%.*s\n\n", (int)res->body.length, res->body.data);
+		//printf("%.*s\n\n", (int)res->body.length, res->body.data);
 
 		Http_DestroyResponse(res);
 	}
