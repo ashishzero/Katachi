@@ -74,19 +74,13 @@ int JsonWriteBool(Json_Builder *json, bool value) {
 	return written;
 }
 
-int JsonWriteNumber(Json_Builder *json, int64_t value) {
+int JsonWriteNumber(Json_Builder *json, int value) {
 	int written = Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
 }
 
-int JsonWriteNumber(Json_Builder *json, uint64_t value) {
-	int written = Write(json->builder, value);
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteNumber(Json_Builder *json, double value) {
+int JsonWriteNumber(Json_Builder *json, float value) {
 	int written = Write(json->builder, value);
 	json->depth |= 0x1;
 	return written;
@@ -106,21 +100,14 @@ int JsonWriteKeyBool(Json_Builder *json, String key, bool value) {
 	return written;
 }
 
-int JsonWriteKeyNumber(Json_Builder *json, String key, int64_t value) {
+int JsonWriteKeyNumber(Json_Builder *json, String key, int value) {
 	int written = 0;
 	written += JsonWriteKey(json, key);
 	written += JsonWriteNumber(json, value);
 	return written;
 }
 
-int JsonWriteKeyNumber(Json_Builder *json, String key, uint64_t value) {
-	int written = 0;
-	written += JsonWriteKey(json, key);
-	written += JsonWriteNumber(json, value);
-	return written;
-}
-
-int JsonWriteKeyNumber(Json_Builder *json, String key, double value) {
+int JsonWriteKeyNumber(Json_Builder *json, String key, float value) {
 	int written = 0;
 	written += JsonWriteKey(json, key);
 	written += JsonWriteNumber(json, value);
@@ -173,17 +160,19 @@ void JsonObjectPutBool(Json_Object *json, String key, bool boolean) {
 	JsonObjectPut(json, key, value);
 }
 
-void JsonObjectPutNumber(Json_Object *json, String key, double number) {
+void JsonObjectPutNumber(Json_Object *json, String key, float number) {
 	Json value;
 	value.type = JSON_TYPE_NUMBER;
-	value.value.number = number;
+	value.value.number.kind = JSON_NUMBER_FLOATING;
+	value.value.number.value.floating = number;
 	JsonObjectPut(json, key, value);
 }
 
-void JsonObjectPutNumber(Json_Object *json, String key, int64_t number) {
+void JsonObjectPutNumber(Json_Object *json, String key, int number) {
 	Json value;
 	value.type = JSON_TYPE_NUMBER;
-	value.value.number = (double)number;
+	value.value.number.kind = JSON_NUMBER_INTEGER;
+	value.value.number.value.integer = number;
 	JsonObjectPut(json, key, value);
 }
 
@@ -235,9 +224,9 @@ enum Json_Token_Kind {
 
 struct Json_Token {
 	Json_Token_Kind kind;
-	String content;
-	String identifier;
-	double number;
+	String          content;
+	String          identifier;
+	Json_Number     number;
 };
 
 struct Json_Tokenizer {
@@ -273,7 +262,8 @@ static inline String JsonTokenizerMakeTokenContent(Json_Tokenizer *tokenizer, ui
 }
 
 static bool JsonTokenize(Json_Tokenizer *tokenizer) {
-	while (*tokenizer->current) {
+	uint8_t *last = tokenizer->buffer.data + tokenizer->buffer.length;
+	while (tokenizer->current < last) {
 		if (JsonIsWhitespace(*tokenizer->current)) {
 			tokenizer->current += 1;
 			while (*tokenizer->current && JsonIsWhitespace(*tokenizer->current)) {
@@ -334,10 +324,35 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 		}
 
 		if (JsonIsNumber(value)) {
+			char buffer[128 + 1];
+
+			buffer[0] = value;
+			int pos = 1;
+			bool period_found = false;
+			for (tokenizer->current += 1; tokenizer->current < last; ++tokenizer->current) {
+				if (JsonIsNumber(*tokenizer->current) || *tokenizer->current == '.') {
+					if (pos >= sizeof(buffer) - 1) return false;
+					buffer[pos++] = *tokenizer->current;
+					period_found  = (*tokenizer->current == '.');
+				} else {
+					break;
+				}
+			}
+			buffer[pos] = 0;
+
 			char *str_end = nullptr;
-			tokenizer->token.number = strtod((char *)tokenizer->current, &str_end);
+			if (period_found) {
+				tokenizer->token.number.kind = JSON_NUMBER_FLOATING;
+				tokenizer->token.number.value.floating = (float)strtod(buffer, &str_end);
+			} else {
+				tokenizer->token.number.kind = JSON_NUMBER_INTEGER;
+				tokenizer->token.number.value.integer = (int)strtol(buffer, &str_end, 10);
+			}
+
+			if (str_end != buffer + pos)
+				return false;
+
 			tokenizer->token.kind = JSON_TOKEN_NUMBER;
-			tokenizer->current = (uint8_t *)str_end;
 			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
 			return true;
 		}
@@ -346,7 +361,7 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 			tokenizer->current += 1;
 
 			bool proper_string = false;
-			for (; *tokenizer->current; ++tokenizer->current) {
+			for (; tokenizer->current < last; ++tokenizer->current) {
 				value = *tokenizer->current;
 				if (value == '"' && *(tokenizer->current - 1) != '\\') {
 					tokenizer->current += 1;
@@ -370,7 +385,7 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 		if (value == 't') {
 			tokenizer->current += 1;
 			const String True = "true";
-			for (int i = 1; i < True.length; ++i) {
+			for (int i = 1; tokenizer->current < last && i < True.length; ++i) {
 				if (*tokenizer->current != True[i])
 					return false;
 				tokenizer->current += 1;
@@ -385,7 +400,7 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 		if (value == 'f') {
 			tokenizer->current += 1;
 			const String False = "false";
-			for (int i = 1; i < False.length; ++i) {
+			for (int i = 1; tokenizer->current < last && i < False.length; ++i) {
 				if (*tokenizer->current != False[i])
 					return false;
 				tokenizer->current += 1;
@@ -400,7 +415,7 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 		if (value == 'n') {
 			tokenizer->current += 1;
 			const String Null = "null";
-			for (int i = 1; i < Null.length; ++i) {
+			for (int i = 1; tokenizer->current < last && i < Null.length; ++i) {
 				if (*tokenizer->current != Null[i])
 					return false;
 				tokenizer->current += 1;
@@ -650,9 +665,12 @@ void JsonBuild(Json_Builder *builder, const Json &json) {
 		JsonWriteNull(builder);
 	else if (type == JSON_TYPE_BOOL)
 		JsonWriteBool(builder, json.value.boolean);
-	else if (type == JSON_TYPE_NUMBER)
-		JsonWriteNumber(builder, json.value.number);
-	else if (type == JSON_TYPE_STRING)
+	else if (type == JSON_TYPE_NUMBER) {
+		if (json.value.number.kind == JSON_NUMBER_INTEGER)
+			JsonWriteNumber(builder, (int)json.value.number.value.integer);
+		else
+			JsonWriteNumber(builder, json.value.number.value.floating);
+	} else if (type == JSON_TYPE_STRING)
 		JsonWriteString(builder, json.value.string);
 	else if (type == JSON_TYPE_ARRAY) {
 		JsonWriteBeginArray(builder);

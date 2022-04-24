@@ -140,8 +140,7 @@ static int Websocket_ReadMinimum(Net_Socket *websocket, uint8_t *read_ptr, int b
 	int bytes_received = 0;
 	while (bytes_received < minimum_req) {
 		int bytes_read = Net_Read(websocket, read_ptr, buffer_size);
-		if (bytes_read < 0)
-			return bytes_read;
+		Assert(bytes_read >= 0);
 		bytes_received += bytes_read;
 		read_ptr += bytes_read;
 		buffer_size -= bytes_read;
@@ -239,13 +238,13 @@ int main(int argc, char **argv) {
 				WriteLogInfo("Websocket connected.");
 			}
 
+			Http_DestroyResponse(res);
+
 			constexpr int WEBSOCKET_STREAM_SIZE = KiloBytes(8);
 
 			uint8_t stream[WEBSOCKET_STREAM_SIZE] = {};
 
-			uint8_t *read_ptr = stream;
-
-			int bytes_received = Websocket_ReadMinimum(websocket, read_ptr, WEBSOCKET_STREAM_SIZE, 2);
+			int bytes_received = Websocket_ReadMinimum(websocket, stream, WEBSOCKET_STREAM_SIZE, 2);
 
 			enum Websocket_Opcode {
 				WEBSOCKET_OP_CONTINUATION_FRAME = 0x0,
@@ -256,27 +255,80 @@ int main(int argc, char **argv) {
 				WEBSOCKET_OP_PONG = 0xa
 			};
 
-			int fin = (read_ptr[0] & 0x80) >> 7;
-			int rsv = (read_ptr[0] & 0x70) >> 4; // must be zero, since we don't use extensions
-			int opcode = (read_ptr[0] & 0x0f);
-			int mask = (read_ptr[1] & 0x80) >> 7; // must be zero for client, must be 1 when sending data to server
+			int fin    = (stream[0] & 0x80) >> 7;
+			int rsv    = (stream[0] & 0x70) >> 4; // must be zero, since we don't use extensions
+			int opcode = (stream[0] & 0x0f);
+			int mask   = (stream[1] & 0x80) >> 7; // must be zero for client, must be 1 when sending data to server
 
-			uint64_t payload_len = (read_ptr[1] & 0x7f);
+			uint64_t payload_len = (stream[1] & 0x7f);
 
-			if (payload_len < 126) {
-				read_ptr += 2;
-				bytes_received -= 2;
-			} else if (payload_len == 126) {
+			int consumed_size = 2;
+
+			if (payload_len == 126) {
 				if (bytes_received < 4) {
-					bytes_received += Websocket_ReadMinimum(websocket, read_ptr + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
+					bytes_received += Websocket_ReadMinimum(websocket, stream + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
 				}
 
+				union Payload_Length2 {
+					uint8_t  parts[2];
+					uint16_t combined;
+				};
+
+				Payload_Length2 length;
+				length.parts[0] = stream[3];
+				length.parts[1] = stream[2];
+
+				consumed_size   = 4;
+				payload_len     = length.combined;
+			} else if (payload_len == 127) {
+				if (bytes_received < 10) {
+					bytes_received += Websocket_ReadMinimum(websocket, stream + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
+				}
+
+				union Payload_Length8 {
+					uint8_t  parts[8];
+					uint64_t combined;
+				};
+
+				Payload_Length8 length;
+				length.parts[0] = stream[9];
+				length.parts[1] = stream[8];
+				length.parts[2] = stream[7];
+				length.parts[3] = stream[6];
+				length.parts[4] = stream[5];
+				length.parts[5] = stream[4];
+				length.parts[6] = stream[3];
+				length.parts[7] = stream[2];
+
+				consumed_size   = 10;
+				payload_len     = length.combined;
 			}
+
+			uint8_t *payload_buff = (uint8_t *)PushSize(arena, payload_len);
+
+			int payload_read = bytes_received - consumed_size;
+			memcpy(payload_buff, stream + consumed_size, payload_read);
+
+			uint8_t *read_ptr  = payload_buff + payload_read;
+			uint64_t remaining = payload_len - payload_read;
+			while (remaining) {
+				int bytes_read = Net_Read(websocket, read_ptr, (int)remaining);
+				Assert(bytes_read >= 0);
+				read_ptr += bytes_read;
+				remaining -= bytes_read;
+			}
+
+			String payload(payload_buff, payload_len);
+
+			Json json;
+			if (JsonParse(payload, &json, MemoryArenaAllocator(arena))) {
+				WriteLogInfo("Got JSON");
+			}
+
+
 
 			int fuck_visual_studio = 42;
 		}
-
-		Http_DestroyResponse(res);
 	}
 
 	Http_Disconnect(websocket);

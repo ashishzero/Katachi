@@ -16,14 +16,12 @@ int JsonWriteKey(Json_Builder *json, String key);
 int JsonWriteNull(Json_Builder *json);
 int JsonWriteString(Json_Builder *json, String value);
 int JsonWriteBool(Json_Builder *json, bool value);
-int JsonWriteNumber(Json_Builder *json, int64_t value);
-int JsonWriteNumber(Json_Builder *json, uint64_t value);
-int JsonWriteNumber(Json_Builder *json, double value);
+int JsonWriteNumber(Json_Builder *json, int value);
+int JsonWriteNumber(Json_Builder *json, float value);
 int JsonWriteKeyString(Json_Builder *json, String key, String value);
 int JsonWriteKeyBool(Json_Builder *json, String key, bool value);
-int JsonWriteKeyNumber(Json_Builder *json, String key, int64_t value);
-int JsonWriteKeyNumber(Json_Builder *json, String key, uint64_t value);
-int JsonWriteKeyNumber(Json_Builder *json, String key, double value);
+int JsonWriteKeyNumber(Json_Builder *json, String key, int value);
+int JsonWriteKeyNumber(Json_Builder *json, String key, float value);
 
 //
 //
@@ -38,8 +36,21 @@ enum Json_Type {
 	JSON_TYPE_OBJECT
 };
 
+
+enum Json_Number_Kind {
+	JSON_NUMBER_INTEGER,
+	JSON_NUMBER_FLOATING
+};
+
+struct Json_Number {
+	Json_Number_Kind kind;
+	union {
+		int32_t integer;
+		float   floating;
+	} value;
+};
+
 using Json_Bool = bool;
-using Json_Number = double;
 using Json_String = String;
 using Json_Array = Array<struct Json>;
 using Json_Object = Table<String, struct Json>;
@@ -63,8 +74,8 @@ Json JsonFromArray(Json_Array arr);
 Json JsonFromObject(Json_Object object);
 void JsonObjectPut(Json_Object *json, String key, Json value);
 void JsonObjectPutBool(Json_Object *json, String key, bool boolean);
-void JsonObjectPutNumber(Json_Object *json, String key, double number);
-void JsonObjectPutNumber(Json_Object *json, String key, int64_t number);
+void JsonObjectPutNumber(Json_Object *json, String key, float number);
+void JsonObjectPutNumber(Json_Object *json, String key, int number);
 void JsonObjectPutString(Json_Object *json, String key, String string);
 void JsonObjectPutArray(Json_Object *json, String key, Json_Array array);
 void JsonObjectPutObject(Json_Object *json, String key, Json_Object object);
