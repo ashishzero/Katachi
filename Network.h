@@ -2,8 +2,9 @@
 #include "Kr/KrCommon.h"
 
 constexpr int NET_TIMEOUT_MILLISECS = 1000;
+constexpr int NET_SOCKET_ERROR      = -1;
 constexpr int NET_CONNECTION_LOST   = -2;
-constexpr int NET_TIMED_OUT         = 0;
+constexpr int NET_TIMED_OUT         = -3;
 
 enum Net_Socket_Type {
 	NET_SOCKET_TCP,

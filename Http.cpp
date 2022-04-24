@@ -200,15 +200,43 @@ void Http_DestroyResponse(Http_Response *req) {
 //
 //
 
-static inline bool Http_WriteBytes(Net_Socket *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
+static inline int Http_Write(Net_Socket *http, uint8_t *bytes, int length) {
+	Connected:
+	int ret = Net_Write(http, bytes, length);
+	if (ret >= 0) return ret;
+	if (ret == NET_TIMED_OUT) {
+		WriteLogErrorEx("Http", "Sending timed out");
+		return -1;
+	}
+	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
+		if (Net_TryReconnect(http))
+			goto Connected;
+	}
+	return -1;
+}
+
+static inline int Http_Read(Net_Socket *http, uint8_t *buffer, int length) {
+	Connected:
+	int ret = Net_Read(http, buffer, length);
+	if (ret >= 0) return ret;
+	if (ret == NET_TIMED_OUT) {
+		WriteLogErrorEx("Http", "Receiving timed out");
+		return -1;
+	}
+	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
+		if (Net_TryReconnect(http))
+			goto Connected;
+	}
+	return -1;
+}
+
+static inline bool Http_WriteAll(Net_Socket *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
 	while (bytes_to_write > 0) {
-		int bytes_sent = Net_Write(http, bytes, (int)bytes_to_write);
-		if (bytes_sent > 0) {
-			bytes += bytes_sent;
-			bytes_to_write -= bytes_sent;
-			continue;
-		}
-		return false;
+		int bytes_sent = Http_Write(http, bytes, (int)bytes_to_write);
+		if (bytes_sent < 0)
+			return false;
+		bytes += bytes_sent;
+		bytes_to_write -= bytes_sent;
 	}
 	return true;
 }
@@ -270,18 +298,18 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 			return nullptr;
 
 		String buffer = BuilderEnd(&builder);
-		if (!Http_WriteBytes(http, buffer.data, buffer.length))
+		if (!Http_WriteAll(http, buffer.data, buffer.length))
 			return nullptr;
 
 		if (req->body.type == Http_Request::Body::STATIC) {
-			if (!Http_WriteBytes(http, req->body.data.buffer.data, req->body.data.buffer.length))
+			if (!Http_WriteAll(http, req->body.data.buffer.data, req->body.data.buffer.length))
 				return nullptr;
 		} else {
 			Http_Body_Reader reader = req->body.data.reader;
 			while (true) {
 				Buffer buffer = reader.proc(reader.context);
 				if (!buffer.length) break;
-				if (!Http_WriteBytes(http, buffer.data, buffer.length))
+				if (!Http_WriteAll(http, buffer.data, buffer.length))
 					return nullptr;
 			}
 		}
@@ -303,8 +331,8 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 		bool read_more = true;
 
 		while (read_more) {
-			int bytes_read = Net_Read(http, read_ptr, buffer_size);
-			if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+			int bytes_read = Http_Read(http, read_ptr, buffer_size);
+			if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -437,8 +465,8 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 		ptrdiff_t remaining = content_length - raw_body_part.length;
 		while (remaining) {
-			int bytes_read = Net_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
-			if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+			int bytes_read = Http_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
+			if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
 			if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
 				return Http_ResponseFailed(res, nullptr);
 			remaining -= bytes_read;
@@ -461,8 +489,8 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 			while (true) {
 				while (chunk_read < 2) {
-					int bytes_read = Net_Read(http, stream_buffer + chunk_read, (HTTP_READ_CHUNK_SIZE - (int)chunk_read));
-					if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+					int bytes_read = Http_Read(http, stream_buffer + chunk_read, (HTTP_READ_CHUNK_SIZE - (int)chunk_read));
+					if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
 					chunk_read += bytes_read;
 				}
 
@@ -493,8 +521,8 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 					ptrdiff_t remaining = chunk_length - streamed_chunk_len;
 					while (remaining) {
-						int bytes_read = Net_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
-						if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+						int bytes_read = Http_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
+						if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
 						if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
 							return Http_ResponseFailed(res, nullptr);
 						remaining -= bytes_read;

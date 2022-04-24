@@ -1,6 +1,8 @@
 #pragma once
 #include "Network.h"
 
+static constexpr int HTTP_MAX_RECONNECT = 5;
+
 static constexpr int HTTP_MAX_HEADER_SIZE = KiloBytes(8);
 static constexpr int HTTP_READ_CHUNK_SIZE = HTTP_MAX_HEADER_SIZE;
 

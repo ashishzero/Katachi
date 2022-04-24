@@ -260,11 +260,12 @@ static int PL_Net_Write(Net_Socket *net, void *buffer, int length, int timeout) 
 
 		if (fds.revents & (POLLHUP | POLLERR))
 			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
 	}
 
-	if (presult == SOCKET_ERROR) PL_Net_ReportLastPlatformError();
-
-	return presult;
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
 }
 
 static int PL_Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
@@ -285,11 +286,12 @@ static int PL_Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
 
 		if (fds.revents & (POLLHUP | POLLERR))
 			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
 	}
 
-	if (presult == SOCKET_ERROR) PL_Net_ReportLastPlatformError();
-
-	return presult;
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
 }
 
 //
@@ -396,11 +398,12 @@ static int PL_Net_OpenSSLWrite(Net_Socket *net, void *buffer, int length, int ti
 
 		if (fds.revents & (POLLHUP | POLLERR))
 			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
 	}
 
-	if (presult == SOCKET_ERROR) PL_Net_ReportLastPlatformError();
-
-	return presult;
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
 }
 
 static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length, int timeout) {
@@ -421,11 +424,12 @@ static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length, int tim
 
 		if (fds.revents & (POLLHUP | POLLERR))
 			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
 	}
 
-	if (presult == SOCKET_ERROR) PL_Net_ReportLastPlatformError();
-
-	return presult;
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
 }
 
 static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
