@@ -398,9 +398,15 @@ bool Http_RequestAddCustomHeader(Http_Request *req, String name, String value) {
 	return false;
 }
 
+enum Http_Version : uint32_t {
+	HTTP_VERSION_1_0,
+	HTTP_VERSION_1_1,
+};
+
 struct Http_Status {
-	ptrdiff_t code;
-	String    name;
+	Http_Version version;
+	uint32_t     code;
+	String       name;
 };
 
 struct Http_Response {
@@ -618,11 +624,15 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				}
 			} else {
 				const String prefixes[] = { "HTTP/1.1 ", "HTTP/1.0 " };
+				constexpr Http_Version versions[] = { HTTP_VERSION_1_1, HTTP_VERSION_1_0 };
+				static_assert(ArrayCount(prefixes) == ArrayCount(versions), "");
 
 				bool prefix_present = false;
-				for (auto prefix : prefixes) {
+				for (int index = 0; index < ArrayCount(prefixes); ++index) {
+					String prefix = prefixes[index];
 					if (StrStartsWith(line, prefix)) {
 						line = StrRemovePrefix(line, prefix.length);
+						res->status.version = versions[index];
 						prefix_present = true;
 						break;
 					}
@@ -635,10 +645,12 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				if (name_pos < 0)
 					return Http_ResponseFailed(res, "Invalid header received");
 
-				if (!ParseInt(SubStr(line, 0, name_pos), &res->status.code))
+				ptrdiff_t status_code;
+				if (!ParseInt(SubStr(line, 0, name_pos), &status_code))
 					return Http_ResponseFailed(res, "Invalid header received");
-				else if (res->status.code < 0)
+				else if (status_code < 0)
 					return Http_ResponseFailed(res, "Invalid status code received");
+				res->status.code = (uint32_t)status_code;
 				res->status.name = SubStr(line, name_pos + 1);
 
 				state = PARSING_FIELDS;
