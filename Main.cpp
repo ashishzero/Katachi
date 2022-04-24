@@ -800,7 +800,7 @@ int main(int argc, char **argv) {
 
 	Http_Body_Writer writer = { Dump };
 
-	Http_Response *res = Http_Post(http, "/api/v9/channels/850062383266136065/messages", req, &writer);
+	Http_Response *res = Http_Post(http, "/api/v9/channels/850062914438430751/messages", req);
 	
 	if (res) {
 		printf("%.*s\n\n", (int)res->body.length, res->body.data);

@@ -52,11 +52,9 @@ struct Net_Socket {
 static bool Net_Reconnect(Net_Socket *net);
 
 #if PLATFORM_WINDOWS
-static wchar_t *PL_Net_UnicodeToWideChar(Memory_Arena *arena, const char *msg, int length) {
-	wchar_t *result = (wchar_t *)PushSize(arena, (length + 1) * sizeof(wchar_t));
-	int wlen = MultiByteToWideChar(CP_UTF8, 0, msg, length, result, length + 1);
-	result[wlen] = 0;
-	return result;
+static void PL_Net_UnicodeToWideChar(wchar_t *dst, int dst_len, const char *msg, int length) {
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, msg, length, dst, dst_len - 1);
+	dst[wlen] = 0;
 }
 
 static void PL_Net_ReportError(int error) {
@@ -92,12 +90,16 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SocketTypeMap[type];
 
-	Memory_Arena *scratch = ThreadScratchpad();
-	Temporary_Memory temp = BeginTemporaryMemory(scratch);
-	Defer{ EndTemporaryMemory(&temp); };
+	wchar_t nodename[2048];
+	wchar_t servicename[512];
 
-	wchar_t *nodename = PL_Net_UnicodeToWideChar(scratch, (char *)node.data, (int)node.length);
-	wchar_t *servicename = PL_Net_UnicodeToWideChar(scratch, (char *)service.data, (int)service.length);
+	if (node.length + 1 >= ArrayCount(nodename) || service.length + 1 >= ArrayCount(servicename)) {
+		WriteLogError("Net:Windows", "Could not create socket: Out of memory");
+		return INVALID_SOCKET;
+	}
+
+	PL_Net_UnicodeToWideChar(nodename, ArrayCount(nodename), (char *)node.data, (int)node.length);
+	PL_Net_UnicodeToWideChar(servicename, ArrayCount(servicename), (char *)service.data, (int)service.length);
 
 	ADDRINFOW *address = nullptr;
 	int error = GetAddrInfoW(nodename, servicename, &hints, &address);
@@ -169,12 +171,6 @@ static int PL_Net_Read(Net_Socket *net, void *buffer, int length) {
 }
 
 #elif PLATFORM_LINUX || PLATFORM_MAC
-static char *PL_Net_StringToCString(Memory_Arena *arena, String src) {
-	char *dst = (char *)PushSize(arena, src.length + 1);
-	memcpy(dst, src.data, src.length);
-	dst[src.length] = 0;
-	return dst;
-}
 
 static void PL_Net_ReportError(int error) {
 	const char *source = "";
@@ -207,12 +203,25 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 	hints.ai_family   = AF_UNSPEC;
 	hints.ai_socktype = SocketTypeMap[type];
 
-	Memory_Arena *scratch = ThreadScratchpad();
-	Temporary_Memory temp = BeginTemporaryMemory(scratch);
-	Defer{ EndTemporaryMemory(&temp); };
+	char nodename[2048];
+	char servicename[512];
 
-	char *nodename    = PL_Net_StringToCString(scratch, node);
-	char *servicename = PL_Net_StringToCString(scratch, service);
+	if (node.length + 1 >= ArrayCount(nodename) || service.length + 1 >= ArrayCount(servicename)) {
+		const char *source = "";
+#if PLATFORM_LINUX
+			source = "Net:Linux";
+#elif PLATFORM_MAC
+			source = "Net:Mac";
+#endif
+		WriteLogErrorEx(source, "Could not create socket: Out of memory");
+		return INVALID_SOCKET;
+	}
+
+	memcpy(nodename, node.data, node.length);
+	memcpy(servicename, service.data, service.length);
+
+	nodename[node.length]       = 0;
+	servicename[service.length] = 0;
 
 	addrinfo *address = nullptr;
 	int error = getaddrinfo(nodename, servicename, &hints, &address);
@@ -400,7 +409,17 @@ static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
 		return false;
 	}
 
-	const char *hostname = (char *)net->node.data;
+	char hostname[2048];
+	if (net->node.length + net->service.length + 2 >= sizeof(hostname)) {
+		WriteLogErrorEx("Net:OpenSSL", "Could not write hostname: Out of memory");
+		return false;
+	}
+
+	memcpy(hostname, net->node.data, net->node.length);
+	hostname[net->node.length] = ':';
+	memcpy(hostname + net->node.length + 1, net->service.data, net->service.length);
+	hostname[net->node.length + 1 + net->service.length] = 0;
+
 	if (!SSL_set_tlsext_host_name(ssl, hostname)) {
 		PL_Net_ReportOpenSSLError();
 		SSL_free(ssl);
