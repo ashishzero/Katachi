@@ -155,20 +155,24 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Http.cpp" />
     <ClCompile Include="Json.cpp" />
     <ClCompile Include="Kr\KrBasic.cpp" />
     <ClCompile Include="Kr\KrCommon.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Network.cpp" />
+    <ClCompile Include="SHA1\sha1.cpp" />
     <ClCompile Include="StringBuilder.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Http.h" />
     <ClInclude Include="Json.h" />
     <ClInclude Include="Discord.h" />
     <ClInclude Include="Kr\KrBasic.h" />
     <ClInclude Include="Kr\KrCommon.h" />
     <ClInclude Include="Kr\KrString.h" />
     <ClInclude Include="Network.h" />
+    <ClInclude Include="SHA1\sha1.h" />
     <ClInclude Include="StringBuilder.h" />
   </ItemGroup>
   <ItemGroup>

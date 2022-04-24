@@ -79,11 +79,22 @@ INLINE_PROCEDURE String StrDuplicate(String src) {
 	return dst;
 }
 
-INLINE_PROCEDURE String StrDuplicateArena(String src, Memory_Arena *arena) {
+INLINE_PROCEDURE String StrDuplicate(String src, Memory_Arena *arena) {
 	String dst;
 	dst.data = (uint8_t *)PushSize(arena, src.length + 1);
 	memcpy(dst.data, src.data, src.length);
 	dst.length = src.length;
+	dst.data[dst.length] = 0;
+	return dst;
+}
+
+INLINE_PROCEDURE String StrContat(String a, String b, Memory_Arena *arena) {
+	ptrdiff_t len = a.length + b.length;
+	String dst;
+	dst.data = (uint8_t *)PushSize(arena, len + 1);
+	memcpy(dst.data, a.data, a.length);
+	memcpy(dst.data + a.length, b.data, b.length);
+	dst.length = len;
 	dst.data[dst.length] = 0;
 	return dst;
 }
@@ -190,6 +201,18 @@ INLINE_PROCEDURE ptrdiff_t StrFind(String str, const String key, ptrdiff_t pos =
 	return -1;
 }
 
+INLINE_PROCEDURE ptrdiff_t StrFindCaseInsensitive(String str, const String key, ptrdiff_t pos = 0) {
+	str = SubStr(str, pos);
+	while (str.length >= key.length) {
+		if (StrCompareCaseInsensitive(String(str.data, key.length), key) == 0) {
+			return pos;
+		}
+		pos += 1;
+		str = StrRemovePrefix(str, 1);
+	}
+	return -1;
+}
+
 INLINE_PROCEDURE ptrdiff_t StrFindCharacter(String str, uint8_t key, ptrdiff_t pos = 0) {
 	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index < str.length; ++index)
 		if (str.data[index] == key)
@@ -212,4 +235,39 @@ INLINE_PROCEDURE ptrdiff_t StrReverseFindCharacter(String str, uint8_t key, ptrd
 		if (str.data[index] == key)
 			return index;
 	return -1;
+}
+
+//
+//
+//
+
+#define IsNumber(a) ((a) >= '0' && (a) <= '9')
+
+INLINE_PROCEDURE bool ParseInt(String content, ptrdiff_t *value) {
+	ptrdiff_t result = 0;
+	ptrdiff_t index = 0;
+	for (; index < content.length && IsNumber(content[index]); ++index)
+		result = (result * 10 + (content[index] - '0'));
+	*value = result;
+	return index == content.length;
+}
+
+INLINE_PROCEDURE bool ParseHex(String content, ptrdiff_t *value) {
+	ptrdiff_t result = 0;
+	ptrdiff_t index = 0;
+	for (; index < content.length; ++index) {
+		ptrdiff_t digit;
+		uint8_t ch = content[index];
+		if (IsNumber(ch))
+			digit = ch - '0';
+		else if (ch >= 'a' && ch <= 'f')
+			digit = 10 + (ch - 'a');
+		else if (ch >= 'A' && ch <= 'F')
+			digit = 10 + (ch - 'A');
+		else
+			break;
+		result = (result * 16 + digit);
+	}
+	*value = result;
+	return index == content.length;
 }

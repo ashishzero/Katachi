@@ -1,3 +1,4 @@
+#pragma once
 #include "Kr/KrCommon.h"
 
 constexpr int NET_TIMEOUT_SECS = 1;

@@ -233,6 +233,9 @@ struct String {
 
 typedef String Buffer;
 
+#define StrFmt    "%.*s"
+#define StrArg(s) (int)(s).length, (s).data
+
 bool operator==(const String a, const String b);
 bool operator!=(const String a, const String b);
 
