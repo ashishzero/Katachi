@@ -135,6 +135,20 @@ static String GenerateSecureWebSocketKey(uint8_t(&buffer)[SecureWebSocketKeySize
 	return EncodeBase64(Buffer((uint8_t *)nonce, sizeof(nonce)), buffer, sizeof(buffer));
 }
 
+static int Websocket_ReadMinimum(Net_Socket *websocket, uint8_t *read_ptr, int buffer_size, int minimum_req) {
+	Assert(minimum_req <= buffer_size);
+	int bytes_received = 0;
+	while (bytes_received < minimum_req) {
+		int bytes_read = Net_Read(websocket, read_ptr, buffer_size);
+		if (bytes_read < 0)
+			return bytes_read;
+		bytes_received += bytes_read;
+		read_ptr += bytes_read;
+		buffer_size -= bytes_read;
+	}
+	return bytes_received;
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -165,6 +179,9 @@ int main(int argc, char **argv) {
 
 	Http_Body_Writer writer = { Dump };
 
+	uint8_t read_buffer[100] = {};
+	int bytes_sent = Net_Read(http, read_buffer, sizeof(read_buffer));
+
 	Http_Response *res = Http_Get(http, "/api/v9/gateway/bot", req);
 	
 	if (res) {
@@ -177,15 +194,15 @@ int main(int argc, char **argv) {
 
 	// wss://gateway.discord.gg/?v=9&encoding=json
 	
-	Net_Socket *wss = Http_Connect("wss://gateway.discord.gg", HTTPS_CONNECTION);
-	if (!wss) {
+	Net_Socket *websocket = Http_Connect("wss://gateway.discord.gg", HTTPS_CONNECTION);
+	if (!websocket) {
 		return 1;
 	}
 
 	uint8_t buffer[SecureWebSocketKeySize];
 	String wsskey = GenerateSecureWebSocketKey(buffer);
 
-	req = Http_CreateRequest(wss, arena);
+	req = Http_CreateRequest(websocket, arena);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
 	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, "Katachi");
 	Http_SetHeader(req, HTTP_HEADER_UPGRADE, "websocket");
@@ -194,7 +211,7 @@ int main(int argc, char **argv) {
 	Http_SetCustomHeader(req, "Sec-WebSocket-Key", wsskey);
 
 
-	res = Http_Get(wss, "/?v=9&encoding=json", req);
+	res = Http_Get(websocket, "/?v=9&encoding=json", req);
 
 	if (res) {
 		if (res->status.code == 101) {
@@ -221,12 +238,48 @@ int main(int argc, char **argv) {
 			} else {
 				WriteLogInfo("Websocket connected.");
 			}
+
+			constexpr int WEBSOCKET_STREAM_SIZE = KiloBytes(8);
+
+			uint8_t stream[WEBSOCKET_STREAM_SIZE] = {};
+
+			uint8_t *read_ptr = stream;
+
+			int bytes_received = Websocket_ReadMinimum(websocket, read_ptr, WEBSOCKET_STREAM_SIZE, 2);
+
+			enum Websocket_Opcode {
+				WEBSOCKET_OP_CONTINUATION_FRAME = 0x0,
+				WEBSOCKET_OP_TEXT_FRAME = 0x1,
+				WEBSOCKET_OP_BINARY_FRAME = 0x2,
+				WEBSOCKET_OP_CONNECTION_CLOSE = 0x8,
+				WEBSOCKET_OP_PING = 0x9,
+				WEBSOCKET_OP_PONG = 0xa
+			};
+
+			int fin = (read_ptr[0] & 0x80) >> 7;
+			int rsv = (read_ptr[0] & 0x70) >> 4; // must be zero, since we don't use extensions
+			int opcode = (read_ptr[0] & 0x0f);
+			int mask = (read_ptr[1] & 0x80) >> 7; // must be zero for client, must be 1 when sending data to server
+
+			uint64_t payload_len = (read_ptr[1] & 0x7f);
+
+			if (payload_len < 126) {
+				read_ptr += 2;
+				bytes_received -= 2;
+			} else if (payload_len == 126) {
+				if (bytes_received < 4) {
+					bytes_received += Websocket_ReadMinimum(websocket, read_ptr + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
+				}
+
+			}
+
+			int fuck_visual_studio = 42;
 		}
 
 		Http_DestroyResponse(res);
 	}
 
-	Http_Disconnect(wss);
+	Http_Disconnect(websocket);
 
 	Net_Shutdown();
 
