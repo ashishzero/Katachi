@@ -159,6 +159,11 @@ enum Http_Connection {
 	HTTPS_CONNECTION
 };
 
+static constexpr int HTTP_MAX_HEADER_SIZE = KiloBytes(8);
+static constexpr int HTTP_READ_CHUNK_SIZE = HTTP_MAX_HEADER_SIZE;
+
+static_assert(HTTP_MAX_HEADER_SIZE >= HTTP_READ_CHUNK_SIZE, "");
+
 Net_Socket *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator) {
 	Url url;
 	if (Http_UrlExtract(hostname, &url)) {
@@ -318,7 +323,7 @@ struct Http_Body_Reader {
 	void *context;
 };
 
-typedef void(*Http_Body_Writer_Proc)(uint8_t *buffer, int length, void *context);
+typedef void(*Http_Body_Writer_Proc)(const Http_Header &header, uint8_t *buffer, int length, void *context);
 
 struct Http_Body_Writer {
 	Http_Body_Writer_Proc proc;
@@ -432,8 +437,6 @@ bool Http_ResponseAddCustomHeader(Http_Response *res, String name, String value)
 	return false;
 }
 
-static constexpr int HTTP_MAX_HEADER_SIZE = KiloBytes(8);
-
 static inline bool Http_WriteBytes(Net_Socket *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
 	while (bytes_to_write > 0) {
 		int bytes_sent = Net_Write(http, bytes, (int)bytes_to_write);
@@ -447,16 +450,27 @@ static inline bool Http_WriteBytes(Net_Socket *http, uint8_t *bytes, ptrdiff_t b
 	return true;
 }
 
-static inline bool Http_ReadBytes(Net_Socket *http, uint8_t *buffer, ptrdiff_t bytes_to_read) {
-	while (bytes_to_read) {
-		int bytes_read = Net_Read(http, buffer, (int)bytes_to_read);
-		if (bytes_read > 0) {
-			bytes_to_read -= bytes_read;
-			buffer += bytes_read;
-			continue;
+static inline Http_Response *Http_ResponseFailed(Http_Response * res, const char *fmt, ...) {
+	if (fmt) {
+		va_list args;
+		va_start(args, fmt);
+		WriteLogErrorExV("Http", fmt, args);
+		va_end(args);
+	}
+	Http_DestroyResponse(res);
+	return nullptr;
+}
+
+static inline bool Http_ProcessReceivedBuffer(const Http_Header &header, uint8_t *buffer, int length, Memory_Arena *arena, Http_Body_Writer *writer) {
+	if (!writer) {
+		uint8_t *dst = (uint8_t *)PushSize(arena, length);
+		if (dst) {
+			memcpy(dst, buffer, length);
+			return true;
 		}
 		return false;
 	}
+	writer->proc(header, buffer, length, writer->context);
 	return true;
 }
 
@@ -510,35 +524,24 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 		}
 	}
 
+	uint8_t stream_buffer[HTTP_READ_CHUNK_SIZE];
+
 	Http_Response *res = Http_CreateResponse(arena);
 
-	const auto ResponseFailed = [res](const char *message = nullptr) -> Http_Response *{
-		if (message) WriteLogErrorEx("Http", message);
-		Http_DestroyResponse(res);
-		return nullptr;
-	};
-
-	uint8_t *head_ptr   = nullptr;
-	ptrdiff_t head_len  = 0;
-
-	uint8_t *body_ptr   = nullptr;
-	ptrdiff_t body_read = 0;
+	String raw_header;
+	String raw_body_part;
 
 	{
 		// Read Header
-		uint8_t *header_mem = (uint8_t *)PushSize(arena, HTTP_MAX_HEADER_SIZE);
-		if (!header_mem)
-			return ResponseFailed("Reading header failed: Out of Memory");
-
-		uint8_t *read_ptr = header_mem;
-		int buffer_size = HTTP_MAX_HEADER_SIZE;
+		uint8_t *read_ptr  = stream_buffer;
+		int buffer_size    = HTTP_MAX_HEADER_SIZE;
 		uint8_t *parse_ptr = read_ptr;
 
 		bool read_more = true;
 
 		while (read_more) {
 			int bytes_read = Net_Read(http, read_ptr, buffer_size);
-			if (bytes_read <= 0) return ResponseFailed();
+			if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -549,177 +552,31 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				if (pos < 0) {
 					if (buffer_size)
 						break;
-					return ResponseFailed("Reading header failed: Out of Memory");
+					return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
 				}
 
 				parse_ptr += pos + 2;
 
 				if (pos == 0) {
-					head_ptr  = header_mem;
-					head_len  = parse_ptr - header_mem;
-					body_ptr  = parse_ptr;
-					body_read = read_ptr - parse_ptr;
-					read_more = false;
+					ptrdiff_t header_size = parse_ptr - stream_buffer;
+					uint8_t *header_mem   = (uint8_t *)PushSize(arena, header_size);
+					if (!header_mem) return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
 
-					if (buffer_size)
-						PopSize(arena, buffer_size);
+					memcpy(header_mem, stream_buffer, header_size);
 
+					raw_header    = String(header_mem, header_size);
+					raw_body_part = String(parse_ptr, read_ptr - parse_ptr);
+					read_more     = false;
 					break;
 				}
 			}
-		}
-	}
-
-	String header(head_ptr, head_len);
-
-	// Body: Content-Length
-	ptrdiff_t name_pos = StrFind(header, HttpHeaderMap[HTTP_HEADER_CONTENT_LENGTH]);
-	if (name_pos >= 0) {
-		ptrdiff_t colon = StrFindCharacter(header, ':', name_pos);
-		ptrdiff_t end   = StrFindCharacter(header, '\n', name_pos);
-		if (colon < 0 || end < 0)
-			return ResponseFailed("Invalid Content-Length in the header");
-
-		String content_length_str = SubStr(header, colon + 1, end - colon - 1);
-		content_length_str        = StrTrim(content_length_str);
-
-		ptrdiff_t content_length = 0;
-		if (!ParseInt(content_length_str, &content_length))
-			return ResponseFailed("Invalid Content-Length in the header");
-
-		if (content_length < body_read)
-			return ResponseFailed("Invalid Content-Length in the header");
-
-		if (writer == nullptr) {
-			uint8_t *read_ptr = nullptr;
-			if (body_ptr + body_read == MemoryArenaGetCurrent(arena)) {
-				// Since header and body are allocated using the same arena
-				// at this point, the allocation should be serial.
-				// But in case we decide to change the flow of the code later
-				// this might not be true, thus check is added here to ensure
-				// serial and copy is the allocation is serial
-				read_ptr = (uint8_t *)PushSize(arena, content_length - body_read);
-			} else {
-				read_ptr = (uint8_t *)PushSize(arena, content_length);
-				if (read_ptr) {
-					memcpy(read_ptr, body_ptr, body_read);
-					body_ptr = read_ptr;
-					read_ptr += body_read;
-				}
-			}
-
-			if (!read_ptr)
-				return ResponseFailed("Reading header failed: Out of Memory");
-
-			if (!Http_ReadBytes(http, read_ptr, content_length - body_read))
-				return ResponseFailed();
-			res->body = Buffer(body_ptr, content_length);
-		} else {
-			Assert(body_read < HTTP_MAX_HEADER_SIZE);
-
-			writer->proc(body_ptr, (int)body_read, writer->context);
-
-			uint8_t *read_ptr = nullptr;
-			if (body_ptr + body_read == MemoryArenaGetCurrent(arena))
-				read_ptr = (uint8_t *)PushSize(arena, HTTP_MAX_HEADER_SIZE - body_read);
-			else
-				read_ptr = (uint8_t *)PushSize(arena, HTTP_MAX_HEADER_SIZE);
-
-			if (!read_ptr)
-				return ResponseFailed("Reading header failed: Out of Memory");
-
-			ptrdiff_t remaining = content_length - body_read;
-			while (remaining) {
-				int bytes_read = Net_Read(http, read_ptr, (int)Minimum(remaining, HTTP_MAX_HEADER_SIZE));
-				if (bytes_read <= 0) ResponseFailed();
-				writer->proc(read_ptr, bytes_read, writer->context);
-				remaining -= bytes_read;
-			}
-
-			PopSize(arena, HTTP_MAX_HEADER_SIZE);
-		}
-	} else {
-		// Transfer-Encoding: chunked
-		name_pos = StrFind(header, HttpHeaderMap[HTTP_HEADER_TRANSFER_ENCODING]);
-		if (name_pos < 0)
-			return ResponseFailed("No Content-Length in the header");
-
-		ptrdiff_t colon = StrFindCharacter(header, ':', name_pos);
-		ptrdiff_t end   = StrFindCharacter(header, '\n', name_pos);
-		if (colon < 0 || end < 0)
-			return ResponseFailed("Invalid header received");
-
-		String value = SubStr(header, colon + 1, end - colon - 1);
-		value        = StrTrim(value);
-
-		if (StrFind(value, "chunked") >= 0) {
-			uint8_t streaming_buffer[HTTP_MAX_HEADER_SIZE];
-			Assert(body_read < sizeof(streaming_buffer));
-
-			memcpy(streaming_buffer, body_ptr, body_read);
-
-			if (body_ptr + body_read == MemoryArenaGetCurrent(arena))
-				PopSize(arena, body_read);
-
-			body_ptr = (uint8_t *)MemoryArenaGetCurrent(arena);
-			uint8_t *last_ptr = body_ptr;
-
-			ptrdiff_t chunk_read = body_read;
-			while (true) {
-				while (chunk_read < 2) {
-					int bytes_read = Net_Read(http, streaming_buffer + chunk_read, (int)(sizeof(streaming_buffer) - chunk_read));
-					if (bytes_read <= 0) return ResponseFailed();
-					chunk_read += bytes_read;
-				}
-
-				String chunk_header(streaming_buffer, chunk_read);
-				ptrdiff_t data_pos = StrFind(chunk_header, "\r\n");
-				if (data_pos < 0)
-					ResponseFailed("Reading header failed: chuck size not found");
-
-				String length_str = SubStr(chunk_header, 0, data_pos);
-				ptrdiff_t length;
-				if (!ParseHex(length_str, &length) || length < 0)
-					ResponseFailed("Reading header failed: Invalid chuck size");
-
-				if (length == 0)
-					break;
-
-				Assert(last_ptr == MemoryArenaGetCurrent(arena));
-				uint8_t *dst_ptr = (uint8_t *)PushSize(arena, length);
-				if (!dst_ptr)
-					ResponseFailed("Reading header failed: Out of memory");
-				last_ptr = dst_ptr + length;
-
-				data_pos += 2; // skip \r\n
-				ptrdiff_t streamed_chunk_len = chunk_read - data_pos;
-				if (length <= streamed_chunk_len) {
-					memcpy(dst_ptr, streaming_buffer + data_pos, length);
-					chunk_read -= (data_pos + length);
-					memmove(streaming_buffer, streaming_buffer + data_pos + length, chunk_read);
-				} else {
-					memcpy(dst_ptr, streaming_buffer + data_pos, streamed_chunk_len);
-					if (!Http_ReadBytes(http, dst_ptr + streamed_chunk_len, length - streamed_chunk_len))
-						return ResponseFailed();
-					chunk_read = 0;
-				}
-
-				// Reset the buffer if the writer is present
-				if (writer) {
-					writer->proc(dst_ptr, (int)length, writer->context);
-					PopSize(arena, length);
-					last_ptr = dst_ptr;
-				}
-			}
-			if (writer == nullptr)
-				res->body = Buffer(body_ptr, last_ptr - body_ptr);
 		}
 	}
 
 	{
 		// Parse headers
-		uint8_t *trav = header.data;
-		uint8_t *last = trav + header.length;
+		uint8_t *trav = raw_header.data;
+		uint8_t *last = trav + raw_header.length;
 
 		enum { PARSISNG_STATUS, PARSING_FIELDS };
 
@@ -732,14 +589,14 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				break;
 
 			if (pos < 0)
-				return ResponseFailed("Invalid header received");
+				return Http_ResponseFailed(res, "Invalid header received");
 
 			String line(trav, pos);
 			trav += pos + 2;
 
 			if (state == PARSING_FIELDS) {
 				ptrdiff_t colon = StrFindCharacter(line, ':');
-				if (colon <= 0) return ResponseFailed("Invalid header received");
+				if (colon <= 0) return Http_ResponseFailed(res, "Invalid header received");
 
 				String name = SubStr(line, 0, colon);
 				name = StrTrim(name);
@@ -757,7 +614,7 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 				if (!known_header) {
 					if (!Http_ResponseAddCustomHeader(res, name, value))
-						return ResponseFailed("Reading header failed: Out of Memory");
+						return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
 				}
 			} else {
 				const String prefixes[] = { "HTTP/1.1 ", "HTTP/1.0" };
@@ -771,21 +628,116 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 					}
 				}
 				if (!prefix_present)
-					return ResponseFailed("Invalid header received");
+					return Http_ResponseFailed(res, "Invalid header received");
 
 				line = StrTrim(line);
 				ptrdiff_t name_pos = StrFindCharacter(line, ' ');
 				if (name_pos < 0)
-					return ResponseFailed("Invalid header received");
+					return Http_ResponseFailed(res, "Invalid header received");
 
 				if (!ParseInt(SubStr(line, 0, name_pos), &res->status.code))
-					return ResponseFailed("Invalid header received");
+					return Http_ResponseFailed(res, "Invalid header received");
 				else if (res->status.code < 0)
-					return ResponseFailed("Invalid status code received");
+					return Http_ResponseFailed(res, "Invalid status code received");
 				res->status.name = SubStr(line, name_pos + 1);
 
 				state = PARSING_FIELDS;
 			}
+		}
+	}
+
+	// Body: Content-Length
+	const String content_length_value = res->headers.known[HTTP_HEADER_CONTENT_LENGTH];
+	if (content_length_value.length) {
+		ptrdiff_t content_length = 0;
+		if (!ParseInt(content_length_value, &content_length))
+			return Http_ResponseFailed(res, "Invalid Content-Length in the header");
+
+		if (content_length < raw_body_part.length)
+			return Http_ResponseFailed(res, "Invalid Content-Length in the header");
+
+		Assert(raw_body_part.length < HTTP_READ_CHUNK_SIZE);
+
+		if (!writer) {
+			res->body.data   = (uint8_t *)MemoryArenaGetCurrent(arena);
+			res->body.length = content_length;
+		}
+
+		if (!Http_ProcessReceivedBuffer(res->headers, raw_body_part.data, (int)raw_body_part.length, arena, writer))
+			return Http_ResponseFailed(res, nullptr);
+
+		ptrdiff_t remaining = content_length - raw_body_part.length;
+		while (remaining) {
+			int bytes_read = Net_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
+			if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+			if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
+				return Http_ResponseFailed(res, nullptr);
+			remaining -= bytes_read;
+		}
+	} else {
+		String transfer_encoding = res->headers.known[HTTP_HEADER_TRANSFER_ENCODING];
+
+		// Transfer-Encoding: chunked
+		if (StrFind(transfer_encoding, "chunked") >= 0) {
+			Assert(raw_body_part.length < HTTP_READ_CHUNK_SIZE);
+
+			memmove(stream_buffer, raw_body_part.data, raw_body_part.length);
+
+			if (!writer) {
+				res->body.data = (uint8_t *)MemoryArenaGetCurrent(arena);
+			}
+
+			ptrdiff_t body_length = 0;
+			ptrdiff_t chunk_read  = raw_body_part.length;
+
+			while (true) {
+				while (chunk_read < 2) {
+					int bytes_read = Net_Read(http, stream_buffer + chunk_read, (HTTP_READ_CHUNK_SIZE - (int)chunk_read));
+					if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+					chunk_read += bytes_read;
+				}
+
+				String chunk_header(stream_buffer, chunk_read);
+				ptrdiff_t data_pos = StrFind(chunk_header, "\r\n");
+				if (data_pos < 0)
+					return Http_ResponseFailed(res, "Reading header failed: chuck size not found");
+
+				String length_str = SubStr(chunk_header, 0, data_pos);
+				ptrdiff_t chunk_length;
+				if (!ParseHex(length_str, &chunk_length) || chunk_length < 0)
+					return Http_ResponseFailed(res, "Reading header failed: Invalid chuck size");
+
+				if (chunk_length == 0)
+					break;
+
+				data_pos += 2; // skip \r\n
+				ptrdiff_t streamed_chunk_len = chunk_read - data_pos;
+
+				if (chunk_length <= streamed_chunk_len) {
+					if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer + data_pos, (int)chunk_length, arena, writer))
+						return Http_ResponseFailed(res, nullptr);
+					chunk_read -= (data_pos + chunk_length);
+					memmove(stream_buffer, stream_buffer + data_pos + chunk_length, chunk_read);
+				} else {
+					if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer + data_pos, (int)streamed_chunk_len, arena, writer))
+						return Http_ResponseFailed(res, nullptr);
+
+					ptrdiff_t remaining = chunk_length - streamed_chunk_len;
+					while (remaining) {
+						int bytes_read = Net_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
+						if (bytes_read <= 0) return Http_ResponseFailed(res, nullptr);
+						if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
+							return Http_ResponseFailed(res, nullptr);
+						remaining -= bytes_read;
+					}
+
+					chunk_read = 0;
+				}
+
+				body_length += chunk_length;
+			}
+			if (!writer)
+				res->body.length = body_length;
 		}
 	}
 
@@ -804,7 +756,7 @@ Http_Response *Http_Put(Net_Socket *http, const String endpoint, Http_Request *r
 	return Http_SendCustomMethod(http, "PUT", endpoint, req, writer);
 }
 
-void Dump(uint8_t *buffer, int length, void *content) {
+void Dump(const Http_Header &header, uint8_t *buffer, int length, void *content) {
 	printf("%.*s", length, buffer);
 }
 
@@ -839,15 +791,12 @@ int main(int argc, char **argv) {
 	Http_Response *res = Http_Post(http, "/api/v9/channels/850062383266136065/messages", req, &writer);
 	
 	if (res) {
-		//printf("%.*s\n\n", (int)res->body.length, res->body.data);
+		printf("%.*s\n\n", (int)res->body.length, res->body.data);
 
 		Http_DestroyResponse(res);
 	}
 
-	/*
-
-	
-	*/
+	Http_Disconnect(http);
 
 
 #if 0
