@@ -1,20 +1,10 @@
 #include "Network.h"
 
+#include "NetworkNative.h"
+
 #if PLATFORM_WINDOWS
-#include <Winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
-
-#define poll WSAPoll
-#elif PLATFORM_LINUX || PLATFORM_MAC
-#include <unistd.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-
-#define SOCKET int
-#define INVALID_SOCKET -1
 #endif
 
 #ifdef NETWORK_OPENSSL_ENABLE
@@ -31,8 +21,8 @@
 //
 //
 
-typedef int(*Net_Write_Proc)(struct Net_Socket *net, void *buffer, int length, int timeout);
-typedef int(*Net_Read_Proc)(struct Net_Socket *net, void *buffer, int length, int timeout);
+typedef int(*Net_Write_Proc)(struct Net_Socket *net, void *buffer, int length);
+typedef int(*Net_Read_Proc)(struct Net_Socket *net, void *buffer, int length);
 
 struct Net_Socket {
 	Net_Write_Proc   write;
@@ -50,8 +40,6 @@ struct Net_Socket {
 //
 //
 //
-
-static bool Net_Reconnect(Net_Socket *net);
 
 #if PLATFORM_WINDOWS
 static void PL_Net_UnicodeToWideChar(wchar_t *dst, int dst_len, const char *msg, int length) {
@@ -242,56 +230,14 @@ static void PL_Net_CloseSocketDescriptor(SOCKET descriptor) {
 //
 //
 
-static int PL_Net_Write(Net_Socket *net, void *buffer, int length, int timeout) {
-	pollfd fds = {};
-	fds.fd = net->descriptor;
-	fds.events = POLLWRNORM;
-
-	int presult = poll(&fds, 1, timeout);
-
-	if (presult > 0) {
-		if (fds.revents & POLLWRNORM) {
-			int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
-			if (written > 0)
-				return written;
-			PL_Net_ReportLastSocketError();
-			return -1;
-		}
-
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
-	} else if (presult == 0) {
-		return NET_TIMED_OUT;
-	}
-
-	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+static int PL_Net_Write(Net_Socket *net, void *buffer, int length) {
+	int written = send((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	return written;
 }
 
-static int PL_Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
-	pollfd fds = {};
-	fds.fd = net->descriptor;
-	fds.events = POLLRDNORM;
-
-	int presult = poll(&fds, 1, timeout);
-
-	if (presult > 0) {
-		if (fds.revents & POLLRDNORM) {
-			int read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
-			if (read > 0)
-				return read;
-			PL_Net_ReportLastSocketError();
-			return -1;
-		}
-
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
-	} else if (presult == 0) {
-		return NET_TIMED_OUT;
-	}
-
-	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+static int PL_Net_Read(Net_Socket *net, void *buffer, int length) {
+	int read = recv((SOCKET)net->descriptor, (char *)buffer, length, 0);
+	return read;
 }
 
 //
@@ -380,56 +326,14 @@ static bool PL_Net_OpenSSLInitialize() {
 	return true;
 }
 
-static int PL_Net_OpenSSLWrite(Net_Socket *net, void *buffer, int length, int timeout) {
-	pollfd fds = {};
-	fds.fd = net->descriptor;
-	fds.events = POLLWRNORM;
-
-	int presult = poll(&fds, 1, timeout);
-
-	if (presult > 0) {
-		if (fds.revents & POLLWRNORM) {
-			int written = SSL_write(net->ssl, buffer, length);
-			if (written > 0)
-				return written;
-			PL_Net_ReportOpenSSLError();
-			return -1;
-		}
-
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
-	} else if (presult == 0) {
-		return NET_TIMED_OUT;
-	}
-
-	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+static int PL_Net_OpenSSLWrite(Net_Socket *net, void *buffer, int length) {
+	int written = SSL_write(net->ssl, buffer, length);
+	return written;
 }
 
-static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length, int timeout) {
-	pollfd fds = {};
-	fds.fd = net->descriptor;
-	fds.events = POLLRDNORM;
-
-	int presult = poll(&fds, 1, timeout);
-
-	if (presult > 0) {
-		if (fds.revents & POLLRDNORM) {
-			int read = SSL_read(net->ssl, buffer, length);
-			if (read > 0)
-				return read;
-			PL_Net_ReportOpenSSLError();
-			return -1;
-		}
-
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
-	} else if (presult == 0) {
-		return NET_TIMED_OUT;
-	}
-
-	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+static int PL_Net_OpenSSLRead(Net_Socket *net, void *buffer, int length) {
+	int read = SSL_read(net->ssl, buffer, length);
+	return read;
 }
 
 static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
@@ -577,14 +481,80 @@ String Net_GetHostname(Net_Socket *net) {
 	return net->node;
 }
 
-ptrdiff_t Net_GetSocketDescriptor(Net_Socket *net) {
-	return net->descriptor;
+int32_t Net_GetSocketDescriptor(Net_Socket *net) {
+	return (int32_t)net->descriptor;
 }
 
 int Net_Write(Net_Socket *net, void *buffer, int length, int timeout) {
-	return net->write(net, buffer, length, timeout);
+	pollfd fds = {};
+	fds.fd = net->descriptor;
+	fds.events = POLLWRNORM;
+
+	int presult = poll(&fds, 1, timeout);
+
+	if (presult > 0) {
+		if (fds.revents & POLLWRNORM) {
+			int written = net->write(net, buffer, length);
+			if (written > 0)
+				return written;
+			if (net->ssl)
+				PL_Net_ReportOpenSSLError();
+			else
+				PL_Net_ReportLastSocketError();
+			return -1;
+		}
+
+		if (fds.revents & (POLLHUP | POLLERR))
+			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
+	}
+
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
 }
 
 int Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
-	return net->read(net, buffer, length, timeout);
+	pollfd fds = {};
+	fds.fd = net->descriptor;
+	fds.events = POLLRDNORM;
+
+	int presult = poll(&fds, 1, timeout);
+
+	if (presult > 0) {
+		if (fds.revents & POLLRDNORM) {
+			int read = net->read(net, buffer, length);
+			if (read > 0)
+				return read;
+			if (net->ssl)
+				PL_Net_ReportOpenSSLError();
+			else
+				PL_Net_ReportLastSocketError();
+			return -1;
+		}
+
+		if (fds.revents & (POLLHUP | POLLERR))
+			return NET_CONNECTION_LOST;
+	} else if (presult == 0) {
+		return NET_TIMED_OUT;
+	}
+
+	PL_Net_ReportLastPlatformError();
+	return NET_SOCKET_ERROR;
+}
+
+int Net_WriteBlocked(Net_Socket *net, void *buffer, int length) {
+	int written = net->write(net, buffer, length);
+	if (written < 0) {
+		PL_Net_ReportLastSocketError();
+	}
+	return written;
+}
+
+int Net_ReadBlocked(Net_Socket *net, void *buffer, int length) {
+	int read = net->read(net, buffer, length);
+	if (read < 0) {
+		PL_Net_ReportLastSocketError();
+	}
+	return read;
 }

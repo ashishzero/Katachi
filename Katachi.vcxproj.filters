@@ -68,6 +68,9 @@
     <ClInclude Include="Http.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="NetworkNative.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="Kr\KrVisualizer.natvis" />

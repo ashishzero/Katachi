@@ -172,6 +172,7 @@
     <ClInclude Include="Kr\KrCommon.h" />
     <ClInclude Include="Kr\KrString.h" />
     <ClInclude Include="Network.h" />
+    <ClInclude Include="NetworkNative.h" />
     <ClInclude Include="SHA1\sha1.h" />
     <ClInclude Include="StringBuilder.h" />
   </ItemGroup>
