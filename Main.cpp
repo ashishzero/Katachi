@@ -352,10 +352,6 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	char nocheckin_buffer[512];
-
-	int nocheckin_res = Net_Receive(http, nocheckin_buffer, sizeof(nocheckin_buffer));
-
 	const String token = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
 
 	Http_Request *req = Http_CreateRequest(http, arenas[0]);
