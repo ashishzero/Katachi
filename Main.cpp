@@ -145,7 +145,7 @@ static int Websocket_ReceiveMinimum(Net_Socket *websocket, uint8_t *read_ptr, in
 	Assert(minimum_req <= buffer_size);
 	int bytes_received = 0;
 	while (bytes_received < minimum_req) {
-		int bytes_read = Net_ReadBlocked(websocket, read_ptr, buffer_size);
+		int bytes_read = Net_Receive(websocket, read_ptr, buffer_size);
 		if (bytes_read < 0) return bytes_read;
 		bytes_received += bytes_read;
 		read_ptr += bytes_read;
@@ -190,6 +190,7 @@ struct Websocket_Frame {
 	int rsv;
 	int opcode;
 	int mask;
+	int header_length;
 	uint64_t payload_length;
 	uint8_t *payload;
 };
@@ -243,7 +244,7 @@ Websocket_Result Websocket_Receive(Net_Socket *websocket, Memory_Arena *arena, W
 		uint64_t remaining = payload_len - payload_read;
 
 		while (remaining) {
-			int bytes_read = Net_ReadBlocked(websocket, read_ptr, (int)remaining);
+			int bytes_read = Net_Receive(websocket, read_ptr, (int)remaining);
 			if (bytes_read < 0) {
 				EndTemporaryMemory(&mpoint);
 				return WEBSOCKET_FAILED;
@@ -252,12 +253,12 @@ Websocket_Result Websocket_Receive(Net_Socket *websocket, Memory_Arena *arena, W
 			remaining -= bytes_read;
 		}
 
-		frame->fin            = fin;
-		frame->rsv            = rsv;
-		frame->opcode         = opcode;
-		frame->mask           = mask;
-		frame->payload_length = payload_len;
-		frame->payload        = payload;
+		frame->fin             = fin;
+		frame->rsv             = rsv;
+		frame->opcode          = opcode;
+		frame->mask            = mask;
+		frame->payload_length  = payload_len;
+		frame->payload         = payload;
 
 		return WEBSOCKET_OK;
 	}
@@ -315,7 +316,7 @@ Websocket_Result Websocket_SendText(Net_Socket *websocket, uint8_t *buffer, ptrd
 		uint8_t *write_ptr = frame;
 		uint64_t remaining = header_size + length;
 		while (remaining) {
-			int bytes_written = Net_WriteBlocked(websocket, write_ptr, (int)remaining);
+			int bytes_written = Net_Send(websocket, write_ptr, (int)remaining);
 			if (bytes_written < 0) return WEBSOCKET_FAILED;
 			write_ptr += bytes_written;
 			remaining -= bytes_written;
@@ -326,6 +327,8 @@ Websocket_Result Websocket_SendText(Net_Socket *websocket, uint8_t *buffer, ptrd
 
 	return WEBSOCKET_OUT_OF_MEMORY;
 }
+
+#include "NetworkNative.h"
 
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
@@ -340,16 +343,22 @@ int main(int argc, char **argv) {
 
 	srand((uint32_t)time(nullptr));
 
-	Memory_Arena *arena = MemoryArenaAllocate(MegaBytes(64));
+	Memory_Arena *arenas[2];
+	arenas[0] = MemoryArenaAllocate(MegaBytes(64));
+	arenas[1] = MemoryArenaAllocate(MegaBytes(64));
 
 	Net_Socket *http = Http_Connect("https://discord.com");
 	if (!http) {
 		return 1;
 	}
 
+	char nocheckin_buffer[512];
+
+	int nocheckin_res = Net_Receive(http, nocheckin_buffer, sizeof(nocheckin_buffer));
+
 	const String token = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
 
-	Http_Request *req = Http_CreateRequest(http, arena);
+	Http_Request *req = Http_CreateRequest(http, arenas[0]);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
 	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, "Katachi");
 	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "keep-alive");
@@ -358,7 +367,7 @@ int main(int argc, char **argv) {
 	Http_Body_Writer writer = { Dump };
 
 	uint8_t read_buffer[100] = {};
-	int bytes_sent = Net_Read(http, read_buffer, sizeof(read_buffer));
+	int bytes_sent = Net_ReceiveBlocked(http, read_buffer, sizeof(read_buffer));
 
 	Http_Response *res = Http_Get(http, "/api/v9/gateway/bot", req);
 	
@@ -380,14 +389,13 @@ int main(int argc, char **argv) {
 	uint8_t buffer[SecureWebSocketKeySize];
 	String wsskey = GenerateSecureWebSocketKey(buffer);
 
-	req = Http_CreateRequest(websocket, arena);
+	req = Http_CreateRequest(websocket, arenas[0]);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
 	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, "Katachi");
 	Http_SetHeader(req, HTTP_HEADER_UPGRADE, "websocket");
 	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "Upgrade");
 	Http_SetCustomHeader(req, "Sec-WebSocket-Version", "13");
 	Http_SetCustomHeader(req, "Sec-WebSocket-Key", wsskey);
-
 
 	res = Http_Get(websocket, "/?v=9&encoding=json", req);
 
@@ -398,7 +406,7 @@ int main(int argc, char **argv) {
 			String given = Http_GetCustomHeader(res, "Sec-WebSocket-Accept");
 			if (!given.length) return 1;
 
-			constexpr char WebsocketKeySalt[]  = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+			constexpr char WebsocketKeySalt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 			constexpr int WebsocketKeySaltSize = sizeof(WebsocketKeySalt) - 1;
 
 			uint8_t combined[SecureWebSocketKeySize + WebsocketKeySaltSize];
@@ -419,6 +427,138 @@ int main(int argc, char **argv) {
 
 			Http_DestroyResponse(res);
 
+			enum Websocket_Read { WEBSOCKET_READ_HEADER, WEBSOCKET_READ_LEN2, WEBSOCKET_READ_LEN8, WEBSOCKET_READ_PAYLOAD };
+
+			Memory_Arena *read_arena = arenas[1];
+			uint8_t *read = (uint8_t *)PushSize(read_arena, WEBSOCKET_STREAM_SIZE);
+			uint64_t read_length = 0;
+			uint64_t read_allocated = WEBSOCKET_STREAM_SIZE;
+			Websocket_Read read_state = WEBSOCKET_READ_HEADER;
+			Websocket_Frame read_frame = {};
+
+			struct Buffer_List_Item {
+				Buffer_List_Item *next;
+				ptrdiff_t         sent;
+				ptrdiff_t         length;
+				uint8_t           buffer[WEBSOCKET_STREAM_SIZE];
+			};
+
+			Memory_Arena *write_arena = arenas[0];
+
+			Buffer_List_Item *write = nullptr;
+			Buffer_List_Item *free_list = nullptr;
+
+			int timeout = NET_TIMEOUT_MILLISECS;
+
+			bool connected = true;
+			while (connected) {
+				pollfd fd;
+				fd.fd = Net_GetSocketDescriptor(websocket);
+				fd.revents = 0;
+
+				fd.events = POLLRDNORM;
+				if (write)
+					fd.events |= POLLWRNORM;
+
+				int presult = poll(&fd, 1, timeout);
+				if (presult < 0) break;
+
+				if (presult > 0) {
+					if (fd.revents & POLLWRNORM) {
+						Assert(write);
+
+						int bytes_sent = Net_Send(websocket, write->buffer + write->sent, write->length - write->sent);
+						if (bytes_sent < 0) break;
+						write->sent += bytes_sent;
+						if (write->sent == write->length) {
+							auto next_write = write->next;
+							write->next = free_list;
+							free_list = write;
+							write = next_write;
+						}
+					}
+
+					if (fd.revents & POLLRDNORM) {
+						if (read_state == WEBSOCKET_READ_HEADER) {
+							if (read_length < 2) {
+								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
+								if (bytes_received < 0) break;
+								read_length += bytes_received;
+							}
+
+							if (read_length >= 2) {
+								read_frame.fin = (read[0] & 0x80) >> 7;
+								read_frame.rsv = (read[0] & 0x70) >> 4;
+								read_frame.opcode = (read[0] & 0x0f) >> 0;
+								read_frame.mask = (read[1] & 0x80) >> 7;
+
+								read_frame.payload_length = (read[1] & 0x7f);
+
+								if (read_frame.payload_length <= 125) {
+									read_frame.header_length = 2;
+									read_state = WEBSOCKET_READ_PAYLOAD;
+								} else if (read_frame.payload_length == 126) {
+									read_frame.header_length = 4;
+									read_state = WEBSOCKET_READ_LEN2;
+								} else {
+									read_frame.header_length = 10;
+									read_state = WEBSOCKET_READ_LEN8;
+								}
+
+								if (read_frame.mask)
+									read_frame.header_length += 4;
+							}
+						}
+
+						if (read_state == WEBSOCKET_READ_LEN2) {
+							if (read_length < 4) {
+								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
+								if (bytes_received < 0) break;
+								read_length += bytes_received;
+							}
+
+							if (read_length >= 4) {
+								read_frame.payload_length = (((uint16_t)read[3] << 8) | (uint16_t)read[2]);
+								read_state = WEBSOCKET_READ_PAYLOAD;
+							}
+						}
+
+						if (read_state == WEBSOCKET_READ_LEN8) {
+							if (read_length < 10) {
+								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
+								if (bytes_received < 0) break;
+								read_length += bytes_received;
+							}
+
+							if (read_length >= 10) {
+								read_frame.payload_length =
+									(((uint64_t)read[9] << 56) | ((uint64_t)read[8] << 48) |
+										((uint64_t)read[7] << 40) | ((uint64_t)read[6] << 32) |
+										((uint64_t)read[5] << 24) | ((uint64_t)read[4] << 16) |
+										((uint64_t)read[3] << 8) | ((uint64_t)read[2] << 0));
+								read_state = WEBSOCKET_READ_PAYLOAD;
+							}
+						}
+
+						if (read_state == WEBSOCKET_READ_PAYLOAD) {
+							uint64_t frame_size = read_frame.header_length + read_frame.payload_length;
+							if (read_length < frame_size) {
+								// TODO:::
+								// Make a separate procedure that parses the websocket frame
+								// The procedure should take in the parsing state of the frame
+								// and based on the state, perform more parsing if possible
+								// network read should be performed outside of the procedure
+								// only once
+							}
+						}
+					}
+				}
+
+				if (presult == 0) {
+
+				}
+			}
+
 
 #if 0
 			Websocket_Result result = WEBSOCKET_OK;
@@ -430,10 +570,10 @@ int main(int argc, char **argv) {
 
 			int bytes_received = Websocket_ReceiveMinimum(websocket, stream, WEBSOCKET_STREAM_SIZE, 2);
 
-			int fin    = (stream[0] & 0x80) >> 7;
-			int rsv    = (stream[0] & 0x70) >> 4; // must be zero, since we don't use extensions
+			int fin = (stream[0] & 0x80) >> 7;
+			int rsv = (stream[0] & 0x70) >> 4; // must be zero, since we don't use extensions
 			int opcode = (stream[0] & 0x0f);
-			int mask   = (stream[1] & 0x80) >> 7; // must be zero for client, must be 1 when sending data to server
+			int mask = (stream[1] & 0x80) >> 7; // must be zero for client, must be 1 when sending data to server
 
 			uint64_t payload_len = (stream[1] & 0x7f);
 
@@ -453,8 +593,8 @@ int main(int argc, char **argv) {
 				length.parts[0] = stream[3];
 				length.parts[1] = stream[2];
 
-				consumed_size   = 4;
-				payload_len     = length.combined;
+				consumed_size = 4;
+				payload_len = length.combined;
 			} else if (payload_len == 127) {
 				if (bytes_received < 10) {
 					bytes_received += Websocket_ReceiveMinimum(websocket, stream + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
@@ -475,8 +615,8 @@ int main(int argc, char **argv) {
 				length.parts[6] = stream[3];
 				length.parts[7] = stream[2];
 
-				consumed_size   = 10;
-				payload_len     = length.combined;
+				consumed_size = 10;
+				payload_len = length.combined;
 			}
 
 			uint8_t *payload_buff = (uint8_t *)PushSize(arena, payload_len);
@@ -484,7 +624,7 @@ int main(int argc, char **argv) {
 			int payload_read = bytes_received - consumed_size;
 			memcpy(payload_buff, stream + consumed_size, payload_read);
 
-			uint8_t *read_ptr  = payload_buff + payload_read;
+			uint8_t *read_ptr = payload_buff + payload_read;
 			uint64_t remaining = payload_len - payload_read;
 			while (remaining) {
 				int bytes_read = Net_Read(websocket, read_ptr, (int)remaining);
@@ -514,7 +654,7 @@ int main(int argc, char **argv) {
 			Assert(d && d->type == JSON_TYPE_OBJECT);
 
 			Json *hi = JsonObjectFind(&d->value.object, "heartbeat_interval");
-			Assert(hi &&hi->type == JSON_TYPE_NUMBER);
+			Assert(hi && hi->type == JSON_TYPE_NUMBER);
 
 			int heartbeat_interval = hi->value.number.value.integer;
 
@@ -594,6 +734,7 @@ int main(int argc, char **argv) {
 			int fuck_visual_studio = 42;
 		}
 #endif
+		}
 	}
 
 	Http_Disconnect(websocket);

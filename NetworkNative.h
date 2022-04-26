@@ -4,8 +4,7 @@
 #if PLATFORM_WINDOWS
 #include <Winsock2.h>
 #include <ws2tcpip.h>
-#define poll  WSAPoll
-#define errno WSAGetLastError()
+#define poll    WSAPoll
 #elif PLATFORM_LINUX || PLATFORM_MAC
 #include <unistd.h>
 #include <signal.h>
@@ -14,4 +13,5 @@
 #include <netdb.h>
 #define SOCKET int
 #define INVALID_SOCKET -1
+#define sockerr errno
 #endif

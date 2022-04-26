@@ -485,7 +485,20 @@ int32_t Net_GetSocketDescriptor(Net_Socket *net) {
 	return (int32_t)net->descriptor;
 }
 
-int Net_Write(Net_Socket *net, void *buffer, int length, int timeout) {
+bool Net_SetSocketBlockingMode(Net_Socket *net, bool blocking) {
+	SOCKET fd = net->descriptor;
+#ifdef PLATFORM_WINDOWS
+	u_long mode = blocking ? 0 : 1;
+	return (ioctlsocket(fd, FIONBIO, &mode) == 0) ? TRUE : FALSE;
+#elif PLATFORM_LINUX || PLATFORM_MAC
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0) return false;
+	flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
+	return (fcntl(fd, F_SETFL, flags) == 0) ? TRUE : FALSE;
+#endif
+}
+
+int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 	pollfd fds = {};
 	fds.fd = net->descriptor;
 	fds.events = POLLWRNORM;
@@ -514,7 +527,7 @@ int Net_Write(Net_Socket *net, void *buffer, int length, int timeout) {
 	return NET_SOCKET_ERROR;
 }
 
-int Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
+int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 	pollfd fds = {};
 	fds.fd = net->descriptor;
 	fds.events = POLLRDNORM;
@@ -543,17 +556,31 @@ int Net_Read(Net_Socket *net, void *buffer, int length, int timeout) {
 	return NET_SOCKET_ERROR;
 }
 
-int Net_WriteBlocked(Net_Socket *net, void *buffer, int length) {
+int Net_Send(Net_Socket *net, void *buffer, int length) {
 	int written = net->write(net, buffer, length);
 	if (written < 0) {
+#ifdef PLATFORM_WINDOWS
+		if (WSAGetLastError() == WSAEWOULDBLOCK)
+			return 0;
+#elif PLATFORM_LINUX || PLATFORM_MAC
+		if (sockerr == EAGAIN || sockerr == EWOULDBLOCK)
+			return 0;
+#endif
 		PL_Net_ReportLastSocketError();
 	}
 	return written;
 }
 
-int Net_ReadBlocked(Net_Socket *net, void *buffer, int length) {
+int Net_Receive(Net_Socket *net, void *buffer, int length) {
 	int read = net->read(net, buffer, length);
 	if (read < 0) {
+#ifdef PLATFORM_WINDOWS
+		if (WSAGetLastError() == WSAEWOULDBLOCK)
+			return 0;
+#elif PLATFORM_LINUX || PLATFORM_MAC
+		if (sockerr == EAGAIN || sockerr == EWOULDBLOCK)
+			return 0;
+#endif
 		PL_Net_ReportLastSocketError();
 	}
 	return read;

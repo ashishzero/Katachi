@@ -152,8 +152,10 @@ Net_Socket *Http_Connect(const String hostname, Http_Connection connection, Memo
 		Net_Socket *http = Net_OpenConnection(url.host, url.port, NET_SOCKET_TCP, allocator);
 		if (http) {
 			if ((connection == HTTP_DEFAULT && url.scheme == "https") || connection == HTTPS_CONNECTION) {
-				if (Net_OpenSecureChannel(http, true))
+				if (Net_OpenSecureChannel(http, true)) {
+					Net_SetSocketBlockingMode(http, false);
 					return http;
+				}
 				Net_CloseConnection(http);
 				return nullptr;
 			}
@@ -202,30 +204,34 @@ void Http_DestroyResponse(Http_Response *req) {
 
 static inline int Http_Write(Net_Socket *http, uint8_t *bytes, int length) {
 	Connected:
-	int ret = Net_Write(http, bytes, length);
+	int ret = Net_SendBlocked(http, bytes, length);
 	if (ret >= 0) return ret;
 	if (ret == NET_TIMED_OUT) {
 		WriteLogErrorEx("Http", "Sending timed out");
 		return -1;
 	}
 	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
-		if (Net_TryReconnect(http))
+		if (Net_TryReconnect(http)) {
+			Net_SetSocketBlockingMode(http, false);
 			goto Connected;
+		}
 	}
 	return -1;
 }
 
 static inline int Http_Read(Net_Socket *http, uint8_t *buffer, int length) {
 	Connected:
-	int ret = Net_Read(http, buffer, length);
+	int ret = Net_ReceiveBlocked(http, buffer, length);
 	if (ret >= 0) return ret;
 	if (ret == NET_TIMED_OUT) {
 		WriteLogErrorEx("Http", "Receiving timed out");
 		return -1;
 	}
 	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
-		if (Net_TryReconnect(http))
+		if (Net_TryReconnect(http)) {
+			Net_SetSocketBlockingMode(http, false);
 			goto Connected;
+		}
 	}
 	return -1;
 }
