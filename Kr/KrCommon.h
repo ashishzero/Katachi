@@ -306,7 +306,7 @@ void *PushSizeAlignedZero(Memory_Arena *arena, size_t size, uint32_t alignment);
 #define PushType(arena, type) (type *)PushSizeAligned(arena, sizeof(type), alignof(type))
 #define PushTypeZero(arena, type) (type *)PushSizeAlignedZero(arena, sizeof(type), alignof(type))
 #define PushArray(arena, type, count) (type *)PushSizeAligned(arena, sizeof(type) * (count), alignof(type))
-#define PushArrayZero(arena, type, count) (type *)PushSizeAlignedZero(arena, sizeof(type) * (count). alignof(type))
+#define PushArrayZero(arena, type, count) (type *)PushSizeAlignedZero(arena, sizeof(type) * (count), alignof(type))
 #define PushArrayAligned(arena, type, count, alignment) (type *)PushSizeAligned(arena, sizeof(type) * (count), alignment)
 #define PushArrayAlignedZero(arena, type, count, alignment) (type *)PushSizeAlignedZero(arena, sizeof(type) * (count), alignment)
 

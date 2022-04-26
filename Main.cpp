@@ -138,7 +138,7 @@ static String GenerateSecureWebSocketKey(uint8_t(&buffer)[SecureWebSocketKeySize
 
 static void Websocket_MaskPayload(uint8_t *dst, uint8_t *src, uint64_t length, uint8_t mask[4]) {
 	for (uint64_t i = 0; i < length; ++i)
-		dst[i] = src[i] ^ mask[i % 4];
+		dst[i] = src[i] ^ mask[i & 3];
 }
 
 static int Websocket_ReceiveMinimum(Net_Socket *websocket, uint8_t *read_ptr, int buffer_size, int minimum_req) {
@@ -183,13 +183,13 @@ enum Websocket_Result {
 
 constexpr int WEBSOCKET_STREAM_SIZE = KiloBytes(8);
 
-//Websocket_Result Websocket_Receive()
 
 struct Websocket_Frame {
 	int fin;
 	int rsv;
 	int opcode;
-	int mask;
+	int masked;
+	uint8_t mask[4];
 	int header_length;
 	uint64_t payload_length;
 	uint8_t *payload;
@@ -256,7 +256,7 @@ Websocket_Result Websocket_Receive(Net_Socket *websocket, Memory_Arena *arena, W
 		frame->fin             = fin;
 		frame->rsv             = rsv;
 		frame->opcode          = opcode;
-		frame->mask            = mask;
+		frame->masked          = mask;
 		frame->payload_length  = payload_len;
 		frame->payload         = payload;
 
@@ -329,6 +329,253 @@ Websocket_Result Websocket_SendText(Net_Socket *websocket, uint8_t *buffer, ptrd
 }
 
 #include "NetworkNative.h"
+
+// FIFO
+struct Websocket_Frame_Writer {
+	struct Bucket {
+		Bucket *prev;
+		Bucket *next;
+		ptrdiff_t sent;
+		ptrdiff_t length;
+		uint8_t buffer[WEBSOCKET_STREAM_SIZE];
+	};
+
+	Bucket *first;
+	Bucket *last;
+	Bucket *free_list;
+	ptrdiff_t free_count;
+
+	Memory_Arena *arena;
+};
+
+static void Websocket_FrameWriterInit(Websocket_Frame_Writer *writer, Memory_Arena *arena) {
+	writer->first      = nullptr;
+	writer->last       = nullptr;
+	writer->free_list  = nullptr;
+	writer->free_count = 0;
+	writer->arena      = arena;
+}
+
+static bool Websocket_FrameWriterWrite(Websocket_Frame_Writer *writer, uint8_t *src, ptrdiff_t len) {
+	int num_buks_req = (int)(AlignPower2Up(len, WEBSOCKET_STREAM_SIZE) / WEBSOCKET_STREAM_SIZE);
+
+	if (num_buks_req == 1 && WEBSOCKET_STREAM_SIZE - writer->last->length <= len) {
+		memcpy(writer->last->buffer + writer->last->length, src, len);
+		writer->last->length += len;
+		return true;
+	}
+
+	if (writer->free_count < num_buks_req) {
+		auto buks_allocated = num_buks_req - writer->free_count;
+		auto buks = PushArrayZero(writer->arena, Websocket_Frame_Writer::Bucket, buks_allocated);
+		if (!buks) {
+			WriteLogErrorEx("Websocket", "Frame could not be written: out of memory");
+			return false;
+		}
+
+		for (int index = 0; index < buks_allocated - 1; ++index) {
+			buks[index].next = &buks[index + 1];
+		}
+
+		buks[buks_allocated - 1].next = writer->free_list;
+		writer->free_list = buks;
+		writer->free_count += buks_allocated;
+	}
+
+	ptrdiff_t remaining = len;
+	uint8_t *src_ptr    = src;
+
+	auto write_buk = writer->last;
+	if (write_buk->length != WEBSOCKET_STREAM_SIZE) {
+		int write_size = WEBSOCKET_STREAM_SIZE - write_buk->length;
+		memcpy(write_buk->buffer + write_buk->length, src_ptr, write_size);
+		write_buk->length += write_size;
+		src_ptr += write_size;
+		remaining -= write_size;
+	}
+
+	while (remaining >= WEBSOCKET_STREAM_SIZE) {
+		auto next_buk = writer->free_list;
+		writer->free_list = next_buk->next;
+		writer->free_count -= 1;
+		next_buk->prev = write_buk;
+		write_buk->next = next_buk;
+		write_buk = next_buk;
+		memcpy(write_buk->buffer, src_ptr, WEBSOCKET_STREAM_SIZE);
+		write_buk->sent = 0;
+		write_buk->length = WEBSOCKET_STREAM_SIZE;
+		src_ptr += WEBSOCKET_STREAM_SIZE;
+		remaining -= WEBSOCKET_STREAM_SIZE;
+	}
+
+	if (remaining) {
+		auto next_buk = writer->free_list;
+		writer->free_list = next_buk->next;
+		writer->free_count -= 1;
+		next_buk->prev = write_buk;
+		write_buk->next = next_buk;
+		write_buk = next_buk;
+		memcpy(write_buk->buffer, src_ptr, remaining);
+		write_buk->sent = 0;
+		write_buk->length = remaining;
+	}
+
+	write_buk->next = nullptr;
+
+	return true;
+}
+
+static String Websocket_CreateTextFrame(Net_Socket *websocket, uint8_t *payload, ptrdiff_t length, int masked, Memory_Arena *arena) {
+	uint8_t header[14];
+	memset(header, 0, sizeof(header));
+
+	header[0] |= 0x80; // FIN
+	header[0] |= WEBSOCKET_OP_TEXT_FRAME; // opcode
+	header[1] |= masked ? 0x80 : 0x00; // mask
+
+	int header_size;
+
+	// payload length
+	if (length <= 125) {
+		header_size = 2;
+		header[1] |= (uint8_t)length;
+	} else if (length <= UINT16_MAX) {
+		header_size = 4;
+		header[1] |= 126;
+		header[2] = ((length & 0xff00) >> 8);
+		header[3] = ((length & 0x00ff) >> 0);
+	} else {
+		header_size = 10;
+		header[1] |= 127;
+		header[2] = (uint8_t)((length & 0xff00000000000000) >> 56);
+		header[3] = (uint8_t)((length & 0x00ff000000000000) >> 48);
+		header[4] = (uint8_t)((length & 0x0000ff0000000000) >> 40);
+		header[5] = (uint8_t)((length & 0x000000ff00000000) >> 32);
+		header[6] = (uint8_t)((length & 0x00000000ff000000) >> 24);
+		header[7] = (uint8_t)((length & 0x0000000000ff0000) >> 16);
+		header[8] = (uint8_t)((length & 0x000000000000ff00) >> 8);
+		header[9] = (uint8_t)((length & 0x00000000000000ff) >> 0);
+	}
+
+	if (masked)
+		header_size += 4;
+
+	ptrdiff_t frame_size = header_size + length;
+
+	uint8_t *frame = (uint8_t *)PushSize(arena, frame_size);
+	if (!frame) {
+		WriteLogErrorEx("Websocket", "Failed to create websocket frame: out of memory");
+		return String("");
+	}
+
+	memcpy(frame, header, header_size);
+
+	if (masked) {
+		uint32_t mask = XorShift32(&XorShift32State);
+		uint8_t *mask_write = header + header_size - 4;
+		mask_write[0] = ((mask & 0xff000000) >> 24);
+		mask_write[1] = ((mask & 0x00ff0000) >> 16);
+		mask_write[2] = ((mask & 0x0000ff00) >> 8);
+		mask_write[3] = ((mask & 0x000000ff) >> 0);
+
+		Websocket_MaskPayload(frame + header_size, payload, length, mask_write);
+	} else {
+		memcpy(frame + header_size, payload, length);
+	}
+
+	return String(frame, frame_size);
+}
+
+struct Websocket_Frame_Reader {
+	enum State { READ_HEADER, READ_LEN2, READ_LEN8, READ_PAYLOAD };
+	State           state;
+	uint8_t *       buffer;
+	uint64_t        length;
+	uint64_t        allocated;
+	Websocket_Frame frame;
+	Memory_Arena *  arena;
+};
+
+static void Websocket_FrameReaderInit(Websocket_Frame_Reader *reader, Memory_Arena *arena) {
+	reader->state     = Websocket_Frame_Reader::READ_HEADER;
+	reader->buffer    = (uint8_t *)PushSize(arena, WEBSOCKET_STREAM_SIZE);
+	reader->length    = 0;
+	reader->allocated = WEBSOCKET_STREAM_SIZE;
+	reader->arena     = arena;
+	memset(&reader->frame, 0, sizeof(reader->frame));
+}
+
+static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader) {
+	if (reader->state == Websocket_Frame_Reader::READ_HEADER) {
+		if (reader->length < 2) return false;
+
+		reader->frame.fin    = (reader->buffer[0] & 0x80) >> 7;
+		reader->frame.rsv    = (reader->buffer[0] & 0x70) >> 4;
+		reader->frame.opcode = (reader->buffer[0] & 0x0f) >> 0;
+		reader->frame.masked = (reader->buffer[1] & 0x80) >> 7;
+		uint64_t payload_len = (reader->buffer[1] & 0x7f);
+
+		reader->frame.payload_length = payload_len;
+
+		if (payload_len <= 125) {
+			reader->frame.header_length = 2;
+			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
+		} else if (payload_len == 126) {
+			reader->frame.header_length = 4;
+			reader->state = Websocket_Frame_Reader::READ_LEN2;
+		} else {
+			reader->frame.header_length = 10;
+			reader->state = Websocket_Frame_Reader::READ_LEN8;
+		}
+
+		if (reader->frame.masked)
+			reader->frame.header_length += 4;
+	}
+
+	if (reader->state == Websocket_Frame_Reader::READ_LEN2) {
+		if (reader->length >= 4) {
+			reader->frame.payload_length = (((uint16_t)reader->buffer[3] << 8) | (uint16_t)reader->buffer[2]);
+			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
+		}
+	}
+
+	if (reader->state == Websocket_Frame_Reader::READ_LEN8) {
+		if (reader->length >= 10) {
+			reader->frame.payload_length =
+				(((uint64_t)reader->buffer[9] << 56) | ((uint64_t)reader->buffer[8] << 48) |
+					((uint64_t)reader->buffer[7] << 40) | ((uint64_t)reader->buffer[6] << 32) |
+					((uint64_t)reader->buffer[5] << 24) | ((uint64_t)reader->buffer[4] << 16) |
+					((uint64_t)reader->buffer[3] << 8) | ((uint64_t)reader->buffer[2] << 0));
+			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
+		}
+	}
+
+	if (reader->state == Websocket_Frame_Reader::READ_PAYLOAD) {
+		Assert(reader->frame.fin); // TODO: Support for fragmentation
+
+		uint64_t frame_size = reader->frame.header_length + reader->frame.payload_length;
+		if (reader->allocated < frame_size) {
+			void *mem = PushSize(reader->arena, frame_size - reader->allocated);
+			if (!mem) {
+				WriteLogErrorEx("Websocket", "Failed to read frame: Out of memory");
+			}
+			Assert(mem == reader->buffer + reader->allocated);
+			reader->allocated = frame_size;
+		}
+
+		if (reader->length == frame_size) {
+			reader->frame.payload = reader->buffer + reader->frame.header_length;
+
+			if (reader->frame.masked)
+				memcpy(reader->frame.mask, reader->buffer + reader->frame.header_length - 4, 4);
+			else
+				memset(reader->frame.mask, 0, 4);
+			return true;
+		}
+	}
+
+	return false;
+}
 
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
@@ -423,26 +670,11 @@ int main(int argc, char **argv) {
 
 			Http_DestroyResponse(res);
 
-			enum Websocket_Read { WEBSOCKET_READ_HEADER, WEBSOCKET_READ_LEN2, WEBSOCKET_READ_LEN8, WEBSOCKET_READ_PAYLOAD };
+			Websocket_Frame_Writer writer;
+			Websocket_FrameWriterInit(&writer, arenas[0]);
 
-			Memory_Arena *read_arena = arenas[1];
-			uint8_t *read = (uint8_t *)PushSize(read_arena, WEBSOCKET_STREAM_SIZE);
-			uint64_t read_length = 0;
-			uint64_t read_allocated = WEBSOCKET_STREAM_SIZE;
-			Websocket_Read read_state = WEBSOCKET_READ_HEADER;
-			Websocket_Frame read_frame = {};
-
-			struct Buffer_List_Item {
-				Buffer_List_Item *next;
-				ptrdiff_t         sent;
-				ptrdiff_t         length;
-				uint8_t           buffer[WEBSOCKET_STREAM_SIZE];
-			};
-
-			Memory_Arena *write_arena = arenas[0];
-
-			Buffer_List_Item *write = nullptr;
-			Buffer_List_Item *free_list = nullptr;
+			Websocket_Frame_Reader reader;
+			Websocket_FrameReaderInit(&reader, arenas[1]);
 
 			int timeout = NET_TIMEOUT_MILLISECS;
 
@@ -453,99 +685,55 @@ int main(int argc, char **argv) {
 				fd.revents = 0;
 
 				fd.events = POLLRDNORM;
-				if (write)
+				if (writer.first)
 					fd.events |= POLLWRNORM;
 
 				int presult = poll(&fd, 1, timeout);
 				if (presult < 0) break;
 
 				if (presult > 0) {
+					// TODO: Loop until we can no longer sent data
 					if (fd.revents & POLLWRNORM) {
-						Assert(write);
+						Assert(writer.first);
 
-						int bytes_sent = Net_Send(websocket, write->buffer + write->sent, write->length - write->sent);
+						int bytes_sent = Net_Send(websocket, writer.first->buffer + writer.first->sent, writer.first->sent - writer.first->length);
 						if (bytes_sent < 0) break;
-						write->sent += bytes_sent;
-						if (write->sent == write->length) {
-							auto next_write = write->next;
-							write->next = free_list;
-							free_list = write;
-							write = next_write;
+						writer.first->length += bytes_sent;
+
+						if (writer.first->sent == WEBSOCKET_STREAM_SIZE) {
+							auto free_buk = writer.first;
+							writer.first = free_buk->next;
+							free_buk->next = writer.free_list;
+							free_buk->prev = nullptr;
+							writer.free_list = free_buk;
+							writer.free_count += 1;
 						}
 					}
 
+					// TODO: Loop until we can't reveive data
 					if (fd.revents & POLLRDNORM) {
-						if (read_state == WEBSOCKET_READ_HEADER) {
-							if (read_length < 2) {
-								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
-								if (bytes_received < 0) break;
-								read_length += bytes_received;
-							}
+						int bytes_received = Net_Receive(websocket, reader.buffer + reader.length, (int)(reader.allocated - reader.length));
+						if (bytes_received < 0) break;
+						reader.length += bytes_received;
 
-							if (read_length >= 2) {
-								read_frame.fin = (read[0] & 0x80) >> 7;
-								read_frame.rsv = (read[0] & 0x70) >> 4;
-								read_frame.opcode = (read[0] & 0x0f) >> 0;
-								read_frame.mask = (read[1] & 0x80) >> 7;
+						if (Websocket_FrameReaderUpdate(&reader)) {
+							if (reader.frame.masked) break; // servers don't mask
+							if (reader.frame.opcode & 0x80) {
+								if (reader.frame.payload_length > 125) break; // not allowed by specs
+								// TODO: handle control frames
+								WriteLogInfoEx("Websocket", "control frame");
+							} else {
 
-								read_frame.payload_length = (read[1] & 0x7f);
+								String payload(reader.frame.payload, reader.frame.payload_length);
 
-								if (read_frame.payload_length <= 125) {
-									read_frame.header_length = 2;
-									read_state = WEBSOCKET_READ_PAYLOAD;
-								} else if (read_frame.payload_length == 126) {
-									read_frame.header_length = 4;
-									read_state = WEBSOCKET_READ_LEN2;
-								} else {
-									read_frame.header_length = 10;
-									read_state = WEBSOCKET_READ_LEN8;
+								Json json_event;
+								if (JsonParse(payload, &json_event, MemoryArenaAllocator(reader.arena))) {
+
 								}
-
-								if (read_frame.mask)
-									read_frame.header_length += 4;
-							}
-						}
-
-						if (read_state == WEBSOCKET_READ_LEN2) {
-							if (read_length < 4) {
-								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
-								if (bytes_received < 0) break;
-								read_length += bytes_received;
 							}
 
-							if (read_length >= 4) {
-								read_frame.payload_length = (((uint16_t)read[3] << 8) | (uint16_t)read[2]);
-								read_state = WEBSOCKET_READ_PAYLOAD;
-							}
-						}
-
-						if (read_state == WEBSOCKET_READ_LEN8) {
-							if (read_length < 10) {
-								int bytes_received = Net_Receive(websocket, read + read_length, read_allocated - read_length);
-								if (bytes_received < 0) break;
-								read_length += bytes_received;
-							}
-
-							if (read_length >= 10) {
-								read_frame.payload_length =
-									(((uint64_t)read[9] << 56) | ((uint64_t)read[8] << 48) |
-										((uint64_t)read[7] << 40) | ((uint64_t)read[6] << 32) |
-										((uint64_t)read[5] << 24) | ((uint64_t)read[4] << 16) |
-										((uint64_t)read[3] << 8) | ((uint64_t)read[2] << 0));
-								read_state = WEBSOCKET_READ_PAYLOAD;
-							}
-						}
-
-						if (read_state == WEBSOCKET_READ_PAYLOAD) {
-							uint64_t frame_size = read_frame.header_length + read_frame.payload_length;
-							if (read_length < frame_size) {
-								// TODO:::
-								// Make a separate procedure that parses the websocket frame
-								// The procedure should take in the parsing state of the frame
-								// and based on the state, perform more parsing if possible
-								// network read should be performed outside of the procedure
-								// only once
-							}
+							MemoryArenaReset(reader.arena);
+							Websocket_FrameReaderInit(&reader, reader.arena);
 						}
 					}
 				}
@@ -557,14 +745,14 @@ int main(int argc, char **argv) {
 
 
 #if 0
-			Websocket_Result result = WEBSOCKET_OK;
+			Websocket_Result result = OK;
 
 #if 0
-			constexpr int WEBSOCKET_STREAM_SIZE = KiloBytes(8);
+			constexpr int STREAM_SIZE = KiloBytes(8);
 
-			uint8_t stream[WEBSOCKET_STREAM_SIZE] = {};
+			uint8_t stream[STREAM_SIZE] = {};
 
-			int bytes_received = Websocket_ReceiveMinimum(websocket, stream, WEBSOCKET_STREAM_SIZE, 2);
+			int bytes_received = Websocket_ReceiveMinimum(websocket, stream, STREAM_SIZE, 2);
 
 			int fin = (stream[0] & 0x80) >> 7;
 			int rsv = (stream[0] & 0x70) >> 4; // must be zero, since we don't use extensions
@@ -577,7 +765,7 @@ int main(int argc, char **argv) {
 
 			if (payload_len == 126) {
 				if (bytes_received < 4) {
-					bytes_received += Websocket_ReceiveMinimum(websocket, stream + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
+					bytes_received += Websocket_ReceiveMinimum(websocket, stream + bytes_received, STREAM_SIZE - bytes_received, 4 - bytes_received);
 				}
 
 				union Payload_Length2 {
@@ -593,7 +781,7 @@ int main(int argc, char **argv) {
 				payload_len = length.combined;
 			} else if (payload_len == 127) {
 				if (bytes_received < 10) {
-					bytes_received += Websocket_ReceiveMinimum(websocket, stream + bytes_received, WEBSOCKET_STREAM_SIZE - bytes_received, 4 - bytes_received);
+					bytes_received += Websocket_ReceiveMinimum(websocket, stream + bytes_received, STREAM_SIZE - bytes_received, 4 - bytes_received);
 				}
 
 				union Payload_Length8 {
@@ -633,7 +821,7 @@ int main(int argc, char **argv) {
 #else
 			Websocket_Frame frame;
 			result = Websocket_Receive(websocket, arena, &frame);
-			Assert(result == WEBSOCKET_OK);
+			Assert(result == OK);
 
 			String payload(frame.payload, (ptrdiff_t)frame.payload_length);
 #endif
@@ -682,7 +870,7 @@ int main(int argc, char **argv) {
 
 #if 0
 			header[0] |= 0x80; // fin
-			header[0] |= WEBSOCKET_OP_TEXT_FRAME;
+			header[0] |= OP_TEXT_FRAME;
 			header[1] |= 0x80;
 			header[1] |= 126;
 
