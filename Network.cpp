@@ -487,14 +487,14 @@ int32_t Net_GetSocketDescriptor(Net_Socket *net) {
 
 bool Net_SetSocketBlockingMode(Net_Socket *net, bool blocking) {
 	SOCKET fd = net->descriptor;
-#ifdef PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS
 	u_long mode = blocking ? 0 : 1;
-	return (ioctlsocket(fd, FIONBIO, &mode) == 0) ? TRUE : FALSE;
+	return (ioctlsocket(fd, FIONBIO, &mode) == 0) ? true : false;
 #elif PLATFORM_LINUX || PLATFORM_MAC
 	int flags = fcntl(fd, F_GETFL, 0);
 	if (flags < 0) return false;
 	flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
-	return (fcntl(fd, F_SETFL, flags) == 0) ? TRUE : FALSE;
+	return (fcntl(fd, F_SETFL, flags) == 0) ? true : false;
 #endif
 }
 
@@ -510,10 +510,14 @@ int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 			int written = net->write(net, buffer, length);
 			if (written > 0)
 				return written;
+#ifdef NETWORK_OPENSSL_ENABLE
 			if (net->ssl)
 				PL_Net_ReportOpenSSLError();
 			else
 				PL_Net_ReportLastSocketError();
+#else
+				PL_Net_ReportLastSocketError();
+#endif
 			return -1;
 		}
 
@@ -539,10 +543,14 @@ int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 			int read = net->read(net, buffer, length);
 			if (read > 0)
 				return read;
+#ifdef NETWORK_OPENSSL_ENABLE
 			if (net->ssl)
 				PL_Net_ReportOpenSSLError();
 			else
 				PL_Net_ReportLastSocketError();
+#else
+				PL_Net_ReportLastSocketError();
+#endif
 			return -1;
 		}
 
@@ -559,11 +567,11 @@ int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 int Net_Send(Net_Socket *net, void *buffer, int length) {
 	int written = net->write(net, buffer, length);
 	if (written < 0) {
-#ifdef PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS
 		if (WSAGetLastError() == WSAEWOULDBLOCK)
 			return 0;
 #elif PLATFORM_LINUX || PLATFORM_MAC
-		if (sockerr == EAGAIN || sockerr == EWOULDBLOCK)
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return 0;
 #endif
 		PL_Net_ReportLastSocketError();
@@ -574,11 +582,11 @@ int Net_Send(Net_Socket *net, void *buffer, int length) {
 int Net_Receive(Net_Socket *net, void *buffer, int length) {
 	int read = net->read(net, buffer, length);
 	if (read < 0) {
-#ifdef PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS
 		if (WSAGetLastError() == WSAEWOULDBLOCK)
 			return 0;
 #elif PLATFORM_LINUX || PLATFORM_MAC
-		if (sockerr == EAGAIN || sockerr == EWOULDBLOCK)
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return 0;
 #endif
 		PL_Net_ReportLastSocketError();

@@ -11,7 +11,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <errno.h>
+#include <poll.h>
+#include <fcntl.h>
 #define SOCKET int
 #define INVALID_SOCKET -1
-#define sockerr errno
 #endif
