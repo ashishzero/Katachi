@@ -138,7 +138,7 @@ static void PL_Net_ReportError(int error) {
 	#if PLATFORM_LINUX
 	source = "Net:Linux";
 	#elif PLATFORM_MAC
-	source = "Net:Mac"
+	source = "Net:Mac";
 	#endif
 	const char *msg = "";
 	if (error == EAI_SYSTEM)
