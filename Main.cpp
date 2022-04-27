@@ -330,103 +330,54 @@ Websocket_Result Websocket_SendText(Net_Socket *websocket, uint8_t *buffer, ptrd
 
 #include "NetworkNative.h"
 
+// @Improvement: This is discord limitation not websocket's limitation
+constexpr int WEBSOCKET_MAX_WRITE_SIZE = 1024 * 64;
+
+constexpr int WEBSOCKET_MAX_READ_SIZE = 1024 * 64;
+
 // FIFO
+// start = stop    : empty
+// start = stop + 1: full
 struct Websocket_Frame_Writer {
-	struct Bucket {
-		Bucket *prev;
-		Bucket *next;
-		ptrdiff_t sent;
-		ptrdiff_t length;
-		uint8_t buffer[WEBSOCKET_STREAM_SIZE];
-	};
-
-	Bucket *first;
-	Bucket *last;
-	Bucket *free_list;
-	ptrdiff_t free_count;
-
-	Memory_Arena *arena;
+	uint8_t *buffer;
+	ptrdiff_t start;
+	ptrdiff_t stop;
 };
 
 static void Websocket_FrameWriterInit(Websocket_Frame_Writer *writer, Memory_Arena *arena) {
-	writer->first      = nullptr;
-	writer->last       = nullptr;
-	writer->free_list  = nullptr;
-	writer->free_count = 0;
-	writer->arena      = arena;
+	writer->buffer = PushArray(arena, uint8_t, WEBSOCKET_MAX_WRITE_SIZE);
+	writer->start = writer->stop = 0;
 }
 
 static bool Websocket_FrameWriterWrite(Websocket_Frame_Writer *writer, uint8_t *src, ptrdiff_t len) {
-	int num_buks_req = (int)(AlignPower2Up(len, WEBSOCKET_STREAM_SIZE) / WEBSOCKET_STREAM_SIZE);
+	ptrdiff_t cap;
 
-	if (num_buks_req == 1 && WEBSOCKET_STREAM_SIZE - writer->last->length <= len) {
-		memcpy(writer->last->buffer + writer->last->length, src, len);
-		writer->last->length += len;
-		return true;
+	if (writer->stop >= writer->start) {
+		cap = WEBSOCKET_MAX_WRITE_SIZE - writer->stop;
+		cap += writer->start - 1;
+	} else {
+		cap = writer->start - writer->stop - 1;
 	}
 
-	if (writer->free_count < num_buks_req) {
-		auto buks_allocated = num_buks_req - writer->free_count;
-		auto buks = PushArrayZero(writer->arena, Websocket_Frame_Writer::Bucket, buks_allocated);
-		if (!buks) {
-			WriteLogErrorEx("Websocket", "Frame could not be written: out of memory");
-			return false;
+	if (len > cap) return false;
+
+	if (writer->stop > writer->start) {
+		ptrdiff_t write_size = Minimum(len, WEBSOCKET_MAX_WRITE_SIZE - writer->stop);
+		memcpy(writer->buffer + writer->stop, src, write_size);
+		if (write_size < len) {
+			memcpy(writer->buffer, src + write_size, len - write_size);
 		}
-
-		for (int index = 0; index < buks_allocated - 1; ++index) {
-			buks[index].next = &buks[index + 1];
-		}
-
-		buks[buks_allocated - 1].next = writer->free_list;
-		writer->free_list = buks;
-		writer->free_count += buks_allocated;
+	} else {
+		memcpy(writer->buffer + writer->stop, src, len);
 	}
 
-	ptrdiff_t remaining = len;
-	uint8_t *src_ptr    = src;
-
-	auto write_buk = writer->last;
-	if (write_buk->length != WEBSOCKET_STREAM_SIZE) {
-		int write_size = WEBSOCKET_STREAM_SIZE - write_buk->length;
-		memcpy(write_buk->buffer + write_buk->length, src_ptr, write_size);
-		write_buk->length += write_size;
-		src_ptr += write_size;
-		remaining -= write_size;
-	}
-
-	while (remaining >= WEBSOCKET_STREAM_SIZE) {
-		auto next_buk = writer->free_list;
-		writer->free_list = next_buk->next;
-		writer->free_count -= 1;
-		next_buk->prev = write_buk;
-		write_buk->next = next_buk;
-		write_buk = next_buk;
-		memcpy(write_buk->buffer, src_ptr, WEBSOCKET_STREAM_SIZE);
-		write_buk->sent = 0;
-		write_buk->length = WEBSOCKET_STREAM_SIZE;
-		src_ptr += WEBSOCKET_STREAM_SIZE;
-		remaining -= WEBSOCKET_STREAM_SIZE;
-	}
-
-	if (remaining) {
-		auto next_buk = writer->free_list;
-		writer->free_list = next_buk->next;
-		writer->free_count -= 1;
-		next_buk->prev = write_buk;
-		write_buk->next = next_buk;
-		write_buk = next_buk;
-		memcpy(write_buk->buffer, src_ptr, remaining);
-		write_buk->sent = 0;
-		write_buk->length = remaining;
-	}
-
-	write_buk->next = nullptr;
+	writer->stop = (writer->stop + len) & (WEBSOCKET_MAX_WRITE_SIZE - 1);
 
 	return true;
 }
 
 static String Websocket_CreateTextFrame(Net_Socket *websocket, uint8_t *payload, ptrdiff_t length, int masked, Memory_Arena *arena) {
-	uint8_t header[14];
+	uint8_t header[14]; // the last 4 bytes are for mask but is not actually used
 	memset(header, 0, sizeof(header));
 
 	header[0] |= 0x80; // FIN
@@ -472,7 +423,7 @@ static String Websocket_CreateTextFrame(Net_Socket *websocket, uint8_t *payload,
 
 	if (masked) {
 		uint32_t mask = XorShift32(&XorShift32State);
-		uint8_t *mask_write = header + header_size - 4;
+		uint8_t *mask_write = frame + header_size - 4;
 		mask_write[0] = ((mask & 0xff000000) >> 24);
 		mask_write[1] = ((mask & 0x00ff0000) >> 16);
 		mask_write[2] = ((mask & 0x0000ff00) >> 8);
@@ -487,39 +438,69 @@ static String Websocket_CreateTextFrame(Net_Socket *websocket, uint8_t *payload,
 }
 
 struct Websocket_Frame_Reader {
-	enum State { READ_HEADER, READ_LEN2, READ_LEN8, READ_PAYLOAD };
+	enum State { READ_HEADER, READ_LEN2, READ_LEN8, READ_MASK, READ_PAYLOAD };
 	State           state;
+	ptrdiff_t       start;
+	ptrdiff_t       stop;
 	uint8_t *       buffer;
-	uint64_t        length;
-	uint64_t        allocated;
+	uint64_t        payload_read;
 	Websocket_Frame frame;
-	Memory_Arena *  arena;
 };
 
 static void Websocket_FrameReaderInit(Websocket_Frame_Reader *reader, Memory_Arena *arena) {
-	reader->state     = Websocket_Frame_Reader::READ_HEADER;
-	reader->buffer    = (uint8_t *)PushSize(arena, WEBSOCKET_STREAM_SIZE);
-	reader->length    = 0;
-	reader->allocated = WEBSOCKET_STREAM_SIZE;
-	reader->arena     = arena;
+	reader->state        = Websocket_Frame_Reader::READ_HEADER;
+	reader->start        = 0;
+	reader->stop         = 0;
+	reader->buffer       = (uint8_t *)PushSize(arena, WEBSOCKET_MAX_READ_SIZE);
+	reader->payload_read = 0;
 	memset(&reader->frame, 0, sizeof(reader->frame));
 }
 
-static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader) {
+static void Websocket_FrameReaderNext(Websocket_Frame_Reader *reader) {
+	reader->state        = Websocket_Frame_Reader::READ_HEADER;
+	reader->payload_read = 0;
+	memset(&reader->frame, 0, sizeof(reader->frame));
+}
+
+static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader, Memory_Arena *arena) {
+	// @todo: loop until we are done for real
+
+	ptrdiff_t length;
+	if (reader->stop >= reader->start) {
+		length = reader->stop - reader->start;
+	} else {
+		length = reader->stop + WEBSOCKET_MAX_READ_SIZE - reader->start;
+	}
+
 	if (reader->state == Websocket_Frame_Reader::READ_HEADER) {
-		if (reader->length < 2) return false;
+		if (length < 2) return false;
 
-		reader->frame.fin    = (reader->buffer[0] & 0x80) >> 7;
-		reader->frame.rsv    = (reader->buffer[0] & 0x70) >> 4;
-		reader->frame.opcode = (reader->buffer[0] & 0x0f) >> 0;
-		reader->frame.masked = (reader->buffer[1] & 0x80) >> 7;
-		uint64_t payload_len = (reader->buffer[1] & 0x7f);
+		ptrdiff_t i = reader->start;
+		ptrdiff_t j = (i + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+		reader->start = (reader->start + 2) & (WEBSOCKET_MAX_READ_SIZE - 1);
 
-		reader->frame.payload_length = payload_len;
+		// @todo: validiate frame header for framentation and store relevant/needed values
+
+		reader->frame.fin    = (reader->buffer[i] & 0x80) >> 7;
+		reader->frame.rsv    = (reader->buffer[i] & 0x70) >> 4;
+		reader->frame.opcode = (reader->buffer[i] & 0x0f) >> 0;
+		reader->frame.masked = (reader->buffer[j] & 0x80) >> 7;
+		uint64_t payload_len = (reader->buffer[j] & 0x7f);
 
 		if (payload_len <= 125) {
+			reader->frame.payload_length += payload_len;
 			reader->frame.header_length = 2;
-			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
+			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
+
+			Assert(payload_len);
+
+			uint8_t *mem = (uint8_t *)PushSize(arena, payload_len);
+			Assert(mem);// @todo: mem cleanup
+			if (!reader->frame.payload) {
+				reader->frame.payload = mem;
+			} else {
+				Assert(mem == reader->frame.payload == reader->frame.payload_length);
+			}
 		} else if (payload_len == 126) {
 			reader->frame.header_length = 4;
 			reader->state = Websocket_Frame_Reader::READ_LEN2;
@@ -533,48 +514,208 @@ static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader) {
 	}
 
 	if (reader->state == Websocket_Frame_Reader::READ_LEN2) {
-		if (reader->length >= 4) {
-			reader->frame.payload_length = (((uint16_t)reader->buffer[3] << 8) | (uint16_t)reader->buffer[2]);
-			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
+		if (length >= 2) {
+			ptrdiff_t i = reader->start;
+			ptrdiff_t j = (i + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			reader->start = (reader->start + 2) & (WEBSOCKET_MAX_READ_SIZE - 1);
+
+			uint64_t payload_len = (((uint16_t)reader->buffer[i] << 8) | (uint16_t)reader->buffer[j]);
+			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
+
+			Assert(payload_len);
+
+			reader->frame.payload_length += payload_len;
+
+			uint8_t *mem = (uint8_t *)PushSize(arena, payload_len);
+			Assert(mem);// @todo: mem cleanup
+			if (!reader->frame.payload) {
+				reader->frame.payload = mem;
+			} else {
+				Assert(mem == reader->frame.payload == payload_len);
+			}
 		}
 	}
 
 	if (reader->state == Websocket_Frame_Reader::READ_LEN8) {
-		if (reader->length >= 10) {
-			reader->frame.payload_length =
-				(((uint64_t)reader->buffer[9] << 56) | ((uint64_t)reader->buffer[8] << 48) |
-					((uint64_t)reader->buffer[7] << 40) | ((uint64_t)reader->buffer[6] << 32) |
-					((uint64_t)reader->buffer[5] << 24) | ((uint64_t)reader->buffer[4] << 16) |
-					((uint64_t)reader->buffer[3] << 8) | ((uint64_t)reader->buffer[2] << 0));
+		if (length >= 8) {
+			ptrdiff_t i8 = reader->start;
+			ptrdiff_t i7 = (i8 + 0) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i6 = (i7 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i5 = (i6 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i4 = (i5 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i3 = (i4 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i2 = (i3 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i1 = (i2 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			ptrdiff_t i0 = (i1 + 1) & (WEBSOCKET_MAX_READ_SIZE - 1);
+			reader->start = (reader->start + 8) & (WEBSOCKET_MAX_READ_SIZE - 1);
+
+			uint64_t payload_len = (
+					((uint64_t)reader->buffer[i7] << 56) | ((uint64_t)reader->buffer[i6] << 48) |
+					((uint64_t)reader->buffer[i5] << 40) | ((uint64_t)reader->buffer[i4] << 32) |
+					((uint64_t)reader->buffer[i3] << 24) | ((uint64_t)reader->buffer[i2] << 16) |
+					((uint64_t)reader->buffer[i1] <<  8) | ((uint64_t)reader->buffer[i0] << 0));
+			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
+
+			Assert(payload_len);
+
+			reader->frame.payload_length += payload_len;
+
+			uint8_t *mem = (uint8_t *)PushSize(arena, payload_len);
+			Assert(mem);// @todo: mem cleanup
+			if (!reader->frame.payload) {
+				reader->frame.payload = mem;
+			} else {
+				Assert(mem == reader->frame.payload == payload_len);
+			}
+		}
+	}
+
+	if (reader->state == Websocket_Frame_Reader::READ_MASK) {
+		if (length >= 4) {
+			memcpy(reader->frame.mask, reader->buffer + reader->start, 4);
+			reader->start = (reader->start + 4) & (WEBSOCKET_MAX_READ_SIZE - 1);
 			reader->state = Websocket_Frame_Reader::READ_PAYLOAD;
 		}
 	}
 
 	if (reader->state == Websocket_Frame_Reader::READ_PAYLOAD) {
-		Assert(reader->frame.fin); // TODO: Support for fragmentation
+		Assert(reader->frame.payload);
 
-		uint64_t frame_size = reader->frame.header_length + reader->frame.payload_length;
-		if (reader->allocated < frame_size) {
-			void *mem = PushSize(reader->arena, frame_size - reader->allocated);
-			if (!mem) {
-				WriteLogErrorEx("Websocket", "Failed to read frame: Out of memory");
-			}
-			Assert(mem == reader->buffer + reader->allocated);
-			reader->allocated = frame_size;
+		if (reader->stop < reader->start) {
+			ptrdiff_t copy_size = Minimum(WEBSOCKET_MAX_READ_SIZE - reader->start, (ptrdiff_t)(reader->frame.payload_length - reader->payload_read));
+			memcpy(reader->frame.payload + reader->payload_read, reader->buffer + reader->start, copy_size);
+			reader->payload_read += copy_size;
+			reader->start = (reader->start + copy_size) & (WEBSOCKET_MAX_READ_SIZE - 1);
 		}
 
-		if (reader->length == frame_size) {
-			reader->frame.payload = reader->buffer + reader->frame.header_length;
-
-			if (reader->frame.masked)
-				memcpy(reader->frame.mask, reader->buffer + reader->frame.header_length - 4, 4);
-			else
-				memset(reader->frame.mask, 0, 4);
-			return true;
+		if (reader->stop > reader->start) {
+			ptrdiff_t copy_size = Minimum(reader->stop - reader->start, (ptrdiff_t)(reader->frame.payload_length - reader->payload_read));
+			memcpy(reader->frame.payload + reader->payload_read, reader->buffer + reader->start, copy_size);
+			reader->payload_read += copy_size;
+			reader->start = (reader->start + copy_size) & (WEBSOCKET_MAX_READ_SIZE - 1);
 		}
+
+		return reader->frame.fin && reader->payload_read == reader->frame.payload_length;
 	}
 
 	return false;
+}
+
+//
+// @Notes:
+// 
+//
+
+namespace Discord {
+	enum Gateway_Opcode {
+		GATEWAY_OP_DISPATH = 0,
+		GATEWAY_OP_HEARTBEAT = 1,
+		GATEWAY_OP_IDENTIFY = 2,
+		GATEWAY_OP_PRESECE_UPDATE = 3,
+		GATEWAY_OP_VOICE_STATE_UPDATE = 4,
+		GATEWAY_OP_RESUME = 6,
+		GATEWAY_OP_RECONNECT = 7,
+		GATEWAY_OP_REQUEST_GUILD_MEMBERS = 8,
+		GATEWAY_OP_INVALID_SESSION = 9,
+		GATEWAY_OP_HELLO = 10,
+		GATEWAY_OP_HEARTBEAT_ACK = 11,
+	};
+}
+
+
+#include <time.h> // bruh
+
+// these are globals for now
+int wait_timeout = NET_TIMEOUT_MILLISECS;
+
+namespace global {
+	int timeout = NET_TIMEOUT_MILLISECS;
+	bool hello_received = false;
+	bool imm_heartbeat = false;
+	bool identify = false;
+	int heartbeat = 0;
+	int acknowledgement = 0;
+	int s = -1;
+	time_t counter;
+}
+
+void OnWebsocketMessage(String payload, Memory_Arena *arena) {
+	auto temp = BeginTemporaryMemory(arena);
+	Defer{ EndTemporaryMemory(&temp); };
+
+	Json json_event;
+	if (!JsonParse(payload, &json_event, MemoryArenaAllocator(arena))) {
+		WriteLogError("Invalid JSON received: %.*s", (int)payload.length, payload.data);
+		return;
+	}
+	Assert(json_event.type == JSON_TYPE_OBJECT);
+	Json_Object *obj = &json_event.value.object;
+
+	int opcode = (int)JsonObjectFind(obj, "op")->value.number.value.integer;
+
+	auto s = JsonObjectFind(obj, "s");
+	if (s && s->type == JSON_TYPE_NUMBER) {
+		global::s = s->value.number.value.integer;
+	}
+
+	auto t = JsonObjectFind(obj, "t");
+	if (t && t->type == JSON_TYPE_STRING) {
+		String name = t->value.string;
+		WriteLogInfoEx("Discord Event", "%.*s", (int)name.length, name.data);
+	}
+
+	switch (opcode) {
+		case Discord::GATEWAY_OP_HELLO: {
+			auto d = &JsonObjectFind(obj, "d")->value.object;
+			global::timeout = JsonObjectFind(d, "heartbeat_interval")->value.number.value.integer;
+			global::counter = clock();
+			global::hello_received = true;
+			global::identify = true;
+			WriteLogInfoEx("Discord Event", "Hello from senpai: %d", global::timeout);
+		} break;
+
+		case Discord::GATEWAY_OP_HEARTBEAT: {
+			global::imm_heartbeat = true;
+			WriteLogInfoEx("Discord Event", "Call from senpai");
+		} break;
+
+		case Discord::GATEWAY_OP_HEARTBEAT_ACK: {
+			global::acknowledgement += 1;
+			WriteLogInfoEx("Discord Event", "Senpai noticed me!");
+		} break;
+
+		case Discord::GATEWAY_OP_DISPATH: {
+			WriteLogInfoEx("Discord Event", "dispatch");
+		} break;
+
+		case Discord::GATEWAY_OP_IDENTIFY: {
+			WriteLogInfoEx("Discord Event", "identify");
+		} break;
+
+		case Discord::GATEWAY_OP_PRESECE_UPDATE: {
+			WriteLogInfoEx("Discord Event", "presence update");
+		} break;
+
+		case Discord::GATEWAY_OP_VOICE_STATE_UPDATE: {
+			WriteLogInfoEx("Discord Event", "voice state update");
+		} break;
+
+		case Discord::GATEWAY_OP_RESUME: {
+			WriteLogInfoEx("Discord Event", "resume");
+		} break;
+
+		case Discord::GATEWAY_OP_RECONNECT: {
+			WriteLogInfoEx("Discord Event", "reconnect");
+		} break;
+
+		case Discord::GATEWAY_OP_REQUEST_GUILD_MEMBERS: {
+			WriteLogInfoEx("Discord Event", "guild members");
+		} break;
+
+		case Discord::GATEWAY_OP_INVALID_SESSION: {
+			WriteLogInfoEx("Discord Event", "invalid session");
+		} break;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -670,13 +811,14 @@ int main(int argc, char **argv) {
 
 			Http_DestroyResponse(res);
 
-			Websocket_Frame_Writer writer;
-			Websocket_FrameWriterInit(&writer, arenas[0]);
+			auto scratch    = arenas[0];
+			auto read_arena = arenas[1]; // resets after every read @todo: better way of doing this
 
-			Websocket_Frame_Reader reader;
-			Websocket_FrameReaderInit(&reader, arenas[1]);
+			Websocket_Frame_Writer frame_writer;
+			Websocket_FrameWriterInit(&frame_writer, scratch);
 
-			int timeout = NET_TIMEOUT_MILLISECS;
+			Websocket_Frame_Reader frame_reader;
+			Websocket_FrameReaderInit(&frame_reader, read_arena);
 
 			bool connected = true;
 			while (connected) {
@@ -685,61 +827,116 @@ int main(int argc, char **argv) {
 				fd.revents = 0;
 
 				fd.events = POLLRDNORM;
-				if (writer.first)
+				if (frame_writer.start != frame_writer.stop)
 					fd.events |= POLLWRNORM;
 
-				int presult = poll(&fd, 1, timeout);
+				int presult = poll(&fd, 1, wait_timeout);
 				if (presult < 0) break;
 
 				if (presult > 0) {
 					// TODO: Loop until we can no longer sent data
 					if (fd.revents & POLLWRNORM) {
-						Assert(writer.first);
+						Assert(frame_writer.start != frame_writer.stop);
 
-						int bytes_sent = Net_Send(websocket, writer.first->buffer + writer.first->sent, writer.first->sent - writer.first->length);
-						if (bytes_sent < 0) break;
-						writer.first->length += bytes_sent;
-
-						if (writer.first->sent == WEBSOCKET_STREAM_SIZE) {
-							auto free_buk = writer.first;
-							writer.first = free_buk->next;
-							free_buk->next = writer.free_list;
-							free_buk->prev = nullptr;
-							writer.free_list = free_buk;
-							writer.free_count += 1;
+						int bytes_sent = 0;
+						if (frame_writer.stop >= frame_writer.start) {
+							bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(frame_writer.stop - frame_writer.start));
+						} else {
+							bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(WEBSOCKET_MAX_WRITE_SIZE - frame_writer.start));
 						}
+
+						if (bytes_sent < 0) break;
+						frame_writer.start = (frame_writer.start + bytes_sent) & (WEBSOCKET_MAX_WRITE_SIZE - 1);
 					}
 
 					// TODO: Loop until we can't reveive data
 					if (fd.revents & POLLRDNORM) {
-						int bytes_received = Net_Receive(websocket, reader.buffer + reader.length, (int)(reader.allocated - reader.length));
+						int bytes_received;
+						if (frame_reader.stop >= frame_reader.start) {
+							bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(WEBSOCKET_MAX_READ_SIZE - frame_reader.stop));
+						} else {
+							bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(frame_reader.start - frame_reader.stop - 1));
+						}
 						if (bytes_received < 0) break;
-						reader.length += bytes_received;
+						frame_reader.stop = (frame_reader.stop + bytes_received) & (WEBSOCKET_MAX_READ_SIZE - 1);
 
-						if (Websocket_FrameReaderUpdate(&reader)) {
-							if (reader.frame.masked) break; // servers don't mask
-							if (reader.frame.opcode & 0x80) {
-								if (reader.frame.payload_length > 125) break; // not allowed by specs
+						if (Websocket_FrameReaderUpdate(&frame_reader, read_arena)) {
+							if (frame_reader.frame.masked) break; // servers don't mask
+							if (frame_reader.frame.opcode & 0x80) {
+								if (frame_reader.frame.payload_length > 125) break; // not allowed by specs
 								// TODO: handle control frames
 								WriteLogInfoEx("Websocket", "control frame");
 							} else {
 
-								String payload(reader.frame.payload, reader.frame.payload_length);
+								String payload(frame_reader.frame.payload, frame_reader.frame.payload_length);
 
-								Json json_event;
-								if (JsonParse(payload, &json_event, MemoryArenaAllocator(reader.arena))) {
-
-								}
+								OnWebsocketMessage(payload, read_arena);
 							}
 
-							MemoryArenaReset(reader.arena);
-							Websocket_FrameReaderInit(&reader, reader.arena);
+							MemoryArenaReset(read_arena);
+							Websocket_FrameReaderNext(&frame_reader);
 						}
 					}
 				}
 
-				if (presult == 0) {
+				static uint8_t buffer[4096]; // max allowed discord payload
+				if (global::identify) {
 
+					int length = snprintf((char *)buffer, sizeof(buffer), R"foo(
+{
+  "op": 2,
+  "d": {
+    "token": "%s",
+    "intents": 513,
+    "properties": {
+      "$os": "Windows"
+    }
+  }
+}
+)foo", argv[1]);
+
+					auto temp = BeginTemporaryMemory(scratch);
+					//auto send_res = Websocket_SendText(websocket, buffer, length, reader.arena);
+					String frame = Websocket_CreateTextFrame(websocket, buffer, length, 1, scratch);
+					Websocket_FrameWriterWrite(&frame_writer, frame.data, frame.length);
+					EndTemporaryMemory(&temp);
+
+					global::identify = false;
+
+					WriteLogInfoEx("Identify", "Notice me senpai");
+				}
+
+				time_t current_counter = clock();
+				int time_spent_ms = (int)((current_counter - global::counter) * 1000.0f / (float)CLOCKS_PER_SEC);
+				global::counter = current_counter;
+
+				wait_timeout -= time_spent_ms;
+				if (wait_timeout <= 0) {
+					wait_timeout = global::timeout;
+					presult = 0;
+				}
+
+				if (presult == 0 || global::imm_heartbeat) {
+					if (global::hello_received) {
+						if (global::heartbeat != global::acknowledgement) {
+							// @todo: only wait for certain number of times
+							WriteLogInfoEx("Heartbeat", "Senpai failed to notice me");
+						}
+
+						int length = 0;
+						if (global::s > 0)
+							length = snprintf((char *)buffer, sizeof(buffer), "{\"op\": 1, \"d\":%d}", global::s);
+						else
+							length = snprintf((char *)buffer, sizeof(buffer), "{\"op\": 1, \"d\":null}");
+						auto temp = BeginTemporaryMemory(scratch);
+						String frame = Websocket_CreateTextFrame(websocket, buffer, length, 1, scratch);
+						Websocket_FrameWriterWrite(&frame_writer, frame.data, frame.length);
+						EndTemporaryMemory(&temp);
+						global::heartbeat += 1;
+						WriteLogInfoEx("Heartbeat", "Notice me senpai");
+
+						global::imm_heartbeat = false;
+					}
 				}
 			}
 
