@@ -636,6 +636,8 @@ namespace global {
 	time_t counter;
 }
 
+static String BOT_AUTHORIZATION;
+
 void OnWebsocketMessage(String payload, Memory_Arena *arena) {
 	auto temp = BeginTemporaryMemory(arena);
 	Defer{ EndTemporaryMemory(&temp); };
@@ -659,6 +661,38 @@ void OnWebsocketMessage(String payload, Memory_Arena *arena) {
 	if (t && t->type == JSON_TYPE_STRING) {
 		String name = t->value.string;
 		LogInfoEx("Discord Event", "%.*s", (int)name.length, name.data);
+
+#if 0
+		if (name == "MESSAGE_CREATE") {
+			Net_Socket *http = Http_Connect("https://discord.com");
+			if (http) {
+				auto temp = BeginTemporaryMemory(arena);
+
+				static const String ReadYourMsg = u8R"foo(
+{
+  "content": "I read your message"
+}
+)foo";
+
+				Http_Request req;
+				Http_InitRequest(&req);
+				Http_SetHost(&req, http);
+				Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, BOT_AUTHORIZATION);
+				Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, "Katachi");
+				Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "keep-alive");
+				Http_SetContent(&req, "application/json", ReadYourMsg);
+
+				Http_Response res;
+				if (Http_Post(http, "/api/v9/channels/850062914438430751/messages", req, &res, arena)) {
+					printf(StrFmt "\n", StrArg(res.body));
+				}
+
+				Http_Disconnect(http);
+
+				EndTemporaryMemory(&temp);
+			}
+		}
+#endif
 	}
 
 	switch (opcode) {
@@ -842,12 +876,12 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	const String token = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
+	BOT_AUTHORIZATION = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
 
 	Http_Request req;
 	Http_InitRequest(&req);
 	Http_SetHost(&req, http);
-	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, token);
+	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, BOT_AUTHORIZATION);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, "Katachi");
 	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "keep-alive");
 	Http_SetContent(&req, "application/json", Message);
@@ -859,33 +893,13 @@ int main(int argc, char **argv) {
 
 	Http_Disconnect(http);
 
+	MemoryArenaReset(arenas[0]);
 
-#if 0
-
-	Http_Request *req = Http_CreateRequest(http, arenas[0]);
-	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
-	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, "Katachi");
-	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "keep-alive");
-	//Http_RequestSetContent(req, "application/json", Message);
-
-	Http_Body_Writer writer = { Dump };
-
-	uint8_t read_buffer[100] = {};
-	int bytes_sent = Net_ReceiveBlocked(http, read_buffer, sizeof(read_buffer));
-
-	Http_Response *res = Http_Get(http, "/api/v9/gateway/bot", req);
-	
-	if (res) {
-		printf("%.*s\n\n", (int)res->body.length, res->body.data);
-
-		Http_DestroyResponse(res);
-	}
-
-	Http_Disconnect(http);
+#if 1
 
 	// wss://gateway.discord.gg/?v=9&encoding=json
 	
-	Net_Socket *websocket = Http_Connect("wss://gateway.discord.gg", HTTPS_CONNECTION);
+	Net_Socket *websocket = Http_Connect("https://gateway.discord.gg", HTTPS_CONNECTION);
 	if (!websocket) {
 		return 1;
 	}
@@ -893,21 +907,21 @@ int main(int argc, char **argv) {
 	uint8_t buffer[SecureWebSocketKeySize];
 	String wsskey = GenerateSecureWebSocketKey(buffer);
 
-	req = Http_CreateRequest(websocket, arenas[0]);
-	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
-	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, "Katachi");
-	Http_SetHeader(req, HTTP_HEADER_UPGRADE, "websocket");
-	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "Upgrade");
-	Http_SetCustomHeader(req, "Sec-WebSocket-Version", "13");
-	Http_SetCustomHeader(req, "Sec-WebSocket-Key", wsskey);
+	Http_SetContent(&req, "", "");
+	//Http_SetContentLength(&req, -1);
+	Http_SetHost(&req, websocket);
+	Http_SetHeader(&req, HTTP_HEADER_UPGRADE, "websocket");
+	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "Upgrade");
+	Http_SetHeader(&req, "Sec-WebSocket-Version", "13");
+	Http_SetHeader(&req, "Sec-WebSocket-Key", wsskey);
 
-	res = Http_Get(websocket, "/?v=9&encoding=json", req);
+	//res = Http_Get(websocket, "/?v=9&encoding=json", req);
 
-	if (res) {
-		if (res->status.code == 101) {
-			printf("%.*s\n\n", (int)res->body.length, res->body.data);
+	if (Http_Get(websocket, "/?v=9&encoding=json", req, &res, arenas[0])) {
+		if (res.status.code == 101) {
+			printf(StrFmt "\n", StrArg(res.body));
 
-			String given = Http_GetCustomHeader(res, "Sec-WebSocket-Accept");
+			String given = Http_GetHeader(&res, "Sec-WebSocket-Accept");
 			if (!given.length) return 1;
 
 			constexpr char WebsocketKeySalt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -924,12 +938,12 @@ int main(int argc, char **argv) {
 			String required = EncodeBase64(String(digest, sizeof(digest)), buffer_base64, sizeof(buffer_base64));
 
 			if (required != given) {
-				WriteLogErrorEx("WSS", "Server returned invalid accept value");
+				LogErrorEx("WSS", "Server returned invalid accept value");
 			} else {
-				WriteLogInfo("Websocket connected.");
+				LogInfo("Websocket connected.");
 			}
 
-			Http_DestroyResponse(res);
+			MemoryArenaReset(arenas[0]);
 
 			auto scratch    = arenas[0];
 			auto read_arena = arenas[1]; // resets after every read @todo: better way of doing this
@@ -985,7 +999,7 @@ int main(int argc, char **argv) {
 							if (frame_reader.frame.opcode & 0x80) {
 								if (frame_reader.frame.payload_length > 125) break; // not allowed by specs
 								// TODO: handle control frames
-								WriteLogInfoEx("Websocket", "control frame");
+								LogInfoEx("Websocket", "control frame");
 							} else {
 
 								String payload(frame_reader.frame.payload, frame_reader.frame.payload_length);
@@ -1023,7 +1037,7 @@ int main(int argc, char **argv) {
 
 					global::identify = false;
 
-					WriteLogInfoEx("Identify", "Notice me senpai");
+					LogInfoEx("Identify", "Notice me senpai");
 				}
 
 				time_t current_counter = clock();
@@ -1040,7 +1054,7 @@ int main(int argc, char **argv) {
 					if (global::hello_received) {
 						if (global::heartbeat != global::acknowledgement) {
 							// @todo: only wait for certain number of times
-							WriteLogInfoEx("Heartbeat", "Senpai failed to notice me");
+							LogInfoEx("Heartbeat", "Senpai failed to notice me");
 						}
 
 						int length = 0;
@@ -1053,7 +1067,7 @@ int main(int argc, char **argv) {
 						Websocket_FrameWriterWrite(&frame_writer, frame.data, frame.length);
 						EndTemporaryMemory(&temp);
 						global::heartbeat += 1;
-						WriteLogInfoEx("Heartbeat", "Notice me senpai");
+						LogInfoEx("Heartbeat", "Notice me senpai");
 
 						global::imm_heartbeat = false;
 					}

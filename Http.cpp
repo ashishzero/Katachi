@@ -99,10 +99,6 @@ static bool Http_UrlExtract(String hostname, Url *url) {
 Net_Socket *Http_Connect(const String hostname, Http_Connection connection, Memory_Allocator allocator) {
 	Url url;
 	if (Http_UrlExtract(hostname, &url)) {
-		if (url.scheme == "wss" || url.port == "wss") {
-			url.scheme = url.port = "https";
-		}
-
 		Net_Socket *http = Net_OpenConnection(url.host, url.port, NET_SOCKET_TCP, allocator);
 		if (http) {
 			if ((connection == HTTP_DEFAULT && url.scheme == "https") || connection == HTTPS_CONNECTION) {
@@ -150,15 +146,23 @@ void Http_SetHeader(Http_Request *req, String name, String value) {
 }
 
 void Http_SetContentLength(Http_Request *req, ptrdiff_t length) {
-	int written = snprintf((char *)req->buffer + req->length, HTTP_MAX_HEADER_SIZE - req->length, "%zd", length);
-	String content_len(req->buffer + req->length, written);
-	req->length += written;
-	req->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+	if (length >= 0) {
+		int written = snprintf((char *)req->buffer + req->length, HTTP_MAX_HEADER_SIZE - req->length, "%zd", length);
+		String content_len(req->buffer + req->length, written);
+		req->length += written;
+		req->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+	} else {
+		req->headers.known[HTTP_HEADER_CONTENT_LENGTH] = "";
+	}
 }
 
 void Http_SetContent(Http_Request *req, String type, Buffer content) {
 	Http_SetContentLength(req, content.length);
 	req->headers.known[HTTP_HEADER_CONTENT_TYPE] = type;
+	req->body = content;
+}
+
+void Http_SetBody(Http_Request *req, Buffer content) {
 	req->body = content;
 }
 
@@ -193,15 +197,23 @@ void Http_SetHeader(Http_Response *res, String name, String value) {
 }
 
 void Http_SetContentLength(Http_Response *res, ptrdiff_t length) {
-	int written = snprintf((char *)res->buffer + res->length, HTTP_MAX_HEADER_SIZE - res->length, "%zd", length);
-	String content_len(res->buffer + res->length, written);
-	res->length += written;
-	res->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+	if (length >= 0) {
+		int written = snprintf((char *)res->buffer + res->length, HTTP_MAX_HEADER_SIZE - res->length, "%zd", length);
+		String content_len(res->buffer + res->length, written);
+		res->length += written;
+		res->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+	} else {
+		res->headers.known[HTTP_HEADER_CONTENT_LENGTH] = "";
+	}
 }
 
 void Http_SetContent(Http_Response *res, String type, Buffer content) {
 	Http_SetContentLength(res, content.length);
 	res->headers.known[HTTP_HEADER_CONTENT_TYPE] = type;
+	res->body = content;
+}
+
+void Http_SetBody(Http_Response *res, Buffer content) {
 	res->body = content;
 }
 

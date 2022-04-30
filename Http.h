@@ -166,6 +166,7 @@ void   Http_SetHeader(Http_Request *req, Http_Header_Id id, String value);
 void   Http_SetHeader(Http_Request *req, String name, String value);
 void   Http_SetContentLength(Http_Request *req, ptrdiff_t length);
 void   Http_SetContent(Http_Request *req, String type, Buffer content);
+void   Http_SetBody(Http_Request *req, Buffer content);
 String Http_GetHeader(Http_Request *req, Http_Header_Id id);
 String Http_GetHeader(Http_Request *req, const String name);
 
@@ -174,5 +175,6 @@ void   Http_SetHeader(Http_Response *res, Http_Header_Id id, String value);
 void   Http_SetHeader(Http_Response *res, String name, String value);
 void   Http_SetContentLength(Http_Response *res, ptrdiff_t length);
 void   Http_SetContent(Http_Response *res, String type, Buffer content);
+void   Http_SetBody(Http_Response *res, Buffer content);
 String Http_GetHeader(Http_Response *res, Http_Header_Id id);
 String Http_GetHeader(Http_Response *res, const String name);
