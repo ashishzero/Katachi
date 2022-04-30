@@ -95,6 +95,21 @@ enum Websocket_Opcode {
 	WEBSOCKET_OP_PONG = 0xa
 };
 
+enum Websocket_Status {
+	WEBSOCKET_STATUS_NORMAL_CLOSURE = 1000,
+	WEBSOCKET_STATUS_GOING_AWAY = 1001,
+	WEBSOCKET_STATUS_PROTOCOL_ERROR = 1002,
+	WEBSOCKET_STATUS_UNSUPPORTED_DATA = 1003,
+	WEBSOCKET_STATUS_NOT_RECEIVED = 1005,
+	WEBSOCKET_STATUS_ABNORMAL_CLOSURE = 1006,
+	WEBSOCKET_STATUS_INVALID_FRAME_PAYLOAD_DATA = 1007,
+	WEBSOCKET_STATUS_POLICY_VOILATION = 1008,
+	WEBSOCKET_STATUS_MESSAGE_TOO_BIG = 1009,
+	WEBSOCKET_STATUS_MANDATORY_EXTENSION = 1010,
+	WEBSOCKET_STATUS_INTERNAL_SERVER_ERROR = 1011,
+	WEBSOCKET_STATUS_TLS_HANDSHAKE = 1012
+};
+
 enum Websocket_Result {
 	WEBSOCKET_OK,
 	WEBSOCKET_FAILED,
@@ -413,7 +428,7 @@ static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader, Memory_A
 			reader->frame.header_length = 2;
 			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
 
-			Assert(payload_len);
+			//Assert(payload_len);
 
 			uint8_t *mem = (uint8_t *)PushSize(arena, payload_len);
 			Assert(mem);// @todo: mem cleanup
@@ -443,7 +458,7 @@ static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader, Memory_A
 			uint64_t payload_len = (((uint16_t)reader->buffer[i] << 8) | (uint16_t)reader->buffer[j]);
 			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
 
-			Assert(payload_len);
+			//Assert(payload_len);
 
 			reader->frame.payload_length += payload_len;
 
@@ -477,7 +492,7 @@ static bool Websocket_FrameReaderUpdate(Websocket_Frame_Reader *reader, Memory_A
 					((uint64_t)reader->buffer[i1] <<  8) | ((uint64_t)reader->buffer[i0] << 0));
 			reader->state = reader->frame.masked ? Websocket_Frame_Reader::READ_MASK : Websocket_Frame_Reader::READ_PAYLOAD;
 
-			Assert(payload_len);
+			//Assert(payload_len);
 
 			reader->frame.payload_length += payload_len;
 
@@ -732,22 +747,25 @@ static bool Websocket_ParseURI(String uri, Websocket_Uri *parsed) {
 	return true;
 }
 
+static constexpr int WEBSOCKET_MAX_PROTOCOLS = 16;
+
+struct Websocket_Procotols {
+	ptrdiff_t count;
+	String    data[WEBSOCKET_MAX_PROTOCOLS];
+};
+
 struct Websocket_Header {
-	Http_Header headers;
-	String      protocols;
-	String      extensions;
+	Http_Header         headers;
+	Websocket_Procotols protocols;
 };
 
 void Websocket_InitHeader(Websocket_Header *header) {
 	memset(header, 0, sizeof(*header));
 }
 
-void Websocket_HeaderSetProcotols(Websocket_Header *header, String protocols) {
-	header->protocols = protocols;
-}
-
-void Websocket_HeaderSetExtensions(Websocket_Header *header, String extensions) {
-	header->extensions = extensions;
+void Websocket_HeaderAddProcotols(Websocket_Header *header, String protocol) {
+	Assert(header->protocols.count < WEBSOCKET_MAX_PROTOCOLS);
+	header->protocols.data[header->protocols.count++] = protocol;
 }
 
 void Websocket_HeaderSet(Websocket_Header *header, Http_Header_Id id, String value) {
@@ -760,54 +778,6 @@ void Websocket_HeaderSet(Websocket_Header *header, String name, String value) {
 	header->headers.raw.data[count].name = name;
 	header->headers.raw.data[count].value = value;
 	header->headers.raw.count += 1;
-}
-
-static bool Websocket_AreValuesPresent(String search_string, String find_string, uint8_t delim, bool assignment) {
-	if (!search_string.length)
-		return true;
-
-	bool finished = false;
-	ptrdiff_t start = 0;
-	while (!finished) {
-		ptrdiff_t stop = StrFindChar(search_string, delim, start);
-		if (stop < 0) {
-			stop = search_string.length;
-			finished = true;
-		}
-
-		String extension = SubStr(search_string, start, stop - start);
-		extension = StrTrim(extension);
-
-		if (assignment) {
-			ptrdiff_t equal = StrFindChar(extension, '=');
-			if (equal >= 0) {
-				String value = SubStr(extension, equal + 1);
-				value = StrTrim(value);
-				extension = SubStr(extension, 0, equal);
-				extension = StrTrim(extension);
-
-				ptrdiff_t pos = StrFindICase(find_string, extension);
-
-				if (pos < 0) return false;
-
-				equal = StrFindChar(find_string, '=', pos + 1);
-				ptrdiff_t semicolon = StrFindChar(find_string, delim, pos + 1);
-				if (semicolon < 0) semicolon = find_string.length;
-
-				if (equal == -1 || semicolon < equal) return false;
-
-				String search = SubStr(find_string, equal + 1, semicolon - equal - 1);
-				search = StrTrim(search);
-
-				if (StrFindICase(search, value) < 0)
-					return false;
-			}
-		} else {
-			if (StrFind(find_string, extension) < 0)
-				return false;
-		}
-	}
-	return true;
 }
 
 Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *header = nullptr, Memory_Allocator allocator = ThreadContext.allocator) {
@@ -837,10 +807,19 @@ Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *
 	Http_SetContent(&req, "", "");
 
 	if (header) {
-		if (header->extensions.length)
-			Http_SetHeader(&req, "Sec-WebSocket-Extensions", header->extensions);
-		if (header->protocols.length)
-			Http_SetHeader(&req, "Sec-WebSocket-Protocol", header->protocols);
+		int length     = 0;
+		uint8_t *start = req.buffer;
+		if (header->protocols.count) {
+			length += snprintf((char *)req.buffer + req.length, HTTP_MAX_HEADER_SIZE - req.length, 
+				StrFmt, StrArg(header->protocols.data[0]));
+		}
+		for (ptrdiff_t index = 1; index < header->protocols.count; ++index) {
+			length += snprintf((char *)req.buffer + req.length, HTTP_MAX_HEADER_SIZE - req.length,
+				StrFmt ",", StrArg(header->protocols.data[index]));
+		}
+		if (length) {
+			Http_SetHeader(&req, "Sec-WebSocket-Protocol", String(start, length));
+		}
 	}
 
 	if (Http_Get(websocket, websocket_uri.path, req, res, nullptr, 0) && res->status.code == 101) {
@@ -879,27 +858,28 @@ Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *
 		}
 
 		String extensions = Http_GetHeader(res, "Sec-WebSocket-Extensions");
+		if (extensions.length) {
+			LogErrorEx("Websocket", "Extensions are not supported");
+			Http_Disconnect(websocket);
+			return nullptr;
+		}
+
 		String protocols  = Http_GetHeader(res, "Sec-WebSocket-Protocol");
 
 		if (header) {
-			if (!Websocket_AreValuesPresent(extensions, header->extensions, ';', true)) {
-				LogErrorEx("Websocket", "Unsupproted extensions sent by server");
-				Http_Disconnect(websocket);
-				return nullptr;
-			}
-
-			if (!Websocket_AreValuesPresent(extensions, header->protocols, ',', false)) {
-				LogErrorEx("Websocket", "Unsupproted protocols sent by server");
-				Http_Disconnect(websocket);
-				return nullptr;
+			Str_Tokenizer tokenizer;
+			StrTokenizerInit(&tokenizer, extensions);
+			while (StrTokenize(&tokenizer, ",")) {
+				for (ptrdiff_t index = 0; index < header->protocols.count; ++index) {
+					String prot = StrTrim(tokenizer.token);
+					if (!StrMatchICase(prot, header->protocols.data[index])) {
+						LogErrorEx("Websocket", "Unsupported Protocol \"" StrFmt "\" sent", StrArg(prot));
+						Http_Disconnect(websocket);
+						return nullptr;
+					}
+				}
 			}
 		} else {
-			if (extensions.length) {
-				LogErrorEx("Websocket", "Unsupproted extensions sent by server");
-				Http_Disconnect(websocket);
-				return nullptr;
-			}
-
 			if (protocols.length) {
 				LogErrorEx("Websocket", "Unsupproted protocols sent by server");
 				Http_Disconnect(websocket);
@@ -963,6 +943,75 @@ int main(int argc, char **argv) {
 	if (!websocket) {
 		return 1;
 	}
+
+	// A server MUST NOT mask any frames that it sends to
+	// the client.A client MUST close a connection if it detects a masked
+	// frame.In this case, it MAY use the status code 1002 (protocol
+	// error) as defined in Section 7.4.1.
+
+	// RSV1, RSV2, RSV3:  1 bit each
+	// MUST be 0 unless an extension is negotiated that defines meanings
+	// for non - zero values.If a nonzero value is received and none of
+	// the negotiated extensions defines the meaning of such a nonzero
+	// value, the receiving endpoint MUST _Fail the WebSocket Connection_.
+
+	// Opcodes
+	// %x0 denotes a continuation 
+	// %x1 denotes a text frame
+	// %x2 denotes a binary frame
+	// %x3-7 are reserved for further non-control frames
+	// %x8 denotes a connection close
+	// %x9 denotes a ping
+	// %xA denotes a pong
+	// %xB-F are reserved for further control frames
+
+	// The length of the "Payload data", in bytes : if 0 - 125, that is the
+	// payload length.If 126, the following 2 bytes interpreted as a
+	// 16-bit unsigned integer are the payload length.If 127, the
+	// following 8 bytes interpreted as a 64 - bit unsigned integer(the
+	// most significant bit MUST be 0) are the payload length.
+
+	// A fragmented message consists of a single frame with the FIN bit
+	// clear andan opcode other than 0, followed by zero or more frames
+	// with the FIN bit clear and the opcode set to 0, andterminated by
+	// a single frame with the FIN bit set andan opcode of 0.
+
+	// Control frames(see Section 5.5) MAY be injected in the middle of
+	// a fragmented message.Control frames themselves MUST NOT be
+	// fragmented.
+
+	// All control frames MUST have a payload length of 125 bytes or less
+	// and MUST NOT be fragmented.
+
+	// Close
+	// If there is a body, the first two bytes of
+	// the body MUST be a 2 - byte unsigned integer(in network byte order)
+	// representing a status code with value / code / defined in Section 7.4.
+	// Following the 2 - byte integer, the body MAY contain UTF - 8 - encoded data
+	// with value / reason / , the interpretation of which is not defined by
+	// this specification.
+
+	// If this Close control frame contains no status code, _The WebSocket
+	// Connection Close Code_ is considered to be 1005.  If _The WebSocket
+	// Connection is Closed_ and no Close control frame was received by the
+	// endpoint(such as could occur if the underlying transport connection
+	// is lost), _The WebSocket Connection Close Code_ is considered to be 1006.
+
+	// The first reconnect attempt SHOULD be delayed by a random amount of
+	// time.The parameters by which this random delay is chosen are left
+	// to the client to decide; a value chosen randomly between 0 and 5
+	// seconds is a reasonable initial delay though clients MAY choose a
+	// different interval from which to select a delay length based on
+	// implementation experience and particular application.
+	// Should the first reconnect attempt fail, subsequent reconnect
+	// attempts SHOULD be delayed by increasingly longer amounts of time,
+	// using a method such as truncated binary exponential backoff.
+
+	// When an endpoint is to interpret a byte stream as UTF - 8 but finds
+	// that the byte stream is not, in fact, a valid UTF - 8 stream, that
+	// endpoint MUST _Fail the WebSocket Connection_.This rule applies
+	// both during the opening handshake andduring subsequent data
+	// exchange.
 
 	MemoryArenaReset(arenas[0]);
 

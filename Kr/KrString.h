@@ -331,3 +331,44 @@ static void BuilderWrite(Builder *builder, Buffer buffer, Args... args) {
 	BuilderWriteBytes(builder, buffer.data, buffer.length);
 	BuilderWrite(builder, args...);
 }
+
+//
+//
+//
+
+struct Str_Tokenizer {
+	String   buffer;
+	uint8_t *current;
+	String token;
+};
+
+INLINE_PROCEDURE void StrTokenizerInit(Str_Tokenizer *tokenizer, String content) {
+	tokenizer->buffer  = content;
+	tokenizer->current = content.data;
+	tokenizer->token   = String();
+}
+
+INLINE_PROCEDURE bool StrTokenize(Str_Tokenizer *tokenizer, const String delims) {
+	uint8_t *last  = tokenizer->buffer.data + tokenizer->buffer.length;
+	uint8_t *start = tokenizer->current;
+	while (tokenizer->current < last) {
+		uint8_t *current = tokenizer->current;
+		for (auto d : delims) {
+			if (d == *current) {
+				if (current - start) {
+					tokenizer->token = String(start, current - start);
+					tokenizer->current = current + 1;
+					return true;
+				}
+				start = current + 1;
+				tokenizer->current = start;
+				break;
+			}
+		}
+	}
+	if (last - start) {
+		tokenizer->token = String(start, last - start);
+		return true;
+	}
+	return false;
+}
