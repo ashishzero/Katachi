@@ -31,6 +31,7 @@ struct Net_Socket {
 	SSL *            ssl;
 #endif
 	SOCKET           descriptor;
+	Net_Error        error;
 	int              family;
 	int              type;
 	int              protocol;
@@ -471,6 +472,14 @@ void Net_Shutdown(Net_Socket *net) {
 	shutdown(net->descriptor, SD_BOTH);
 }
 
+Net_Error Net_GetLastError(Net_Socket *net) {
+	return net->error;
+}
+
+void Net_SetError(Net_Socket *net, Net_Error error) {
+	net->error = error;
+}
+
 bool Net_TryReconnect(Net_Socket *net) {
 	PL_Net_CloseSocketDescriptor(net->descriptor);
 
@@ -526,8 +535,11 @@ int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 	if (presult > 0) {
 		if (fds.revents & POLLWRNORM) {
 			int written = net->write(net, buffer, length);
-			if (written > 0)
+			if (written >= 0) {
+				net->error = NET_E_NONE;
 				return written;
+			}
+			net->error = NET_E_CONNECTION_LOST;
 #ifdef NETWORK_OPENSSL_ENABLE
 			if (net->ssl)
 				PL_Net_ReportOpenSSLError();
@@ -539,14 +551,20 @@ int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 			return -1;
 		}
 
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
+		if (fds.revents & (POLLHUP | POLLERR)) {
+			net->error = NET_E_CONNECTION_LOST;
+			return -1;
+		}
+		net->error = NET_E_WOULD_BLOCK;
+		return 0;
 	} else if (presult == 0) {
-		return NET_TIMED_OUT;
+		net->error = NET_E_TIMED_OUT;
+		return -1;
 	}
 
+	net->error = NET_E_CONNECTION_LOST;
 	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+	return -1;
 }
 
 int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
@@ -561,53 +579,75 @@ int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 			int read = net->read(net, buffer, length);
 			if (read > 0)
 				return read;
+			if (read == 0) LogErrorEx("Net", "Lost connection unexpectedly");
 #ifdef NETWORK_OPENSSL_ENABLE
 			if (net->ssl)
 				PL_Net_ReportOpenSSLError();
 			else
 				PL_Net_ReportLastSocketError();
 #else
-				PL_Net_ReportLastSocketError();
+			PL_Net_ReportLastSocketError();
 #endif
+			net->error = NET_E_CONNECTION_LOST;
 			return -1;
 		}
 
-		if (fds.revents & (POLLHUP | POLLERR))
-			return NET_CONNECTION_LOST;
+		if (fds.revents & (POLLHUP | POLLERR)) {
+			net->error = NET_E_CONNECTION_LOST;
+			return -1;
+		}
+		net->error = NET_E_WOULD_BLOCK;
+		return 0;
 	} else if (presult == 0) {
-		return NET_TIMED_OUT;
+		net->error = NET_E_WOULD_BLOCK;
+		return 0;
 	}
 
+	net->error = NET_E_CONNECTION_LOST;
 	PL_Net_ReportLastPlatformError();
-	return NET_SOCKET_ERROR;
+	return -1;
 }
 
 int Net_Send(Net_Socket *net, void *buffer, int length) {
 	int written = net->write(net, buffer, length);
 	if (written < 0) {
 #if PLATFORM_WINDOWS
-		if (WSAGetLastError() == WSAEWOULDBLOCK)
+		if (WSAGetLastError() == WSAEWOULDBLOCK) {
+			net->error = NET_E_WOULD_BLOCK;
 			return 0;
+		}
 #elif PLATFORM_LINUX || PLATFORM_MAC
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			net->error = NET_E_WOULD_BLOCK;
 			return 0;
+		}
 #endif
+		net->error = NET_E_CONNECTION_LOST;
 		PL_Net_ReportLastSocketError();
+		return -1;
 	}
+	net->error = NET_E_NONE;
 	return written;
 }
 
 int Net_Receive(Net_Socket *net, void *buffer, int length) {
 	int read = net->read(net, buffer, length);
-	if (read < 0) {
+	if (read <= 0) {
 #if PLATFORM_WINDOWS
-		if (WSAGetLastError() == WSAEWOULDBLOCK)
+		if (WSAGetLastError() == WSAEWOULDBLOCK) {
+			net->error = NET_E_WOULD_BLOCK;
 			return 0;
+		}
 #elif PLATFORM_LINUX || PLATFORM_MAC
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			net->error = NET_E_WOULD_BLOCK;
 			return 0;
+		}
 #endif
+		if (read == 0) LogErrorEx("Net", "Lost connection unexpectedly");
+		net->error = NET_E_CONNECTION_LOST;
 		PL_Net_ReportLastSocketError();
+		return -1;
 	}
 	return read;
 }

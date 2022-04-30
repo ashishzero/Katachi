@@ -71,6 +71,9 @@
     <ClInclude Include="NetworkNative.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Base64.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="Kr\KrVisualizer.natvis" />

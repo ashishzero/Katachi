@@ -1,12 +1,17 @@
 #pragma once
 #include "Kr/KrCommon.h"
 
-constexpr int NET_TIMEOUT_MILLISECS = 5000;
-constexpr int NET_SOCKET_ERROR      = -1;
-constexpr int NET_CONNECTION_LOST   = -2;
-constexpr int NET_TIMED_OUT         = -3;
+constexpr int NET_TIMEOUT_MILLISECS = 2000;
 
-constexpr int NET_MAX_CANON_NAME    = 2048;
+enum Net_Error {
+	NET_E_NONE,
+	NET_E_TIMED_OUT = 1,
+	NET_E_WOULD_BLOCK,
+	NET_E_CONNECTION_LOST,
+	NET_E_OUT_OF_MEMORY
+};
+
+constexpr int NET_MAX_CANON_NAME = 2048;
 
 enum Net_Socket_Type {
 	NET_SOCKET_TCP,
@@ -18,10 +23,17 @@ struct Net_Socket;
 bool   Net_Initialize();
 void   Net_Shutdown();
 
+/*
+* Send: -ve means error, +ve means number of bytes sent, 0 means success or wait
+* Receive: -ve means error, +ve means number of bytes received, 0 means wait
+*/
+
 Net_Socket  *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator = ThreadContext.allocator);
 bool         Net_OpenSecureChannel(Net_Socket *net, bool verify = true);
 void         Net_CloseConnection(Net_Socket *net);
 void         Net_Shutdown(Net_Socket *net);
+Net_Error    Net_GetLastError(Net_Socket *net);
+void         Net_SetError(Net_Socket *net, Net_Error error);
 bool         Net_TryReconnect(Net_Socket *net);
 String       Net_GetHostname(Net_Socket *net);
 int          Net_GetPort(Net_Socket *net);

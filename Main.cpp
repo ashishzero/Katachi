@@ -38,95 +38,7 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 //
 
 #include "Http.h"
-
-void Dump(const Http_Header &header, uint8_t *buffer, int length, void *content) {
-	printf("%.*s", length, buffer);
-}
-
-static const String Base64Lookup = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-constexpr size_t Base64EncodedSize(size_t size) {
-	ptrdiff_t base64_len = (4 * size) / 3;
-	return AlignPower2Up(base64_len, 4);
-}
-
-constexpr size_t Based64DecodedSize(size_t size) {
-	return (3 * size) / 4;
-}
-
-String EncodeBase64(Buffer input, uint8_t *base64, ptrdiff_t length) {
-	ptrdiff_t base64_len = Base64EncodedSize(input.length);
-	Assert(base64_len <= length);
-
-	int val = 0;
-	int valb = -6;
-
-	ptrdiff_t pos = 0;
-	String result(base64, base64_len);
-
-	for (ptrdiff_t index = 0; index < input.length; ++index) {
-		uint8_t c = input[index];
-		val = (val << 8) + static_cast<uint8_t>(c);
-		valb += 8;
-		while (valb >= 0) {
-			result[pos++] = Base64Lookup[(val >> valb) & 0x3F];
-			valb -= 6;
-		}
-	}
-
-	if (valb > -6) {
-		result[pos++] = Base64Lookup[((val << 8) >> (valb + 8)) & 0x3F];
-	}
-
-	for (; pos < base64_len; ++pos)
-		result[pos] = '=';
-
-	return result;
-}
-
-Buffer DecodeBase64(String base64, uint8_t *buffer, ptrdiff_t length) {
-	while (base64[base64.length - 1] == '=')
-		base64.length -= 1;
-
-	Buffer result;
-	result.length = Based64DecodedSize(base64.length);
-	result.data   = buffer;
-
-	Assert(result.length <= length);
-
-	uint8_t positions[4];
-	ptrdiff_t pos = 0;
-	ptrdiff_t index = 0;
-
-	for (; index < base64.length - 4; index += 4) {
-		positions[0] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 0]);
-		positions[1] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 1]);
-		positions[2] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 2]);
-		positions[3] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 3]);
-
-		result[pos++] = (positions[0] << 2) + ((positions[1] & 0x30) >> 4);
-		result[pos++] = ((positions[1] & 0xf) << 4) + ((positions[2] & 0x3c) >> 2);
-		result[pos++] = ((positions[2] & 0x3) << 6) + positions[3];
-	}
-
-	ptrdiff_t it = 0;
-	for (; index < base64.length; ++index, ++it)
-		positions[it] = (uint8_t)StrFindChar(Base64Lookup, base64[index]);
-	for (; it < 4; ++it)
-		positions[it] = 0;
-
-	uint8_t values[3];
-	values[0] = (positions[0] << 2) + ((positions[1] & 0x30) >> 4);
-	values[1] = ((positions[1] & 0xf) << 4) + ((positions[2] & 0x3c) >> 2);
-	values[2] = ((positions[2] & 0x3) << 6) + positions[3];
-
-	for (it = 0; pos < result.length; ++pos, ++it)
-		result[pos] = values[it];
-
-	return result;
-}
-
-static constexpr int SecureWebSocketKeySize = 24;
+#include "Base64.h"
 
 static uint32_t XorShift32Seed = 0xfdfdfdfd;
 
@@ -139,12 +51,21 @@ static inline uint32_t XorShift32() {
 	return x;
 }
 
-static String GenerateSecureWebSocketKey(uint8_t(&buffer)[SecureWebSocketKeySize]) {
+static constexpr int WEBSOCKET_KEY_LENGTH        = 24;
+static constexpr uint8_t WebsocketKeySalt[]      = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+static constexpr int WEBSOCKET_SALT_LENGTH       = sizeof(WebsocketKeySalt) - 1;
+static constexpr int WEBSOCKET_SALTED_KEY_LENGTH = WEBSOCKET_KEY_LENGTH + WEBSOCKET_SALT_LENGTH;
+
+struct Websocket_Key { uint8_t data[WEBSOCKET_KEY_LENGTH]; };
+
+static Websocket_Key Websocket_GenerateSecurityKey() {
 	uint8_t nonce[16];
 	for (auto &n : nonce)
 		n = XorShift32() & 255;
 	static_assert(sizeof(nonce) == 16, "");
-	return EncodeBase64(Buffer((uint8_t *)nonce, sizeof(nonce)), buffer, sizeof(buffer));
+	Websocket_Key key;
+	EncodeBase64(Buffer((uint8_t *)nonce, sizeof(nonce)), key.data, sizeof(key.data));
+	return key;
 }
 
 static void Websocket_MaskPayload(uint8_t *dst, uint8_t *src, uint64_t length, uint8_t mask[4]) {
@@ -759,16 +680,16 @@ struct Websocket_Uri {
 
 static bool Websocket_ParseURI(String uri, Websocket_Uri *parsed) {
 	bool scheme = true;
-	if (StrStartsWithICase(uri, "wss:")) {
+	if (StrStartsWithICase(uri, "wss://")) {
 		parsed->scheme = "wss";
 		parsed->port   = "443"; // default
 		parsed->secure = true;
-		uri = SubStr(uri, 4);
-	} else if (StrStartsWithICase(uri, "ws:")) {
+		uri = SubStr(uri, 6);
+	} else if (StrStartsWithICase(uri, "ws://")) {
 		parsed->scheme = "ws";
 		parsed->port   = "80"; // default
 		parsed->secure = false;
-		uri = SubStr(uri, 3);
+		uri = SubStr(uri, 5);
 	} else {
 		// defaults
 		parsed->scheme = "wss";
@@ -812,30 +733,184 @@ static bool Websocket_ParseURI(String uri, Websocket_Uri *parsed) {
 }
 
 struct Websocket_Header {
-	String name;
-	String value;
+	Http_Header headers;
+	String      protocols;
+	String      extensions;
 };
 
-Net_Socket *Websocket_Connect(String url, Array_View<Websocket_Header> headers = {}, String protocols = "", String extensions = "", Memory_Allocator allocator = ThreadContext.allocator) {
-	Websocket_Uri uri;
-	if (Websocket_ParseURI(url, &uri)) {
-		Net_Socket *websocket = Net_OpenConnection(uri.host, uri.port, NET_SOCKET_TCP, allocator);
-		if (!websocket) return nullptr;
+void Websocket_InitHeader(Websocket_Header *header) {
+	memset(header, 0, sizeof(*header));
+}
 
-		if (uri.secure) {
-			if (!Net_OpenSecureChannel(websocket, true)) {
-				Net_CloseConnection(websocket);
+void Websocket_HeaderSetProcotols(Websocket_Header *header, String protocols) {
+	header->protocols = protocols;
+}
+
+void Websocket_HeaderSetExtensions(Websocket_Header *header, String extensions) {
+	header->extensions = extensions;
+}
+
+void Websocket_HeaderSet(Websocket_Header *header, Http_Header_Id id, String value) {
+	header->headers.known[id] = value;
+}
+
+void Websocket_HeaderSet(Websocket_Header *header, String name, String value) {
+	ptrdiff_t count = header->headers.raw.count;
+	Assert(count < HTTP_MAX_RAW_HEADERS);
+	header->headers.raw.data[count].name = name;
+	header->headers.raw.data[count].value = value;
+	header->headers.raw.count += 1;
+}
+
+static bool Websocket_AreValuesPresent(String search_string, String find_string, uint8_t delim, bool assignment) {
+	if (!search_string.length)
+		return true;
+
+	bool finished = false;
+	ptrdiff_t start = 0;
+	while (!finished) {
+		ptrdiff_t stop = StrFindChar(search_string, delim, start);
+		if (stop < 0) {
+			stop = search_string.length;
+			finished = true;
+		}
+
+		String extension = SubStr(search_string, start, stop - start);
+		extension = StrTrim(extension);
+
+		if (assignment) {
+			ptrdiff_t equal = StrFindChar(extension, '=');
+			if (equal >= 0) {
+				String value = SubStr(extension, equal + 1);
+				value = StrTrim(value);
+				extension = SubStr(extension, 0, equal);
+				extension = StrTrim(extension);
+
+				ptrdiff_t pos = StrFindICase(find_string, extension);
+
+				if (pos < 0) return false;
+
+				equal = StrFindChar(find_string, '=', pos + 1);
+				ptrdiff_t semicolon = StrFindChar(find_string, delim, pos + 1);
+				if (semicolon < 0) semicolon = find_string.length;
+
+				if (equal == -1 || semicolon < equal) return false;
+
+				String search = SubStr(find_string, equal + 1, semicolon - equal - 1);
+				search = StrTrim(search);
+
+				if (StrFindICase(search, value) < 0)
+					return false;
+			}
+		} else {
+			if (StrFind(find_string, extension) < 0)
+				return false;
+		}
+	}
+	return true;
+}
+
+Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *header = nullptr, Memory_Allocator allocator = ThreadContext.allocator) {
+	Websocket_Uri websocket_uri;
+	if (!Websocket_ParseURI(uri, &websocket_uri)) {
+		LogErrorEx("Websocket", "Invalid websocket address: " StrFmt, StrArg(uri));
+		return nullptr;
+	}
+
+	Net_Socket *websocket = Http_Connect(websocket_uri.host, websocket_uri.port, websocket_uri.secure ? HTTPS_CONNECTION : HTTP_CONNECTION, allocator);
+	if (!websocket) return nullptr;
+
+	Http_Request req;
+	Http_InitRequest(&req);
+
+	if (header) {
+		memcpy(&req.headers, &header->headers, sizeof(req.headers));
+	}
+
+	Websocket_Key ws_key = Websocket_GenerateSecurityKey();
+
+	Http_SetHost(&req, websocket);
+	Http_SetHeader(&req, HTTP_HEADER_UPGRADE, "websocket");
+	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "Upgrade");
+	Http_SetHeader(&req, "Sec-WebSocket-Version", "13");
+	Http_SetHeader(&req, "Sec-WebSocket-Key", String(ws_key.data, sizeof(ws_key.data)));
+	Http_SetContent(&req, "", "");
+
+	if (header) {
+		if (header->extensions.length)
+			Http_SetHeader(&req, "Sec-WebSocket-Extensions", header->extensions);
+		if (header->protocols.length)
+			Http_SetHeader(&req, "Sec-WebSocket-Protocol", header->protocols);
+	}
+
+	if (Http_Get(websocket, websocket_uri.path, req, res, nullptr, 0) && res->status.code == 101) {
+		if (!StrMatchICase(Http_GetHeader(res, HTTP_HEADER_UPGRADE), "websocket")) {
+			LogErrorEx("websocket", "Upgrade header is not present in websocket handshake");
+			Http_Disconnect(websocket);
+			return nullptr;
+		}
+
+		if (!StrMatchICase(Http_GetHeader(res, HTTP_HEADER_CONNECTION), "upgrade")) {
+			LogErrorEx("websocket", "Connection header is not present in websocket handshake");
+			Http_Disconnect(websocket);
+			return nullptr;
+		}
+
+		String accept = Http_GetHeader(res, "Sec-WebSocket-Accept");
+		if (!accept.length) {
+			LogErrorEx("websocket", "Sec-WebSocket-Accept header is not present in websocket handshake");
+			Http_Disconnect(websocket);
+			return nullptr;
+		}
+
+		uint8_t salted[WEBSOCKET_SALTED_KEY_LENGTH];
+		memcpy(salted, ws_key.data, WEBSOCKET_KEY_LENGTH);
+		memcpy(salted + WEBSOCKET_KEY_LENGTH, WebsocketKeySalt, WEBSOCKET_SALT_LENGTH);
+
+		uint8_t digest[20];
+		SHA1((char *)digest, (char *)salted, WEBSOCKET_SALTED_KEY_LENGTH);
+
+		uint8_t buffer_base64[Base64EncodedSize(20)];
+		ptrdiff_t base64_len = EncodeBase64(String(digest, sizeof(digest)), buffer_base64, sizeof(buffer_base64));
+		if (!StrMatch(String(buffer_base64, base64_len), accept)) {
+			LogErrorEx("Websocket", "Invalid accept key sent by the server");
+			Http_Disconnect(websocket);
+			return nullptr;
+		}
+
+		String extensions = Http_GetHeader(res, "Sec-WebSocket-Extensions");
+		String protocols  = Http_GetHeader(res, "Sec-WebSocket-Protocol");
+
+		if (header) {
+			if (!Websocket_AreValuesPresent(extensions, header->extensions, ';', true)) {
+				LogErrorEx("Websocket", "Unsupproted extensions sent by server");
+				Http_Disconnect(websocket);
+				return nullptr;
+			}
+
+			if (!Websocket_AreValuesPresent(extensions, header->protocols, ',', false)) {
+				LogErrorEx("Websocket", "Unsupproted protocols sent by server");
+				Http_Disconnect(websocket);
+				return nullptr;
+			}
+		} else {
+			if (extensions.length) {
+				LogErrorEx("Websocket", "Unsupproted extensions sent by server");
+				Http_Disconnect(websocket);
+				return nullptr;
+			}
+
+			if (protocols.length) {
+				LogErrorEx("Websocket", "Unsupproted protocols sent by server");
+				Http_Disconnect(websocket);
 				return nullptr;
 			}
 		}
 
-		Memory_Arena *arena = ThreadScratchpad();
-
-		uint8_t key_buffer[SecureWebSocketKeySize];
-		String wskey = GenerateSecureWebSocketKey(key_buffer);
+		return websocket;
 	}
 
-	LogErrorEx("Websocket", "Invalid websocket address: " StrFmt, StrArg(url));
+	Http_Disconnect(websocket);
 	return nullptr;
 }
 
@@ -898,50 +973,59 @@ int main(int argc, char **argv) {
 #if 1
 
 	// wss://gateway.discord.gg/?v=9&encoding=json
+
+	Websocket_Header headers;
+	Websocket_InitHeader(&headers);
+	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, BOT_AUTHORIZATION);
+	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, "Katachi");
+
+	Net_Socket *websocket = Websocket_Connect("wss://gateway.discord.gg/?v=9&encoding=json", &res, &headers);
+
 	
-	Net_Socket *websocket = Http_Connect("https://gateway.discord.gg", HTTPS_CONNECTION);
+	//Net_Socket *websocket = Http_Connect("https://gateway.discord.gg", HTTPS_CONNECTION);
 	if (!websocket) {
 		return 1;
 	}
 
-	uint8_t buffer[SecureWebSocketKeySize];
-	String wsskey = GenerateSecureWebSocketKey(buffer);
+	//uint8_t buffer[SecureWebSocketKeySize];
+	//String wsskey = GenerateSecureWebSocketKey(buffer);
 
-	Http_SetContent(&req, "", "");
+	//Http_SetContent(&req, "", "");
 	//Http_SetContentLength(&req, -1);
-	Http_SetHost(&req, websocket);
-	Http_SetHeader(&req, HTTP_HEADER_UPGRADE, "websocket");
-	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "Upgrade");
-	Http_SetHeader(&req, "Sec-WebSocket-Version", "13");
-	Http_SetHeader(&req, "Sec-WebSocket-Key", wsskey);
+	//Http_SetHost(&req, websocket);
+	//Http_SetHeader(&req, HTTP_HEADER_UPGRADE, "websocket");
+	//Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "Upgrade");
+	//Http_SetHeader(&req, "Sec-WebSocket-Version", "13");
+	//Http_SetHeader(&req, "Sec-WebSocket-Key", wsskey);
 
 	//res = Http_Get(websocket, "/?v=9&encoding=json", req);
 
-	if (Http_Get(websocket, "/?v=9&encoding=json", req, &res, arenas[0])) {
-		if (res.status.code == 101) {
-			printf(StrFmt "\n", StrArg(res.body));
+	//if (Http_Get(websocket, "/?v=9&encoding=json", req, &res, arenas[0])) {
+	if (1) {
+		if (1 && res.status.code == 101) {
+			//printf(StrFmt "\n", StrArg(res.body));
 
-			String given = Http_GetHeader(&res, "Sec-WebSocket-Accept");
-			if (!given.length) return 1;
+			//String given = Http_GetHeader(&res, "Sec-WebSocket-Accept");
+			//if (!given.length) return 1;
 
-			constexpr char WebsocketKeySalt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-			constexpr int WebsocketKeySaltSize = sizeof(WebsocketKeySalt) - 1;
+			//constexpr char WebsocketKeySalt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+			//constexpr int WebsocketKeySaltSize = sizeof(WebsocketKeySalt) - 1;
 
-			uint8_t combined[SecureWebSocketKeySize + WebsocketKeySaltSize];
-			memcpy(combined, wsskey.data, SecureWebSocketKeySize);
-			memcpy(combined + SecureWebSocketKeySize, WebsocketKeySalt, WebsocketKeySaltSize);
+			//uint8_t combined[SecureWebSocketKeySize + WebsocketKeySaltSize];
+			//memcpy(combined, wsskey.data, SecureWebSocketKeySize);
+			//memcpy(combined + SecureWebSocketKeySize, WebsocketKeySalt, WebsocketKeySaltSize);
 
-			uint8_t digest[20];
-			SHA1((char *)digest, (char *)combined, SecureWebSocketKeySize + WebsocketKeySaltSize);
+			//uint8_t digest[20];
+			//SHA1((char *)digest, (char *)combined, SecureWebSocketKeySize + WebsocketKeySaltSize);
 
-			uint8_t buffer_base64[Base64EncodedSize(20)];
-			String required = EncodeBase64(String(digest, sizeof(digest)), buffer_base64, sizeof(buffer_base64));
+			//uint8_t buffer_base64[Base64EncodedSize(20)];
+			//String required = EncodeBase64(String(digest, sizeof(digest)), buffer_base64, sizeof(buffer_base64));
 
-			if (required != given) {
-				LogErrorEx("WSS", "Server returned invalid accept value");
-			} else {
-				LogInfo("Websocket connected.");
-			}
+			//if (required != given) {
+			//	LogErrorEx("WSS", "Server returned invalid accept value");
+			//} else {
+			//	LogInfo("Websocket connected.");
+			//}
 
 			MemoryArenaReset(arenas[0]);
 

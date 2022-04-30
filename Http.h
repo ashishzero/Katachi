@@ -127,6 +127,7 @@ struct Http_Writer {
 	void *           context;
 };
 
+Net_Socket *   Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator);
 Net_Socket *   Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
 void           Http_Disconnect(Net_Socket *http);
 

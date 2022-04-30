@@ -23,6 +23,10 @@ INLINE_PROCEDURE String FmtStr(Memory_Arena *arena, const char *fmt, ...) {
 	return string;
 }
 
+INLINE_PROCEDURE bool StrIsEmpty(String str) {
+	return str.length == 0;
+}
+
 INLINE_PROCEDURE bool IsSpace(uint32_t ch) {
 	return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' || ch == '\v';
 }
@@ -214,9 +218,12 @@ INLINE_PROCEDURE ptrdiff_t StrFindICase(String str, const String key, ptrdiff_t 
 }
 
 INLINE_PROCEDURE ptrdiff_t StrFindChar(String str, uint8_t key, ptrdiff_t pos = 0) {
-	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index < str.length; ++index)
-		if (str.data[index] == key)
-			return index;
+	ptrdiff_t index = Clamp(0, str.length - 1, pos);
+	if (index >= 0) {
+		for (; index < str.length; ++index)
+			if (str.data[index] == key)
+				return index;
+	}
 	return -1;
 }
 
@@ -231,9 +238,12 @@ INLINE_PROCEDURE ptrdiff_t StrReverseFind(String str, String key, ptrdiff_t pos)
 }
 
 INLINE_PROCEDURE ptrdiff_t StrReverseFindChar(String str, uint8_t key, ptrdiff_t pos) {
-	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index >= 0; --index)
-		if (str.data[index] == key)
-			return index;
+	ptrdiff_t index = Clamp(0, str.length - 1, pos);
+	if (index >= 0) {
+		for (; index >= 0; --index)
+			if (str.data[index] == key)
+				return index;
+	}
 	return -1;
 }
 

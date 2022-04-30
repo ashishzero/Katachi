@@ -165,6 +165,7 @@
     <ClCompile Include="StringBuilder.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Base64.h" />
     <ClInclude Include="Http.h" />
     <ClInclude Include="Json.h" />
     <ClInclude Include="Discord.h" />
