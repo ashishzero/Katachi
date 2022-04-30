@@ -31,11 +31,17 @@ struct Net_Socket {
 	SSL *            ssl;
 #endif
 	SOCKET           descriptor;
-	Net_Socket_Type  type;
-	String           node;
-	String           service;
+	int              family;
+	int              type;
+	int              protocol;
+	ptrdiff_t        hostlen;
+	char             hostname[NET_MAX_CANON_NAME];
+	ptrdiff_t        addrlen;
+	sockaddr_storage address;
 	Memory_Allocator allocator;
 };
+
+static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
 
 //
 //
@@ -51,7 +57,7 @@ static void PL_Net_ReportError(int error) {
 	DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
 	wchar_t *msg = NULL;
 	FormatMessageW(flags, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&msg, 0, NULL);
-	WriteLogErrorEx("Net:Windows", "%S", msg);
+	LogErrorEx("Net:Windows", "%S", msg);
 	LocalFree(msg);
 }
 #define PL_Net_ReportLastPlatformError() PL_Net_ReportError(GetLastError())
@@ -72,19 +78,18 @@ static bool PL_Net_Initialize() {
 	return true;
 }
 
-static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type) {
-	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
-
+static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, char(&hostname)[NET_MAX_CANON_NAME], sockaddr_storage *addr, ptrdiff_t *addrelen, int *pfamily, int *ptype, int *pprotocol) {
 	ADDRINFOW hints;
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags    = AI_CANONNAME;
+	hints.ai_family   = AF_UNSPEC;
 	hints.ai_socktype = SocketTypeMap[type];
 
 	wchar_t nodename[2048];
 	wchar_t servicename[512];
 
 	if (node.length + 1 >= ArrayCount(nodename) || service.length + 1 >= ArrayCount(servicename)) {
-		WriteLogError("Net:Windows", "Could not create socket: Out of memory");
+		LogError("Net:Windows", "Could not create socket: Out of memory");
 		return INVALID_SOCKET;
 	}
 
@@ -114,6 +119,14 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 			descriptor = INVALID_SOCKET;
 			continue;
 		}
+
+		snprintf(hostname, sizeof(hostname), "%S", address->ai_canonname);
+		*addrelen = ptr->ai_addrlen;
+		memcpy(addr, ptr->ai_addr, ptr->ai_addrlen);
+
+		*pfamily   = ptr->ai_family;
+		*ptype     = ptr->ai_socktype;
+		*pprotocol = ptr->ai_protocol;
 
 		break;
 	}
@@ -145,7 +158,7 @@ static void PL_Net_ReportError(int error) {
 		msg = strerror(errno);
 	else
 		msg = gai_strerror(error);
-	WriteLogErrorEx(source, "%s", msg);
+	LogErrorEx(source, "%s", msg);
 }
 #define PL_Net_ReportLastPlatformError(EAI_SYSTEM)
 #define PL_Net_ReportLastSocketError(EAI_SYSTEM)
@@ -175,7 +188,7 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 #elif PLATFORM_MAC
 			source = "Net:Mac";
 #endif
-		WriteLogErrorEx(source, "Could not create socket: Out of memory");
+		LogErrorEx(source, "Could not create socket: Out of memory");
 		return INVALID_SOCKET;
 	}
 
@@ -256,7 +269,7 @@ static void PL_Net_ReportOpenSSLError() {
 		error = ERR_get_error();
 		if (!error) return;
 		ERR_error_string_n(error, message, sizeof(message));
-		WriteLogErrorEx("Net:OpenSSL", "%s", message);
+		LogErrorEx("Net:OpenSSL", "%s", message);
 	}
 }
 
@@ -344,18 +357,7 @@ static bool PL_Net_OpenSSLOpenChannel(Net_Socket *net, bool verify) {
 		return false;
 	}
 
-	char hostname[2048];
-	if (net->node.length + net->service.length + 2 >= sizeof(hostname)) {
-		WriteLogErrorEx("Net:OpenSSL", "Could not write hostname: Out of memory");
-		return false;
-	}
-
-	memcpy(hostname, net->node.data, net->node.length);
-	hostname[net->node.length] = ':';
-	memcpy(hostname + net->node.length + 1, net->service.data, net->service.length);
-	hostname[net->node.length + 1 + net->service.length] = 0;
-
-	if (!SSL_set_tlsext_host_name(ssl, hostname)) {
+	if (!SSL_set_tlsext_host_name(ssl, net->hostname)) {
 		PL_Net_ReportOpenSSLError();
 		SSL_free(ssl);
 		return false;
@@ -382,9 +384,8 @@ static void PL_Net_OpenSSLCloseChannel(Net_Socket *net) {
 	}
 }
 
-static bool PL_Net_OpenSSLResetDescriptor(Net_Socket *net) {
+static bool PL_Net_OpenSSLReconnect(Net_Socket *net) {
 	if (net->ssl) {
-		SSL_set_fd(net->ssl, (int)net->descriptor);
 		if (SSL_connect(net->ssl) == -1) {
 			PL_Net_ReportOpenSSLError();
 			return false;
@@ -420,34 +421,33 @@ void Net_Shutdown() {
 //
 //
 
-static size_t Net_SocketAllocationSize(const String node, const String service) {
-	return sizeof(Net_Socket) + node.length + service.length + 2;
-}
-
 Net_Socket *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator) {
-	SOCKET descriptor = PL_Net_OpenSocketDescriptor(node, service, type);
+	char hostname[NET_MAX_CANON_NAME];
+
+	sockaddr_storage addr;
+	ptrdiff_t        addr_len;
+	int              family, socktype, protocol;
+	SOCKET descriptor = PL_Net_OpenSocketDescriptor(node, service, type, hostname, &addr, &addr_len, &family, &socktype, &protocol);
 	if (descriptor == INVALID_SOCKET)
 		return nullptr;
 
-	Net_Socket *net = (Net_Socket *)MemoryAllocate(Net_SocketAllocationSize(node, service), allocator);
+	Net_Socket *net = (Net_Socket *)MemoryAllocate(sizeof(*net), allocator);
 
 	if (net) {
 		memset(net, 0, sizeof(*net));
 
-		uint8_t *mem        = (uint8_t *)(net + 1);
+		net->write      = PL_Net_Write;
+		net->read       = PL_Net_Read;
+		net->descriptor = descriptor;
+		net->family     = family;
+		net->type       = socktype;
+		net->protocol   = protocol;
+		net->allocator  = allocator;
+		net->addrlen    = addr_len;
+		net->hostlen    = strlen(hostname);
 
-		net->write          = PL_Net_Write;
-		net->read           = PL_Net_Read;
-		net->descriptor     = descriptor;
-		net->type           = type;
-		net->allocator      = allocator;
-		net->node.data      = mem;
-		net->service.data   = mem + node.length + 1;
-		net->node.length    = node.length;
-		net->service.length = service.length;
-
-		memcpy(net->node.data, node.data, node.length);
-		memcpy(net->service.data, service.data, service.length);
+		memcpy(net->hostname, hostname, sizeof(hostname));
+		memcpy(&net->address, &addr, sizeof(addr));
 
 		return net;
 	}
@@ -464,21 +464,39 @@ bool Net_OpenSecureChannel(Net_Socket *net, bool verify) {
 void Net_CloseConnection(Net_Socket *net) {
 	PL_Net_OpenSSLCloseChannel(net);
 	PL_Net_CloseSocketDescriptor(net->descriptor);
+	MemoryFree(net, sizeof(*net), net->allocator);
+}
 
-	MemoryFree(net, Net_SocketAllocationSize(net->node, net->service), net->allocator);
-	net->descriptor = INVALID_SOCKET;
+void Net_Shutdown(Net_Socket *net) {
+	shutdown(net->descriptor, SD_BOTH);
 }
 
 bool Net_TryReconnect(Net_Socket *net) {
 	PL_Net_CloseSocketDescriptor(net->descriptor);
-	net->descriptor = PL_Net_OpenSocketDescriptor(net->node, net->service, net->type);
-	if (net->descriptor == INVALID_SOCKET)
+
+	net->descriptor = socket(net->family, net->type, net->protocol);
+	if (net->descriptor < 0) {
+		net->descriptor = INVALID_SOCKET;
+		PL_Net_ReportLastSocketError();
 		return false;
-	return PL_Net_OpenSSLResetDescriptor(net);
+	}
+
+	sockaddr *addr = (sockaddr *)&net->address;
+	int error      = connect(net->descriptor, addr, (int)net->addrlen);
+	if (error) {
+		PL_Net_ReportLastSocketError();
+		return false;
+	}
+	return PL_Net_OpenSSLReconnect(net);
 }
 
 String Net_GetHostname(Net_Socket *net) {
-	return net->node;
+	return String(net->hostname, net->hostlen);
+}
+
+int Net_GetPort(Net_Socket *net) {
+	sockaddr_in *addr = (sockaddr_in *)&net->address;
+	return ntohs(addr->sin_port);
 }
 
 int32_t Net_GetSocketDescriptor(Net_Socket *net) {

@@ -99,10 +99,10 @@ Buffer DecodeBase64(String base64, uint8_t *buffer, ptrdiff_t length) {
 	ptrdiff_t index = 0;
 
 	for (; index < base64.length - 4; index += 4) {
-		positions[0] = (uint8_t)StrFindCharacter(Base64Lookup, base64[index + 0]);
-		positions[1] = (uint8_t)StrFindCharacter(Base64Lookup, base64[index + 1]);
-		positions[2] = (uint8_t)StrFindCharacter(Base64Lookup, base64[index + 2]);
-		positions[3] = (uint8_t)StrFindCharacter(Base64Lookup, base64[index + 3]);
+		positions[0] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 0]);
+		positions[1] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 1]);
+		positions[2] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 2]);
+		positions[3] = (uint8_t)StrFindChar(Base64Lookup, base64[index + 3]);
 
 		result[pos++] = (positions[0] << 2) + ((positions[1] & 0x30) >> 4);
 		result[pos++] = ((positions[1] & 0xf) << 4) + ((positions[2] & 0x3c) >> 2);
@@ -111,7 +111,7 @@ Buffer DecodeBase64(String base64, uint8_t *buffer, ptrdiff_t length) {
 
 	ptrdiff_t it = 0;
 	for (; index < base64.length; ++index, ++it)
-		positions[it] = (uint8_t)StrFindCharacter(Base64Lookup, base64[index]);
+		positions[it] = (uint8_t)StrFindChar(Base64Lookup, base64[index]);
 	for (; it < 4; ++it)
 		positions[it] = 0;
 
@@ -128,10 +128,21 @@ Buffer DecodeBase64(String base64, uint8_t *buffer, ptrdiff_t length) {
 
 static constexpr int SecureWebSocketKeySize = 24;
 
+static uint32_t XorShift32Seed = 0xfdfdfdfd;
+
+static inline uint32_t XorShift32() {
+	uint32_t x = XorShift32Seed;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	XorShift32Seed = x;
+	return x;
+}
+
 static String GenerateSecureWebSocketKey(uint8_t(&buffer)[SecureWebSocketKeySize]) {
 	uint8_t nonce[16];
 	for (auto &n : nonce)
-		n = 'a'; //(uint32_t)rand();
+		n = XorShift32() & 255;
 	static_assert(sizeof(nonce) == 16, "");
 	return EncodeBase64(Buffer((uint8_t *)nonce, sizeof(nonce)), buffer, sizeof(buffer));
 }
@@ -153,17 +164,6 @@ static int Websocket_ReceiveMinimum(Net_Socket *websocket, uint8_t *read_ptr, in
 	}
 	return bytes_received;
 }
-
-static inline uint32_t XorShift32(uint32_t *state) {
-	uint32_t x = *state;
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	*state = x;
-	return x;
-}
-
-static uint32_t XorShift32State = 0xfdfdfdfd;
 
 enum Websocket_Opcode {
 	WEBSOCKET_OP_CONTINUATION_FRAME = 0x0,
@@ -298,7 +298,7 @@ Websocket_Result Websocket_SendText(Net_Socket *websocket, uint8_t *buffer, ptrd
 		header[9] = (uint8_t)((length & 0x00000000000000ff) >> 0);
 	}
 
-	uint32_t mask = XorShift32(&XorShift32State);
+	uint32_t mask = XorShift32();
 	uint8_t *mask_write = header + header_size - 4;
 	mask_write[0] = ((mask & 0xff000000) >> 24);
 	mask_write[1] = ((mask & 0x00ff0000) >> 16);
@@ -415,14 +415,14 @@ static String Websocket_CreateTextFrame(Net_Socket *websocket, uint8_t *payload,
 
 	uint8_t *frame = (uint8_t *)PushSize(arena, frame_size);
 	if (!frame) {
-		WriteLogErrorEx("Websocket", "Failed to create websocket frame: out of memory");
+		LogErrorEx("Websocket", "Failed to create websocket frame: out of memory");
 		return String("");
 	}
 
 	memcpy(frame, header, header_size);
 
 	if (masked) {
-		uint32_t mask = XorShift32(&XorShift32State);
+		uint32_t mask = XorShift32();
 		uint8_t *mask_write = frame + header_size - 4;
 		mask_write[0] = ((mask & 0xff000000) >> 24);
 		mask_write[1] = ((mask & 0x00ff0000) >> 16);
@@ -622,9 +622,6 @@ namespace Discord {
 	};
 }
 
-
-#include <time.h> // bruh
-
 // these are globals for now
 int wait_timeout = NET_TIMEOUT_MILLISECS;
 
@@ -645,7 +642,7 @@ void OnWebsocketMessage(String payload, Memory_Arena *arena) {
 
 	Json json_event;
 	if (!JsonParse(payload, &json_event, MemoryArenaAllocator(arena))) {
-		WriteLogError("Invalid JSON received: %.*s", (int)payload.length, payload.data);
+		LogError("Invalid JSON received: %.*s", (int)payload.length, payload.data);
 		return;
 	}
 	Assert(json_event.type == JSON_TYPE_OBJECT);
@@ -661,7 +658,7 @@ void OnWebsocketMessage(String payload, Memory_Arena *arena) {
 	auto t = JsonObjectFind(obj, "t");
 	if (t && t->type == JSON_TYPE_STRING) {
 		String name = t->value.string;
-		WriteLogInfoEx("Discord Event", "%.*s", (int)name.length, name.data);
+		LogInfoEx("Discord Event", "%.*s", (int)name.length, name.data);
 	}
 
 	switch (opcode) {
@@ -671,53 +668,144 @@ void OnWebsocketMessage(String payload, Memory_Arena *arena) {
 			global::counter = clock();
 			global::hello_received = true;
 			global::identify = true;
-			WriteLogInfoEx("Discord Event", "Hello from senpai: %d", global::timeout);
+			LogInfoEx("Discord Event", "Hello from senpai: %d", global::timeout);
 		} break;
 
 		case Discord::GATEWAY_OP_HEARTBEAT: {
 			global::imm_heartbeat = true;
-			WriteLogInfoEx("Discord Event", "Call from senpai");
+			LogInfoEx("Discord Event", "Call from senpai");
 		} break;
 
 		case Discord::GATEWAY_OP_HEARTBEAT_ACK: {
 			global::acknowledgement += 1;
-			WriteLogInfoEx("Discord Event", "Senpai noticed me!");
+			LogInfoEx("Discord Event", "Senpai noticed me!");
 		} break;
 
 		case Discord::GATEWAY_OP_DISPATH: {
-			WriteLogInfoEx("Discord Event", "dispatch");
+			LogInfoEx("Discord Event", "dispatch");
 		} break;
 
 		case Discord::GATEWAY_OP_IDENTIFY: {
-			WriteLogInfoEx("Discord Event", "identify");
+			LogInfoEx("Discord Event", "identify");
 		} break;
 
 		case Discord::GATEWAY_OP_PRESECE_UPDATE: {
-			WriteLogInfoEx("Discord Event", "presence update");
+			LogInfoEx("Discord Event", "presence update");
 		} break;
 
 		case Discord::GATEWAY_OP_VOICE_STATE_UPDATE: {
-			WriteLogInfoEx("Discord Event", "voice state update");
+			LogInfoEx("Discord Event", "voice state update");
 		} break;
 
 		case Discord::GATEWAY_OP_RESUME: {
-			WriteLogInfoEx("Discord Event", "resume");
+			LogInfoEx("Discord Event", "resume");
 		} break;
 
 		case Discord::GATEWAY_OP_RECONNECT: {
-			WriteLogInfoEx("Discord Event", "reconnect");
+			LogInfoEx("Discord Event", "reconnect");
 		} break;
 
 		case Discord::GATEWAY_OP_REQUEST_GUILD_MEMBERS: {
-			WriteLogInfoEx("Discord Event", "guild members");
+			LogInfoEx("Discord Event", "guild members");
 		} break;
 
 		case Discord::GATEWAY_OP_INVALID_SESSION: {
-			WriteLogInfoEx("Discord Event", "invalid session");
+			LogInfoEx("Discord Event", "invalid session");
 		} break;
 	}
 }
 
+struct Websocket_Uri {
+	String scheme;
+	String host;
+	String port;
+	String path;
+	boolx  secure;
+};
+
+static bool Websocket_ParseURI(String uri, Websocket_Uri *parsed) {
+	bool scheme = true;
+	if (StrStartsWithICase(uri, "wss:")) {
+		parsed->scheme = "wss";
+		parsed->port   = "443"; // default
+		parsed->secure = true;
+		uri = SubStr(uri, 4);
+	} else if (StrStartsWithICase(uri, "ws:")) {
+		parsed->scheme = "ws";
+		parsed->port   = "80"; // default
+		parsed->secure = false;
+		uri = SubStr(uri, 3);
+	} else {
+		// defaults
+		parsed->scheme = "wss";
+		parsed->port   = "443";
+		parsed->secure = true;
+		scheme         = false;
+	}
+
+	ptrdiff_t colon = StrFindChar(uri, ':');
+	ptrdiff_t slash = StrFindChar(uri, '/');
+	if (colon > slash && slash != -1) return false;
+
+	if (colon >= 0) {
+		if (colon == 0) return false;
+		parsed->host = SubStr(uri, 0, colon);
+		if (slash >= 0) {
+			parsed->port = SubStr(uri, colon + 1, slash - colon - 1);
+			parsed->path = SubStr(uri, slash);
+		} else {
+			parsed->port = SubStr(uri, colon + 1);
+			parsed->path = "/";
+		}
+
+		if (!scheme) {
+			if (StrMatchICase(parsed->port, "https") || parsed->port == "443")
+				parsed->secure = true;
+			else if (StrMatchICase(parsed->port, "http") || parsed->port == "80")
+				parsed->secure = false;
+		}
+	} else {
+		if (slash >= 0) {
+			parsed->host = SubStr(uri, 0, slash);
+			parsed->path = SubStr(uri, slash);
+		} else {
+			parsed->host = SubStr(uri, 0);
+			parsed->path = "/";
+		}
+	}
+
+	return true;
+}
+
+struct Websocket_Header {
+	String name;
+	String value;
+};
+
+Net_Socket *Websocket_Connect(String url, Array_View<Websocket_Header> headers = {}, String protocols = "", String extensions = "", Memory_Allocator allocator = ThreadContext.allocator) {
+	Websocket_Uri uri;
+	if (Websocket_ParseURI(url, &uri)) {
+		Net_Socket *websocket = Net_OpenConnection(uri.host, uri.port, NET_SOCKET_TCP, allocator);
+		if (!websocket) return nullptr;
+
+		if (uri.secure) {
+			if (!Net_OpenSecureChannel(websocket, true)) {
+				Net_CloseConnection(websocket);
+				return nullptr;
+			}
+		}
+
+		Memory_Arena *arena = ThreadScratchpad();
+
+		uint8_t key_buffer[SecureWebSocketKeySize];
+		String wskey = GenerateSecureWebSocketKey(key_buffer);
+	}
+
+	LogErrorEx("Websocket", "Invalid websocket address: " StrFmt, StrArg(url));
+	return nullptr;
+}
+
+#if 0
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -729,7 +817,21 @@ int main(int argc, char **argv) {
 
 	Net_Initialize();
 
-	srand((uint32_t)time(nullptr));
+	Net_Shutdown();
+}
+#else
+int main(int argc, char **argv) {
+	InitThreadContext(KiloBytes(64));
+	ThreadContextSetLogger({ LogProcedure, nullptr });
+
+	if (argc != 2) {
+		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
+		return 1;
+	}
+
+	Net_Initialize();
+
+	//srand((uint32_t)time(nullptr));
 
 	Memory_Arena *arenas[2];
 	arenas[0] = MemoryArenaAllocate(MegaBytes(64));
@@ -741,6 +843,24 @@ int main(int argc, char **argv) {
 	}
 
 	const String token = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
+
+	Http_Request req;
+	Http_InitRequest(&req);
+	Http_SetHost(&req, http);
+	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, token);
+	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, "Katachi");
+	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "keep-alive");
+	Http_SetContent(&req, "application/json", Message);
+
+	Http_Response res;
+	if (Http_Post(http, "/api/v9/channels/850062914438430751/messages", req, &res, arenas[0])) {
+		printf(StrFmt "\n", StrArg(res.body));
+	}
+
+	Http_Disconnect(http);
+
+
+#if 0
 
 	Http_Request *req = Http_CreateRequest(http, arenas[0]);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, token);
@@ -1119,8 +1239,10 @@ int main(int argc, char **argv) {
 	}
 
 	Http_Disconnect(websocket);
+#endif
 
 	Net_Shutdown();
 
 	return 0;
 }
+#endif

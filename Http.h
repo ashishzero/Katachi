@@ -1,12 +1,11 @@
 #pragma once
 #include "Network.h"
 
-static constexpr int HTTP_MAX_RECONNECT = 5;
+static constexpr int HTTP_MAX_HEADER_SIZE   = KiloBytes(8);
+static constexpr int HTTP_STREAM_CHUNK_SIZE = HTTP_MAX_HEADER_SIZE;
+static constexpr int HTTP_MAX_RAW_HEADERS   = 64;
 
-static constexpr int HTTP_MAX_HEADER_SIZE = KiloBytes(8);
-static constexpr int HTTP_READ_CHUNK_SIZE = HTTP_MAX_HEADER_SIZE;
-
-static_assert(HTTP_MAX_HEADER_SIZE >= HTTP_READ_CHUNK_SIZE, "");
+static_assert(HTTP_MAX_HEADER_SIZE >= HTTP_STREAM_CHUNK_SIZE, "");
 
 enum Http_Connection {
 	HTTP_DEFAULT,
@@ -73,15 +72,19 @@ enum Http_Header_Id {
 	_HTTP_HEADER_COUNT
 };
 
-struct Http_Header_Raw {
-	String           name;
-	String           value;
-	Http_Header_Raw *next;
+struct Http_Raw_Headers {
+	struct Header {
+		String name;
+		String value;
+	};
+
+	ptrdiff_t count;
+	Header    data[HTTP_MAX_RAW_HEADERS];
 };
 
 struct Http_Header {
 	String known[_HTTP_HEADER_COUNT];
-	Http_Header_Raw *raw;
+	Http_Raw_Headers raw;
 };
 
 enum Http_Version : uint32_t {
@@ -95,87 +98,81 @@ struct Http_Status {
 	String       name;
 };
 
-typedef Buffer(*Http_Body_Reader_Proc)(void *content);
-typedef void(*Http_Body_Writer_Proc)(const Http_Header &header, uint8_t *buffer, int length, void *context);
-struct Http_Body_Reader { Http_Body_Reader_Proc proc; void *context; };
-struct Http_Body_Writer { Http_Body_Writer_Proc proc; void *context; };
-
 struct Http_Request {
-	struct Body {
-		enum Type { STATIC, STREAM };
-		struct Data {
-			Http_Body_Reader reader;
-			Buffer           buffer;
-			Data() {}
-		};
-		Type type;
-		Data data;
-	};
-
-	Http_Header      headers;
-	Body             body;
-	Temporary_Memory memory;
+	Http_Version version;
+	Http_Header  headers;
+	ptrdiff_t    length;
+	uint8_t      buffer[HTTP_MAX_HEADER_SIZE];
+	Buffer       body;
 };
 
 struct Http_Response {
-	Http_Status      status;
-	Http_Header      headers;
-	Buffer           body;
-	Temporary_Memory memory;
+	Http_Status  status;
+	Http_Header  headers;
+	ptrdiff_t    length;
+	uint8_t      buffer[HTTP_MAX_HEADER_SIZE];
+	Buffer       body;
 };
 
-Net_Socket *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
-void        Http_Disconnect(Net_Socket *http);
+typedef int(*Http_Reader_Proc)(uint8_t *buffer, int length, void *context);
+typedef void(*Http_Writer_Proc)(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context);
 
-Http_Request * Http_CreateRequest(Net_Socket *http, Memory_Arena *arena);
-void           Http_DestroyRequest(Http_Request *req);
-Http_Response *Http_CreateResponse(Memory_Arena *arena);
-void           Http_DestroyResponse(Http_Response *req);
+struct Http_Reader {
+	Http_Reader_Proc proc;
+	void *           context;
+};
 
-Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr);
-Http_Response *Http_Get(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr);
-Http_Response *Http_Post(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr);
-Http_Response *Http_Put(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer = nullptr);
+struct Http_Writer {
+	Http_Writer_Proc proc;
+	void *           context;
+};
 
-template <typename T> Memory_Arena *Http_GetMemoryArena(T *r) { return r->memory.arena; }
-template <typename T> Http_Header &Http_GetHeaderData(T *r) { return r->headers; }
-template <typename T> void Http_SetHeader(T *r, Http_Header_Id id, const String value) {
-	r->headers.known[id] = value;
-}
-template <typename T> void Http_SetContentLength(T *r, ptrdiff_t length) {
-	String content_len = FmtStr(r->memory.arena, "%lld", length);
-	Http_SetHeader(r, HTTP_HEADER_CONTENT_LENGTH, content_len);
-}
-template <typename T> void Http_SetContent(T *r, const String type, const Buffer content) {
-	r->body.type = T::Body::STATIC;
-	r->body.data.buffer = content;
-	Http_SetHeader(r, HTTP_HEADER_CONTENT_TYPE, type);
-	Http_SetContentLength(r, content.length);
-}
-template <typename T> void Http_SetReader(T *r, const String type, Http_Body_Reader_Proc reader, void *context) {
-	r->body.type = T::Body::STREAM;
-	r->body.data.reader.proc = reader;
-	r->body.data.reader.context = context;
-	Http_SetHeader(r, HTTP_HEADER_CONTENT_TYPE, type);
-}
-template <typename T> bool Http_SetCustomHeader(T *r, String name, String value) {
-	Http_Header_Raw *raw = PushType(r->memory.arena, Http_Header_Raw);
-	if (raw) {
-		raw->name = name;
-		raw->value = value;
-		raw->next = r->headers.raw;
-		r->headers.raw = raw;
-		return true;
-	}
-	return false;
-}
-template <typename T> String Http_GetHeader(T *r, Http_Header_Id id) {
-	return r->headers.known[id];
-}
-template <typename T> String Http_GetCustomHeader(T *r, String name) {
-	for (Http_Header_Raw *raw = r->headers.raw; raw; raw = raw->next) {
-		if (StrMatchCaseInsensitive(raw->name, name))
-			return raw->value;
-	}
-	return "";
-}
+Net_Socket *   Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
+void           Http_Disconnect(Net_Socket *http);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+
+bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+
+void   Http_InitRequest(Http_Request *req);
+void   Http_SetHost(Http_Request *req, Net_Socket *http);
+void   Http_SetHeader(Http_Request *req, Http_Header_Id id, String value);
+void   Http_SetHeader(Http_Request *req, String name, String value);
+void   Http_SetContentLength(Http_Request *req, ptrdiff_t length);
+void   Http_SetContent(Http_Request *req, String type, Buffer content);
+String Http_GetHeader(Http_Request *req, Http_Header_Id id);
+String Http_GetHeader(Http_Request *req, const String name);
+
+void   Http_InitResponse(Http_Response *res);
+void   Http_SetHeader(Http_Response *res, Http_Header_Id id, String value);
+void   Http_SetHeader(Http_Response *res, String name, String value);
+void   Http_SetContentLength(Http_Response *res, ptrdiff_t length);
+void   Http_SetContent(Http_Response *res, String type, Buffer content);
+String Http_GetHeader(Http_Response *res, Http_Header_Id id);
+String Http_GetHeader(Http_Response *res, const String name);

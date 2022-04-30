@@ -116,7 +116,7 @@ INLINE_PROCEDURE int StrCompare(String a, String b) {
 	return memcmp(a.data, b.data, count);
 }
 
-INLINE_PROCEDURE int StrCompareCaseInsensitive(String a, String b) {
+INLINE_PROCEDURE int StrCompareICase(String a, String b) {
 	ptrdiff_t count = (ptrdiff_t)Minimum(a.length, b.length);
 	for (ptrdiff_t index = 0; index < count; ++index) {
 		if (a.data[index] != b.data[index] && a.data[index] + 32 != b.data[index] && a.data[index] != b.data[index] + 32) {
@@ -132,10 +132,10 @@ INLINE_PROCEDURE bool StrMatch(String a, String b) {
 	return StrCompare(a, b) == 0;
 }
 
-INLINE_PROCEDURE bool StrMatchCaseInsensitive(String a, String b) {
+INLINE_PROCEDURE bool StrMatchICase(String a, String b) {
 	if (a.length != b.length)
 		return false;
-	return StrCompareCaseInsensitive(a, b) == 0;
+	return StrCompareICase(a, b) == 0;
 }
 
 INLINE_PROCEDURE bool StrStartsWith(String str, String sub) {
@@ -144,17 +144,17 @@ INLINE_PROCEDURE bool StrStartsWith(String str, String sub) {
 	return StrCompare(String(str.data, sub.length), sub) == 0;
 }
 
-INLINE_PROCEDURE bool StrStartsWithCaseInsensitive(String str, String sub) {
+INLINE_PROCEDURE bool StrStartsWithICase(String str, String sub) {
 	if (str.length < sub.length)
 		return false;
-	return StrCompareCaseInsensitive(String(str.data, sub.length), sub) == 0;
+	return StrCompareICase(String(str.data, sub.length), sub) == 0;
 }
 
-INLINE_PROCEDURE bool StrStartsWithCharacter(String str, uint8_t c) {
+INLINE_PROCEDURE bool StrStartsWithChar(String str, uint8_t c) {
 	return str.length && str.data[0] == c;
 }
 
-INLINE_PROCEDURE bool StrStartsWithCharacterCaseInsensitive(String str, uint8_t c) {
+INLINE_PROCEDURE bool StrStartsWithCharICase(String str, uint8_t c) {
 	return str.length && (str.data[0] == c || str.data[0] + 32 == c || str.data[0] == c + 32);
 }
 
@@ -164,17 +164,17 @@ INLINE_PROCEDURE bool StrEndsWith(String str, String sub) {
 	return StrCompare(String(str.data + str.length - sub.length, sub.length), sub) == 0;
 }
 
-INLINE_PROCEDURE bool StringEndsWithCaseInsensitive(String str, String sub) {
+INLINE_PROCEDURE bool StringEndsWithICase(String str, String sub) {
 	if (str.length < sub.length)
 		return false;
-	return StrCompareCaseInsensitive(String(str.data + str.length - sub.length, sub.length), sub) == 0;
+	return StrCompareICase(String(str.data + str.length - sub.length, sub.length), sub) == 0;
 }
 
-INLINE_PROCEDURE bool StrEndsWithCharacter(String str, uint8_t c) {
+INLINE_PROCEDURE bool StrEndsWithChar(String str, uint8_t c) {
 	return str.length && str.data[str.length - 1] == c;
 }
 
-INLINE_PROCEDURE bool StrEndsWithCharacterCaseInsensitive(String str, uint8_t c) {
+INLINE_PROCEDURE bool StrEndsWithCharICase(String str, uint8_t c) {
 	return str.length &&
 		(str.data[str.length - 1] == c || str.data[str.length - 1] + 32 == c || str.data[str.length - 1] == c + 32);
 }
@@ -201,10 +201,10 @@ INLINE_PROCEDURE ptrdiff_t StrFind(String str, const String key, ptrdiff_t pos =
 	return -1;
 }
 
-INLINE_PROCEDURE ptrdiff_t StrFindCaseInsensitive(String str, const String key, ptrdiff_t pos = 0) {
+INLINE_PROCEDURE ptrdiff_t StrFindICase(String str, const String key, ptrdiff_t pos = 0) {
 	str = SubStr(str, pos);
 	while (str.length >= key.length) {
-		if (StrCompareCaseInsensitive(String(str.data, key.length), key) == 0) {
+		if (StrCompareICase(String(str.data, key.length), key) == 0) {
 			return pos;
 		}
 		pos += 1;
@@ -213,7 +213,7 @@ INLINE_PROCEDURE ptrdiff_t StrFindCaseInsensitive(String str, const String key, 
 	return -1;
 }
 
-INLINE_PROCEDURE ptrdiff_t StrFindCharacter(String str, uint8_t key, ptrdiff_t pos = 0) {
+INLINE_PROCEDURE ptrdiff_t StrFindChar(String str, uint8_t key, ptrdiff_t pos = 0) {
 	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index < str.length; ++index)
 		if (str.data[index] == key)
 			return index;
@@ -230,7 +230,7 @@ INLINE_PROCEDURE ptrdiff_t StrReverseFind(String str, String key, ptrdiff_t pos)
 	return -1;
 }
 
-INLINE_PROCEDURE ptrdiff_t StrReverseFindCharacter(String str, uint8_t key, ptrdiff_t pos) {
+INLINE_PROCEDURE ptrdiff_t StrReverseFindChar(String str, uint8_t key, ptrdiff_t pos) {
 	for (ptrdiff_t index = Clamp(0, str.length - 1, pos); index >= 0; --index)
 		if (str.data[index] == key)
 			return index;
@@ -270,4 +270,54 @@ INLINE_PROCEDURE bool ParseHex(String content, ptrdiff_t *value) {
 	}
 	*value = result;
 	return index == content.length;
+}
+
+//
+//
+//
+
+struct Builder {
+	uint8_t *mem;
+	ptrdiff_t  written;
+	ptrdiff_t  cap;
+	ptrdiff_t  thrown;
+};
+
+static void BuilderBegin(Builder *builder, void *mem, ptrdiff_t cap) {
+	builder->mem = (uint8_t *)mem;
+	builder->written = 0;
+	builder->thrown = 0;
+	builder->cap = cap;
+}
+
+static String BuilderEnd(Builder *builder) {
+	String buffer(builder->mem, builder->written);
+	return buffer;
+}
+
+static void BuilderWriteBytes(Builder *builder, void *ptr, ptrdiff_t size) {
+	uint8_t *data = (uint8_t *)ptr;
+	while (size > 0) {
+		if (builder->written < builder->cap) {
+			ptrdiff_t write_size = Minimum(size, builder->cap - builder->written);
+			memcpy(builder->mem + builder->written, data, write_size);
+			builder->written += write_size;
+			size -= write_size;
+			data += write_size;
+		} else {
+			builder->thrown += size;
+			LogErrorEx("Builder", "Buffer full. Failed to write %d bytes", size);
+			return;
+		}
+	}
+}
+
+static void BuilderWrite(Builder *builder, Buffer buffer) {
+	BuilderWriteBytes(builder, buffer.data, buffer.length);
+}
+
+template <typename ...Args>
+static void BuilderWrite(Builder *builder, Buffer buffer, Args... args) {
+	BuilderWriteBytes(builder, buffer.data, buffer.length);
+	BuilderWrite(builder, args...);
 }

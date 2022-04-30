@@ -292,7 +292,7 @@ void *DefaultMemoryAllocatorProc(Allocation_Kind kind, void *mem, size_t prev_si
 void DefaultLoggerProc(void *context, Log_Level level, const char *source, const char *fmt, va_list args) {}
 
 void DefaultFatalErrorProc(const char *message) {
-	WriteLogErrorEx("Fatal Error", message);
+	LogErrorEx("Fatal Error", message);
 	FatalErrorOS(message);
 }
 
@@ -366,14 +366,14 @@ void operator delete[](void *ptr) noexcept {
 //
 //
 
-void WriteLogExV(Log_Level level, const char *source, const char *fmt, va_list args) {
+void LogExV(Log_Level level, const char *source, const char *fmt, va_list args) {
 	ThreadContext.logger.proc(ThreadContext.logger.context, level, source, fmt, args);
 }
 
-void WriteLogEx(Log_Level level, const char *source, const char *fmt, ...) {	
+void LogEx(Log_Level level, const char *source, const char *fmt, ...) {	
 	va_list args;
 	va_start(args, fmt);
-	WriteLogExV(level, source, fmt, args);
+	LogExV(level, source, fmt, args);
 	va_end(args);
 }
 

@@ -431,32 +431,32 @@ void  operator delete[](void *ptr) noexcept;
 //
 //
 
-void WriteLogExV(Log_Level level, const char *source, const char *fmt, va_list args);
-#define WriteLogInfoExV(source, fmt, args)    WriteLogExV(LOG_LEVEL_INFO, source, fmt, args)
-#define WriteLogWarningExV(source, fmt, args) WriteLogExV(LOG_LEVEL_WARNING, source, fmt, args)
-#define WriteLogErrorExV(source, fmt, args)   WriteLogExV(LOG_LEVEL_ERROR, source, fmt, args)
+void LogExV(Log_Level level, const char *source, const char *fmt, va_list args);
+#define LogInfoExV(source, fmt, args)    LogExV(LOG_LEVEL_INFO, source, fmt, args)
+#define LogWarningExV(source, fmt, args) LogExV(LOG_LEVEL_WARNING, source, fmt, args)
+#define LogErrorExV(source, fmt, args)   LogExV(LOG_LEVEL_ERROR, source, fmt, args)
 
-#define WriteLogV(level, fmt, args) WriteLogExV(level, "", fmt, args)
-#define WriteLogInfoV(fmt, args)    WriteLogExV(LOG_LEVEL_INFO, "", fmt, args)
-#define WriteLogWarningV(fmt, args) WriteLogExV(LOG_LEVEL_WARNING, "", fmt, args)
-#define WriteLogErrorV(fmt, args)   WriteLogExV(LOG_LEVEL_ERROR, "", fmt, args)
+#define LogV(level, fmt, args) LogExV(level, "", fmt, args)
+#define LogInfoV(fmt, args)    LogExV(LOG_LEVEL_INFO, "", fmt, args)
+#define LogWarningV(fmt, args) LogExV(LOG_LEVEL_WARNING, "", fmt, args)
+#define LogErrorV(fmt, args)   LogExV(LOG_LEVEL_ERROR, "", fmt, args)
 
-void WriteLogEx(Log_Level level, const char *source, const char *fmt, ...);
-#define WriteLogInfoEx(source, fmt, ...)    WriteLogEx(LOG_LEVEL_INFO, source, fmt, ##__VA_ARGS__)
-#define WriteLogWarningEx(source, fmt, ...) WriteLogEx(LOG_LEVEL_WARNING, source, fmt, ##__VA_ARGS__)
-#define WriteLogErrorEx(source, fmt, ...)   WriteLogEx(LOG_LEVEL_ERROR, source, fmt, ##__VA_ARGS__)
+void LogEx(Log_Level level, const char *source, const char *fmt, ...);
+#define LogInfoEx(source, fmt, ...)    LogEx(LOG_LEVEL_INFO, source, fmt, ##__VA_ARGS__)
+#define LogWarningEx(source, fmt, ...) LogEx(LOG_LEVEL_WARNING, source, fmt, ##__VA_ARGS__)
+#define LogErrorEx(source, fmt, ...)   LogEx(LOG_LEVEL_ERROR, source, fmt, ##__VA_ARGS__)
 
-#define WriteLog(level, fmt, ...) WriteLogEx(level, "", fmt, ##__VA_ARGS__)
-#define WriteLogInfo(fmt, ...)    WriteLogEx(LOG_LEVEL_INFO, "", fmt, ##__VA_ARGS__)
-#define WriteLogWarning(fmt, ...) WriteLogEx(LOG_LEVEL_WARNING, "", fmt, ##__VA_ARGS__)
-#define WriteLogError(fmt, ...)   WriteLogEx(LOG_LEVEL_ERROR, "", fmt, ##__VA_ARGS__)
+#define Log(level, fmt, ...) LogEx(level, "", fmt, ##__VA_ARGS__)
+#define LogInfo(fmt, ...)    LogEx(LOG_LEVEL_INFO, "", fmt, ##__VA_ARGS__)
+#define LogWarning(fmt, ...) LogEx(LOG_LEVEL_WARNING, "", fmt, ##__VA_ARGS__)
+#define LogError(fmt, ...)   LogEx(LOG_LEVEL_ERROR, "", fmt, ##__VA_ARGS__)
 
 #if defined(BUILD_DEBUG) || defined(BUILD_DEVELOPER)
-#define DebugWriteLog   WriteLogInfo
-#define DebugWriteLogEx WriteLogInfoEx
+#define Trace   LogInfo
+#define TraceEx LogInfoEx
 #else
-#define DebugWriteLog(...) 
-#define DebugWriteLogEx(...) 
+#define Trace(...) 
+#define TraceEx(...) 
 #endif
 
 void FatalError(const char *message);

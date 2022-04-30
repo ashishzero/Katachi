@@ -1,52 +1,6 @@
 #include "Http.h"
 #include "Kr/KrString.h"
 
-struct Builder {
-	uint8_t *mem;
-	ptrdiff_t     written;
-	ptrdiff_t     cap;
-	ptrdiff_t     thrown;
-};
-
-static void BuilderBegin(Builder *builder, void *mem, ptrdiff_t cap) {
-	builder->mem = (uint8_t *)mem;
-	builder->written = 0;
-	builder->thrown = 0;
-	builder->cap = cap;
-}
-
-static String BuilderEnd(Builder *builder) {
-	String buffer(builder->mem, builder->written);
-	return buffer;
-}
-
-static void BuilderWriteBytes(Builder *builder, void *ptr, ptrdiff_t size) {
-	uint8_t *data = (uint8_t *)ptr;
-	while (size > 0) {
-		if (builder->written < builder->cap) {
-			ptrdiff_t write_size = Minimum(size, builder->cap - builder->written);
-			memcpy(builder->mem + builder->written, data, write_size);
-			builder->written += write_size;
-			size -= write_size;
-			data += write_size;
-		} else {
-			builder->thrown += size;
-			WriteLogErrorEx("Builder", "Buffer full. Failed to write %d bytes", size);
-			return;
-		}
-	}
-}
-
-static void BuilderWrite(Builder *builder, Buffer buffer) {
-	BuilderWriteBytes(builder, buffer.data, buffer.length);
-}
-
-template <typename ...Args>
-static void BuilderWrite(Builder *builder, Buffer buffer, Args... args) {
-	BuilderWriteBytes(builder, buffer.data, buffer.length);
-	BuilderWrite(builder, args...);
-}
-
 //
 //
 //
@@ -163,7 +117,7 @@ Net_Socket *Http_Connect(const String hostname, Http_Connection connection, Memo
 		}
 		return nullptr;
 	}
-	WriteLogErrorEx("Http", "Invalid hostname: %*.s", (int)hostname.length, hostname.data);
+	LogErrorEx("Http", "Invalid hostname: %*.s", (int)hostname.length, hostname.data);
 	return nullptr;
 }
 
@@ -175,27 +129,94 @@ void Http_Disconnect(Net_Socket *http) {
 //
 //
 
-Http_Request *Http_CreateRequest(Net_Socket *http, Memory_Arena *arena) {
-	Temporary_Memory memory = BeginTemporaryMemory(arena);
-	Http_Request *req = PushTypeZero(arena, Http_Request);
-	req->memory = memory;
+void Http_InitRequest(Http_Request *req) {
+	memset(req, 0, sizeof(*req));
+}
+
+void Http_SetHost(Http_Request *req, Net_Socket *http) {
 	req->headers.known[HTTP_HEADER_HOST] = Net_GetHostname(http);
-	return req;
 }
 
-void Http_DestroyRequest(Http_Request *req) {
-	EndTemporaryMemory(&req->memory);
+void Http_SetHeader(Http_Request *req, Http_Header_Id id, String value) {
+	req->headers.known[id] = value;
 }
 
-Http_Response *Http_CreateResponse(Memory_Arena *arena) {
-	Temporary_Memory memory = BeginTemporaryMemory(arena);
-	Http_Response *res      = PushTypeZero(arena, Http_Response);
-	res->memory = memory;
-	return res;
+void Http_SetHeader(Http_Request *req, String name, String value) {
+	ptrdiff_t count = req->headers.raw.count;
+	Assert(count < HTTP_MAX_RAW_HEADERS);
+	req->headers.raw.data[count].name  = name;
+	req->headers.raw.data[count].value = value;
+	req->headers.raw.count += 1;
 }
 
-void Http_DestroyResponse(Http_Response *req) {
-	EndTemporaryMemory(&req->memory);
+void Http_SetContentLength(Http_Request *req, ptrdiff_t length) {
+	int written = snprintf((char *)req->buffer + req->length, HTTP_MAX_HEADER_SIZE - req->length, "%zd", length);
+	String content_len(req->buffer + req->length, written);
+	req->length += written;
+	req->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+}
+
+void Http_SetContent(Http_Request *req, String type, Buffer content) {
+	Http_SetContentLength(req, content.length);
+	req->headers.known[HTTP_HEADER_CONTENT_TYPE] = type;
+	req->body = content;
+}
+
+String Http_GetHeader(Http_Request *req, Http_Header_Id id) {
+	return req->headers.known[id];
+}
+
+String Http_GetHeader(Http_Request *req, const String name) {
+	ptrdiff_t count = req->headers.raw.count;
+	for (ptrdiff_t index = 0; index < count; ++index) {
+		if (StrMatchICase(name, req->headers.raw.data[index].name)) {
+			return req->headers.raw.data[index].value;
+		}
+	}
+	return String();
+}
+
+void Http_InitResponse(Http_Response *res) {
+	memset(res, 0, sizeof(*res));
+}
+
+void Http_SetHeader(Http_Response *res, Http_Header_Id id, String value) {
+	res->headers.known[id] = value;
+}
+
+void Http_SetHeader(Http_Response *res, String name, String value) {
+	ptrdiff_t count = res->headers.raw.count;
+	Assert(count < HTTP_MAX_RAW_HEADERS);
+	res->headers.raw.data[count].name  = name;
+	res->headers.raw.data[count].value = value;
+	res->headers.raw.count += 1;
+}
+
+void Http_SetContentLength(Http_Response *res, ptrdiff_t length) {
+	int written = snprintf((char *)res->buffer + res->length, HTTP_MAX_HEADER_SIZE - res->length, "%zd", length);
+	String content_len(res->buffer + res->length, written);
+	res->length += written;
+	res->headers.known[HTTP_HEADER_CONTENT_LENGTH] = content_len;
+}
+
+void Http_SetContent(Http_Response *res, String type, Buffer content) {
+	Http_SetContentLength(res, content.length);
+	res->headers.known[HTTP_HEADER_CONTENT_TYPE] = type;
+	res->body = content;
+}
+
+String Http_GetHeader(Http_Response *res, Http_Header_Id id) {
+	return res->headers.known[id];
+}
+
+String Http_GetHeader(Http_Response *res, const String name) {
+	ptrdiff_t count = res->headers.raw.count;
+	for (ptrdiff_t index = 0; index < count; ++index) {
+		if (StrMatchICase(name, res->headers.raw.data[index].name)) {
+			return res->headers.raw.data[index].value;
+		}
+	}
+	return String();
 }
 
 //
@@ -203,35 +224,21 @@ void Http_DestroyResponse(Http_Response *req) {
 //
 
 static inline int Http_Write(Net_Socket *http, uint8_t *bytes, int length) {
-	Connected:
 	int ret = Net_SendBlocked(http, bytes, length);
 	if (ret >= 0) return ret;
 	if (ret == NET_TIMED_OUT) {
-		WriteLogErrorEx("Http", "Sending timed out");
+		LogErrorEx("Http", "Sending timed out");
 		return -1;
-	}
-	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
-		if (Net_TryReconnect(http)) {
-			Net_SetSocketBlockingMode(http, false);
-			goto Connected;
-		}
 	}
 	return -1;
 }
 
 static inline int Http_Read(Net_Socket *http, uint8_t *buffer, int length) {
-	Connected:
 	int ret = Net_ReceiveBlocked(http, buffer, length);
 	if (ret >= 0) return ret;
 	if (ret == NET_TIMED_OUT) {
-		WriteLogErrorEx("Http", "Receiving timed out");
+		LogErrorEx("Http", "Receiving timed out");
 		return -1;
-	}
-	for (int reconnect = 0; reconnect < HTTP_MAX_RECONNECT; ++reconnect) {
-		if (Net_TryReconnect(http)) {
-			Net_SetSocketBlockingMode(http, false);
-			goto Connected;
-		}
 	}
 	return -1;
 }
@@ -247,98 +254,69 @@ static inline bool Http_WriteAll(Net_Socket *http, uint8_t *bytes, ptrdiff_t byt
 	return true;
 }
 
-static inline Http_Response *Http_ResponseFailed(Http_Response *res, const char *fmt, ...) {
-	if (fmt) {
-		va_list args;
-		va_start(args, fmt);
-		WriteLogErrorExV("Http", fmt, args);
-		va_end(args);
+static inline void Http_FlushRead(Net_Socket *http, Http_Response *res) {
+	while (true) {
+		int bytes_read = Net_ReceiveBlocked(http, res->buffer, HTTP_MAX_HEADER_SIZE);
+		if (bytes_read <= 0) break;
 	}
-	Http_DestroyResponse(res);
-	return nullptr;
 }
 
-static inline bool Http_ProcessReceivedBuffer(const Http_Header &header, uint8_t *buffer, int length, Memory_Arena *arena, Http_Body_Writer *writer) {
-	if (!writer) {
-		uint8_t *dst = (uint8_t *)PushSize(arena, length);
-		if (dst) {
-			memcpy(dst, buffer, length);
-			return true;
-		}
-		return false;
-	}
-	writer->proc(header, buffer, length, writer->context);
-	return true;
-}
-
-Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, const String endpoint, Http_Request *req, Http_Body_Writer *writer) {
-	Memory_Arena *arena = Http_GetMemoryArena(req);
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
 
 	{
 		// Send Request
-		Defer{ Http_DestroyRequest(req); };
-
-		void *mem = PushSize(arena, HTTP_MAX_HEADER_SIZE);
-		if (!mem) {
-			WriteLogErrorEx("Http", "Send request failed: Out of Memory");
-			return nullptr;
-		}
 
 		Builder builder;
-		BuilderBegin(&builder, mem, HTTP_MAX_HEADER_SIZE);
+		BuilderBegin(&builder, buffer, HTTP_STREAM_CHUNK_SIZE);
 		BuilderWrite(&builder, method, String(" "), endpoint, String(" HTTP/1.1\r\n"));
-
 		for (int id = 0; id < _HTTP_HEADER_COUNT; ++id) {
-			String value = req->headers.known[id];
+			String value = req.headers.known[id];
 			if (value.length) {
 				BuilderWrite(&builder, HttpHeaderMap[id], String(":"), value, String("\r\n"));
 			}
 		}
-
-		for (auto raw = req->headers.raw; raw; raw = raw->next)
-			BuilderWrite(&builder, raw->name, String(":"), raw->value, String("\r\n"));
-
+		for (auto &raw : req.headers.raw.data)
+			BuilderWrite(&builder, raw.name, String(":"), raw.value, String("\r\n"));
 		BuilderWrite(&builder, "\r\n");
 
-		if (builder.thrown)
-			return nullptr;
+		if (builder.thrown) {
+			LogErrorEx("Http", "Writing header failed: out of memory");
+			return false;
+		}
 
-		String buffer = BuilderEnd(&builder);
-		if (!Http_WriteAll(http, buffer.data, buffer.length))
-			return nullptr;
+		String header = BuilderEnd(&builder);
+		if (!Http_WriteAll(http, header.data, header.length))
+			return false;
 
-		if (req->body.type == Http_Request::Body::STATIC) {
-			if (!Http_WriteAll(http, req->body.data.buffer.data, req->body.data.buffer.length))
-				return nullptr;
-		} else {
-			Http_Body_Reader reader = req->body.data.reader;
-			while (true) {
-				Buffer buffer = reader.proc(reader.context);
-				if (!buffer.length) break;
-				if (!Http_WriteAll(http, buffer.data, buffer.length))
-					return nullptr;
-			}
+		while (true) {
+			int read = reader.proc(buffer, HTTP_STREAM_CHUNK_SIZE, reader.context);
+			if (!read) break;
+			if (!Http_WriteAll(http, buffer, read))
+				return false;
 		}
 	}
 
-	uint8_t stream_buffer[HTTP_READ_CHUNK_SIZE];
+	Http_InitResponse(res);
 
-	Http_Response *res = Http_CreateResponse(arena);
-
-	String raw_header;
-	String raw_body_part;
+	ptrdiff_t body_read = 0;
 
 	{
 		// Read Header
-		uint8_t *read_ptr = stream_buffer;
-		int buffer_size = HTTP_MAX_HEADER_SIZE;
+		uint8_t *read_ptr  = res->buffer;
+		int buffer_size    = HTTP_MAX_HEADER_SIZE;
 		uint8_t *parse_ptr = read_ptr;
 
 		bool read_more = true;
 
 		while (read_more) {
 			int bytes_read = Http_Read(http, read_ptr, buffer_size);
-			if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
+			if (bytes_read < 0) return false;
+
+			if (bytes_read == 0) {
+				LogErrorEx("Http", "Connection closed unexpectedly while sending packet");
+				return false;
+			}
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -349,20 +327,18 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				if (pos < 0) {
 					if (buffer_size)
 						break;
-					return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
+					LogErrorEx("Http", "Reader header failed: out of memory");
+					Http_FlushRead(http, res);
+					return false;
 				}
 
 				parse_ptr += pos + 2;
 
 				if (pos == 0) {
-					ptrdiff_t header_size = parse_ptr - stream_buffer;
-					uint8_t *header_mem = (uint8_t *)PushSize(arena, header_size);
-					if (!header_mem) return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
-
-					memcpy(header_mem, stream_buffer, header_size);
-
-					raw_header = String(header_mem, header_size);
-					raw_body_part = String(parse_ptr, read_ptr - parse_ptr);
+					res->length = parse_ptr - res->buffer;
+					body_read = read_ptr - parse_ptr;
+					Assert(body_read <= HTTP_STREAM_CHUNK_SIZE);
+					memcpy(buffer, parse_ptr, body_read);
 					read_more = false;
 					break;
 				}
@@ -372,8 +348,8 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 	{
 		// Parse headers
-		uint8_t *trav = raw_header.data;
-		uint8_t *last = trav + raw_header.length;
+		uint8_t *trav = res->buffer;
+		uint8_t *last = trav + res->length;
 
 		enum { PARSISNG_STATUS, PARSING_FIELDS };
 
@@ -385,15 +361,22 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 			if (pos == 0) // Finished
 				break;
 
-			if (pos < 0)
-				return Http_ResponseFailed(res, "Invalid header received");
+			if (pos < 0) {
+				LogErrorEx("Http", "Corrupt header received: missing headers");
+				Http_FlushRead(http, res);
+				return false;
+			}
 
 			String line(trav, pos);
 			trav += pos + 2;
 
 			if (state == PARSING_FIELDS) {
-				ptrdiff_t colon = StrFindCharacter(line, ':');
-				if (colon <= 0) return Http_ResponseFailed(res, "Invalid header received");
+				ptrdiff_t colon = StrFindChar(line, ':');
+				if (colon <= 0) {
+					LogErrorEx("Http", "Corrupt header received: value for header not present");
+					Http_FlushRead(http, res);
+					return false;
+				}
 
 				String name = SubStr(line, 0, colon);
 				name = StrTrim(name);
@@ -402,7 +385,7 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 
 				bool known_header = false;
 				for (int index = 0; index < _HTTP_HEADER_COUNT; ++index) {
-					if (StrMatchCaseInsensitive(name, HttpHeaderMap[index])) {
+					if (StrMatchICase(name, HttpHeaderMap[index])) {
 						res->headers.known[index] = value;
 						known_header = true;
 						break;
@@ -410,8 +393,11 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				}
 
 				if (!known_header) {
-					if (!Http_SetCustomHeader(res, name, value))
-						return Http_ResponseFailed(res, "Reading header failed: Out of Memory");
+					if (res->headers.raw.count < HTTP_MAX_HEADER_SIZE) {
+						Http_SetHeader(res, name, value);
+					} else {
+						LogWarningEx("Http", "Custom header  \"" StrFmt "\" could not be added: out of memory", StrArg(name));
+					}
 				}
 			} else {
 				const String prefixes[] = { "HTTP/1.1 ", "HTTP/1.0 " };
@@ -421,26 +407,38 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				bool prefix_present = false;
 				for (int index = 0; index < ArrayCount(prefixes); ++index) {
 					String prefix = prefixes[index];
-					if (StrStartsWith(line, prefix)) {
+					if (StrStartsWithICase(line, prefix)) {
 						line = StrRemovePrefix(line, prefix.length);
 						res->status.version = versions[index];
 						prefix_present = true;
 						break;
 					}
 				}
-				if (!prefix_present)
-					return Http_ResponseFailed(res, "Invalid header received");
+				if (!prefix_present) {
+					LogErrorEx("Http", "Corrupt header received: missing HTTP prefix");
+					Http_FlushRead(http, res);
+					return false;
+				}
 
 				line = StrTrim(line);
-				ptrdiff_t name_pos = StrFindCharacter(line, ' ');
-				if (name_pos < 0)
-					return Http_ResponseFailed(res, "Invalid header received");
+				ptrdiff_t name_pos = StrFindChar(line, ' ');
+				if (name_pos < 0) {
+					LogErrorEx("Http", "Corrupt header received: missing status code");
+					Http_FlushRead(http, res);
+					return false;
+				}
 
 				ptrdiff_t status_code;
-				if (!ParseInt(SubStr(line, 0, name_pos), &status_code))
-					return Http_ResponseFailed(res, "Invalid header received");
-				else if (status_code < 0)
-					return Http_ResponseFailed(res, "Invalid status code received");
+				if (!ParseInt(SubStr(line, 0, name_pos), &status_code)) {
+					LogErrorEx("Http", "Corrupt header received: invalid status code");
+					Http_FlushRead(http, res);
+					return false;
+				} else if (status_code < 0) {
+					LogErrorEx("Http", "Corrupt header received: status code is negative");
+					Http_FlushRead(http, res);
+					return false;
+				}
+
 				res->status.code = (uint32_t)status_code;
 				res->status.name = SubStr(line, name_pos + 1);
 
@@ -453,62 +451,66 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 	const String content_length_value = res->headers.known[HTTP_HEADER_CONTENT_LENGTH];
 	if (content_length_value.length) {
 		ptrdiff_t content_length = 0;
-		if (!ParseInt(content_length_value, &content_length))
-			return Http_ResponseFailed(res, "Invalid Content-Length in the header");
-
-		if (content_length < raw_body_part.length)
-			return Http_ResponseFailed(res, "Invalid Content-Length in the header");
-
-		Assert(raw_body_part.length < HTTP_READ_CHUNK_SIZE);
-
-		if (!writer) {
-			res->body.data = (uint8_t *)MemoryArenaGetCurrent(arena);
-			res->body.length = content_length;
+		if (!ParseInt(content_length_value, &content_length)) {
+			LogErrorEx("Http", "Corrupt header received: invalid content length");
+			Http_FlushRead(http, res);
+			return false;
 		}
 
-		if (!Http_ProcessReceivedBuffer(res->headers, raw_body_part.data, (int)raw_body_part.length, arena, writer))
-			return Http_ResponseFailed(res, nullptr);
+		if (content_length < body_read) {
+			LogErrorEx("Http", "Corrupt header received: invalid content length");
+			Http_FlushRead(http, res);
+			return false;
+		}
 
-		ptrdiff_t remaining = content_length - raw_body_part.length;
+		if (body_read) {
+			writer.proc(res->headers, buffer, body_read, writer.context);
+		}
+
+		ptrdiff_t remaining = content_length - body_read;
 		while (remaining) {
-			int bytes_read = Http_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
-			if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
-			if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
-				return Http_ResponseFailed(res, nullptr);
+			int bytes_read = Http_Read(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
+			if (bytes_read < 0) return false;
+			if (bytes_read == 0) {
+				LogErrorEx("Http", "Connection closed unexpectedly while receiving packet");
+				return false;
+			}
+			writer.proc(res->headers, buffer, bytes_read, writer.context);
 			remaining -= bytes_read;
 		}
 	} else {
 		String transfer_encoding = res->headers.known[HTTP_HEADER_TRANSFER_ENCODING];
 
 		// Transfer-Encoding: chunked
-		if (transfer_encoding.length && StrFindCaseInsensitive(transfer_encoding, "chunked") >= 0) {
-			Assert(raw_body_part.length < HTTP_READ_CHUNK_SIZE);
-
-			memmove(stream_buffer, raw_body_part.data, raw_body_part.length);
-
-			if (!writer) {
-				res->body.data = (uint8_t *)MemoryArenaGetCurrent(arena);
-			}
-
-			ptrdiff_t body_length = 0;
-			ptrdiff_t chunk_read = raw_body_part.length;
+		if (transfer_encoding.length && StrFindICase(transfer_encoding, "chunked") >= 0) {
+			ptrdiff_t chunk_read  = body_read;
 
 			while (true) {
 				while (chunk_read < 2) {
-					int bytes_read = Http_Read(http, stream_buffer + chunk_read, (HTTP_READ_CHUNK_SIZE - (int)chunk_read));
-					if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
+					int bytes_read = Http_Read(http, buffer + chunk_read, (HTTP_STREAM_CHUNK_SIZE - (int)chunk_read));
+					if (bytes_read < 0) return false;
+					if (bytes_read == 0) {
+						LogErrorEx("Http", "Connection closed unexpectedly while receiving packet");
+						return false;
+					}
 					chunk_read += bytes_read;
 				}
 
-				String chunk_header(stream_buffer, chunk_read);
+				String chunk_header(buffer, chunk_read);
 				ptrdiff_t data_pos = StrFind(chunk_header, "\r\n");
-				if (data_pos < 0)
-					return Http_ResponseFailed(res, "Reading header failed: chuck size not found");
+				if (data_pos < 0) {
+					LogErrorEx("Http", "Transfer-Encoding: chunk size not present");
+					Http_FlushRead(http, res);
+					return false;
+				}
 
 				String length_str = SubStr(chunk_header, 0, data_pos);
 				ptrdiff_t chunk_length;
-				if (!ParseHex(length_str, &chunk_length) || chunk_length < 0)
-					return Http_ResponseFailed(res, "Reading header failed: Invalid chuck size");
+				if (!ParseHex(length_str, &chunk_length) || chunk_length < 0) {
+					LogErrorEx("Http", "Transfer-Encoding: invalid chunk size");
+					Http_FlushRead(http, res);
+					return false;
+				}
 
 				if (chunk_length == 0)
 					break;
@@ -517,44 +519,242 @@ Http_Response *Http_SendCustomMethod(Net_Socket *http, const String method, cons
 				ptrdiff_t streamed_chunk_len = chunk_read - data_pos;
 
 				if (chunk_length <= streamed_chunk_len) {
-					if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer + data_pos, (int)chunk_length, arena, writer))
-						return Http_ResponseFailed(res, nullptr);
+					writer.proc(res->headers, buffer + data_pos, chunk_length, writer.context);
 					chunk_read -= (data_pos + chunk_length);
-					memmove(stream_buffer, stream_buffer + data_pos + chunk_length, chunk_read);
+					memmove(buffer, buffer + data_pos + chunk_length, chunk_read);
 				} else {
-					if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer + data_pos, (int)streamed_chunk_len, arena, writer))
-						return Http_ResponseFailed(res, nullptr);
+					writer.proc(res->headers, buffer + data_pos, streamed_chunk_len, writer.context);
 
 					ptrdiff_t remaining = chunk_length - streamed_chunk_len;
 					while (remaining) {
-						int bytes_read = Http_Read(http, stream_buffer, (int)Minimum(remaining, HTTP_READ_CHUNK_SIZE));
-						if (bytes_read < 0) return Http_ResponseFailed(res, nullptr);
-						if (!Http_ProcessReceivedBuffer(res->headers, stream_buffer, bytes_read, arena, writer))
-							return Http_ResponseFailed(res, nullptr);
+						int bytes_read = Http_Read(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
+						if (bytes_read < 0) return false;
+						if (bytes_read == 0) {
+							LogErrorEx("Http", "Connection closed unexpectedly while receiving packet");
+							return false;
+						}
+						writer.proc(res->headers, buffer, bytes_read, writer.context);
 						remaining -= bytes_read;
 					}
 
 					chunk_read = 0;
 				}
-
-				body_length += chunk_length;
 			}
-			if (!writer)
-				res->body.length = body_length;
 		}
 	}
 
-	return res;
+	return true;
 }
 
-Http_Response *Http_Get(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer) {
-	return Http_SendCustomMethod(http, "GET", endpoint, req, writer);
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, writer);
 }
 
-Http_Response *Http_Post(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer) {
-	return Http_SendCustomMethod(http, "POST", endpoint, req, writer);
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, writer);
 }
 
-Http_Response *Http_Put(Net_Socket *http, const String endpoint, Http_Request *req, Http_Body_Writer *writer) {
-	return Http_SendCustomMethod(http, "PUT", endpoint, req, writer);
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, writer);
+}
+
+struct Http_Buffer_Reader {
+	ptrdiff_t written;
+	ptrdiff_t length;
+	uint8_t * buffer;
+};
+
+static int Http_BufferReaderProc(uint8_t *buffer, int length, void *context) {
+	Http_Buffer_Reader *reader = (Http_Buffer_Reader *)context;
+	int copy_len =(int)Minimum(length, reader->length - reader->written);
+	memcpy(buffer, reader->buffer + reader->written, copy_len);
+	reader->written += copy_len;
+	return copy_len;
+}
+
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	Http_Buffer_Reader buffer_reader;
+	buffer_reader.written = 0;
+	buffer_reader.length  = req.body.length;
+	buffer_reader.buffer  = req.body.data;
+
+	Http_Reader reader;
+	reader.proc    = Http_BufferReaderProc;
+	reader.context = &buffer_reader;
+	
+	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	return result;
+}
+
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "POST", endpoint, req, res, writer);
+}
+
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "GET", endpoint, req, res, writer);
+}
+
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, res, writer);
+}
+
+struct Http_Arena_Writer {
+	Memory_Arena *arena;
+	uint8_t *     last_pos;
+	ptrdiff_t     length;
+};
+
+static void Http_ArenaWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context) {
+	Http_Arena_Writer *writer = (Http_Arena_Writer *)context;
+	if (writer->length >= 0) {
+		uint8_t *dst = (uint8_t *)PushSize(writer->arena, length);
+		if (dst) {
+			Assert(dst == writer->last_pos);
+			memcpy(dst, buffer, length);
+			writer->last_pos = dst + length;
+			writer->length += length;
+			return;
+		}
+	}
+	LogErrorEx("Http", "Receiving body failed: arena writer out of memory");
+	writer->length = -1;
+}
+
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	uint8_t *body = (uint8_t *)MemoryArenaGetCurrent(arena);
+	auto temp     = BeginTemporaryMemory(arena);
+
+	Http_Arena_Writer arena_writer;
+	arena_writer.arena    = arena;
+	arena_writer.last_pos = body;
+	arena_writer.length   = 0;
+
+	Http_Writer writer;
+	writer.proc    = Http_ArenaWriterProc;
+	writer.context = &arena_writer;
+
+	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	if (result && arena_writer.length >= 0) {
+		res->body = Buffer(body, arena_writer.length);
+		return true;
+	}
+
+	EndTemporaryMemory(&temp);
+
+	return false;
+}
+
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, arena);
+}
+
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, arena);
+}
+
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, arena);
+}
+
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	Http_Buffer_Reader res_body_reader;
+	res_body_reader.written = 0;
+	res_body_reader.length  = req.body.length;
+	res_body_reader.buffer  = req.body.data;
+
+	Http_Reader reader;
+	reader.proc    = Http_BufferReaderProc;
+	reader.context = &res_body_reader;
+
+	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, arena);
+	return result;
+}
+
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "POST", endpoint, req, res, arena);
+}
+
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "GET", endpoint, req, res, arena);
+}
+
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, res, arena);
+}
+
+struct Http_Buffer_Writer {
+	ptrdiff_t written;
+	ptrdiff_t length;
+	uint8_t * buffer;
+};
+
+static void Http_BufferWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context) {
+	Http_Buffer_Writer *writer = (Http_Buffer_Writer *)context;
+	if (writer->written + length <= writer->length) {
+		memcpy(writer->buffer + writer->written, buffer, length);
+		writer->written += length;
+		return;
+	}
+	LogErrorEx("Http", "Receiving body failed: arena writer out of memory");
+	writer->written = -1;
+}
+
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	Http_Buffer_Writer buffer_writer;
+	buffer_writer.written = 0;
+	buffer_writer.length = length;
+	buffer_writer.buffer = memory;
+
+	Http_Writer writer;
+	writer.proc = Http_BufferWriterProc;
+	writer.context = &buffer_writer;
+
+	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	if (result && buffer_writer.length >= 0) {
+		res->body = Buffer(memory, buffer_writer.length);
+		return true;
+	}
+	return false;
+}
+
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, memory, length);
+}
+
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, memory, length);
+}
+
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, memory, length);
+}
+
+bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	Http_Buffer_Writer buffer_writer;
+	buffer_writer.written = 0;
+	buffer_writer.length  = length;
+	buffer_writer.buffer  = memory;
+
+	Http_Writer writer;
+	writer.proc    = Http_BufferWriterProc;
+	writer.context = &buffer_writer;
+
+	bool result = Http_CustomMethod(http, method, endpoint, req, res, writer);
+	if (result && buffer_writer.length >= 0) {
+		res->body = Buffer(memory, buffer_writer.length);
+		return true;
+	}
+	return false;
+}
+
+bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "POST", endpoint, req, res, memory, length);
+}
+
+bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "GET", endpoint, req, res, memory, length);
+}
+
+bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "PUT", endpoint, req, res, memory, length);
 }
