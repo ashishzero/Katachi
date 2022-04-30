@@ -152,9 +152,35 @@ void Http_SetHeader(Http_Request *req, Http_Header_Id id, String value) {
 void Http_SetHeader(Http_Request *req, String name, String value) {
 	ptrdiff_t count = req->headers.raw.count;
 	Assert(count < HTTP_MAX_RAW_HEADERS);
-	req->headers.raw.data[count].name  = name;
+	req->headers.raw.data[count].name = name;
 	req->headers.raw.data[count].value = value;
 	req->headers.raw.count += 1;
+}
+
+void Http_AppendHeader(Http_Request *req, Http_Header_Id id, String value) {
+	if (!req->headers.known[id].length) {
+		Http_SetHeader(req, id, value);
+	} else {
+		String before = req->headers.known[id];
+		int written = snprintf((char *)req->buffer + req->length, HTTP_MAX_HEADER_SIZE - req->length, "%.*s,%.*s",
+			StrArg(before), StrArg(value));
+		req->headers.known[id] = String(req->buffer + req->length, written);
+		req->length += written;
+	}
+}
+
+void Http_AppendHeader(Http_Request *req, String name, String value) {
+	for (ptrdiff_t index = 0; index < req->headers.raw.count; ++index) {
+		if (StrMatchICase(req->headers.raw.data[index].name, name)) {
+			String before = req->headers.raw.data[index].value;
+			int written = snprintf((char *)req->buffer + req->length, HTTP_MAX_HEADER_SIZE - req->length, "%.*s,%.*s",
+				StrArg(before), StrArg(value));
+			req->headers.raw.data[index].value = String(req->buffer + req->length, written);
+			req->length += written;
+			return;
+		}
+	}
+	Http_SetHeader(req, name, value);
 }
 
 void Http_SetContentLength(Http_Request *req, ptrdiff_t length) {
@@ -203,9 +229,35 @@ void Http_SetHeader(Http_Response *res, Http_Header_Id id, String value) {
 void Http_SetHeader(Http_Response *res, String name, String value) {
 	ptrdiff_t count = res->headers.raw.count;
 	Assert(count < HTTP_MAX_RAW_HEADERS);
-	res->headers.raw.data[count].name  = name;
+	res->headers.raw.data[count].name = name;
 	res->headers.raw.data[count].value = value;
 	res->headers.raw.count += 1;
+}
+
+void Http_AppendHeader(Http_Response *res, Http_Header_Id id, String value) {
+	if (!res->headers.known[id].length) {
+		Http_SetHeader(res, id, value);
+	} else {
+		String before = res->headers.known[id];
+		int written = snprintf((char *)res->buffer + res->length, HTTP_MAX_HEADER_SIZE - res->length, "%.*s,%.*s",
+			StrArg(before), StrArg(value));
+		res->headers.known[id] = String(res->buffer + res->length, written);
+		res->length += written;
+	}
+}
+
+void Http_AppendHeader(Http_Response *res, String name, String value) {
+	for (ptrdiff_t index = 0; index < res->headers.raw.count; ++index) {
+		if (StrMatchICase(res->headers.raw.data[index].name, name)) {
+			String before = res->headers.raw.data[index].value;
+			int written = snprintf((char *)res->buffer + res->length, HTTP_MAX_HEADER_SIZE - res->length, "%.*s,%.*s",
+				StrArg(before), StrArg(value));
+			res->headers.raw.data[index].value = String(res->buffer + res->length, written);
+			res->length += written;
+			return;
+		}
+	}
+	Http_SetHeader(res, name, value);
 }
 
 void Http_SetContentLength(Http_Response *res, ptrdiff_t length) {
@@ -409,7 +461,7 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 				bool known_header = false;
 				for (int index = 0; index < _HTTP_HEADER_COUNT; ++index) {
 					if (StrMatchICase(name, HttpHeaderMap[index])) {
-						res->headers.known[index] = value;
+						Http_AppendHeader(res, (Http_Header_Id)index, value);
 						known_header = true;
 						break;
 					}
@@ -417,7 +469,7 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 
 				if (!known_header) {
 					if (res->headers.raw.count < HTTP_MAX_HEADER_SIZE) {
-						Http_SetHeader(res, name, value);
+						Http_AppendHeader(res, name, value);
 					} else {
 						LogWarningEx("Http", "Custom header  \"" StrFmt "\" could not be added: out of memory", StrArg(name));
 					}
