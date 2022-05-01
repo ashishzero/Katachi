@@ -36,6 +36,9 @@ project "Katachi"
    filter "system:linux"
    		links { "ssl", "crypto" }
 
+   filter "system:macosx"
+   		links { "ssl", "crypto" }
+
    filter "system:windows"
       systemversion "latest"
       files { "Kr/**.natvis" }
