@@ -5,6 +5,8 @@
 #if PLATFORM_WINDOWS
 #include <ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
+#else
+#include <stdio.h>
 #endif
 
 #ifdef NETWORK_OPENSSL_ENABLE
@@ -166,16 +168,27 @@ static void PL_Net_ReportError(int error) {
 
 static void PL_Net_Shutdown() {}
 
+static void SignalHandler(int signo) {
+    switch (signo) {
+        case SIGPIPE:
+            break;
+        default:
+            // unreachable
+            break;
+    }
+}
+
 static bool PL_Net_Initialize() {
-	signal(SIGPIPE, SIG_IGN);
+	signal(SIGPIPE, SignalHandler);
 	return true;
 }
 
-static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type) {
+static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String service, Net_Socket_Type type, char(&hostname)[NET_MAX_CANON_NAME], sockaddr_storage *addr, ptrdiff_t *addrelen, int *pfamily, int *ptype, int *pprotocol) {
 	static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
 
 	addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
+	hints.ai_flags    = AI_CANONNAME;
 	hints.ai_family   = AF_UNSPEC;
 	hints.ai_socktype = SocketTypeMap[type];
 
@@ -222,6 +235,14 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 			descriptor = INVALID_SOCKET;
 			continue;
 		}
+
+		snprintf(hostname, sizeof(hostname), "%s", address->ai_canonname);
+		*addrelen = ptr->ai_addrlen;
+		memcpy(addr, ptr->ai_addr, ptr->ai_addrlen);
+
+		*pfamily   = ptr->ai_family;
+		*ptype     = ptr->ai_socktype;
+		*pprotocol = ptr->ai_protocol;
 
 		break;
 	}
@@ -400,6 +421,7 @@ static bool PL_Net_OpenSSLReconnect(Net_Socket *net) {
 #define PL_Net_OpenSSLOpenChannel(...) (false)
 #define PL_Net_OpenSSLCloseChannel(...)
 #define PL_Net_OpenSSLResetDescriptor(...) (true)
+#define PL_Net_OpenSSLReconnect(...) (true)
 #endif
 
 //
@@ -469,7 +491,12 @@ void Net_CloseConnection(Net_Socket *net) {
 }
 
 void Net_Shutdown(Net_Socket *net) {
-	shutdown(net->descriptor, SD_BOTH);
+#if PLATFORM_WINDOWS
+	int how = SD_BOTH;
+#else
+	int how = SHUT_RDWR;
+#endif
+	shutdown(net->descriptor, how);
 }
 
 Net_Error Net_GetLastError(Net_Socket *net) {

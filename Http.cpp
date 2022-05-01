@@ -803,6 +803,7 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	buffer_writer.written = 0;
 	buffer_writer.length  = length;
 	buffer_writer.buffer  = memory;
+	buffer_writer.socket  = http;
 
 	Http_Writer writer;
 	writer.proc    = Http_BufferWriterProc;
