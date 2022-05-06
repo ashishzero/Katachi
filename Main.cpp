@@ -787,7 +787,7 @@ Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *
 		return nullptr;
 	}
 
-	Net_Socket *websocket = Http_Connect(websocket_uri.host, websocket_uri.port, websocket_uri.secure ? HTTPS_CONNECTION : HTTP_CONNECTION, allocator);
+	Http *websocket = Http_Connect(websocket_uri.host, websocket_uri.port, websocket_uri.secure ? HTTPS_CONNECTION : HTTP_CONNECTION, allocator);
 	if (!websocket) return nullptr;
 
 	Http_Request req;
@@ -887,22 +887,22 @@ Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *
 			}
 		}
 
-		return websocket;
+		return (Net_Socket *)websocket;
 	}
 
 	Http_Disconnect(websocket);
 	return nullptr;
 }
 
-static int NextPowerOf2(int n) {
-	int count = 0;
-	if (n && !(n & (n - 1)))
-		return n;
-	while (n != 0) {
-		n >>= 1;
-		count += 1;
-	}
-	return 1 << count;
+static uint32_t NextPowerOf2(uint32_t v) {
+	v--;
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v |= v >> 16;
+	v++;
+	return v;
 }
 
 int main(int argc, char **argv) {
@@ -920,7 +920,7 @@ int main(int argc, char **argv) {
 	arenas[0] = MemoryArenaAllocate(MegaBytes(64));
 	arenas[1] = MemoryArenaAllocate(MegaBytes(64));
 
-	Net_Socket *http = Http_Connect("https://discord.com");
+	Http *http = Http_Connect("https://discord.com");
 	if (!http) {
 		return 1;
 	}
@@ -1155,7 +1155,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	Http_Disconnect(websocket);
+	Http_Disconnect((Http *)websocket);
 
 	Net_Shutdown();
 

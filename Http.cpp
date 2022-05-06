@@ -96,7 +96,12 @@ static bool Http_UrlExtract(String hostname, Url *url) {
 //
 //
 
-Net_Socket *Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator) {
+struct Http { int __unused; };
+
+Net_Socket *Http_GetSocket(Http *http)    { return (Net_Socket *)http; }
+Http *Http_FromSocket(Net_Socket *socket) { return (Http *)socket; }
+
+Http *Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator) {
 	Net_Socket *http = Net_OpenConnection(host, port, NET_SOCKET_TCP, allocator);
 	if (http) {
 		if (connection == HTTP_DEFAULT && (port == "80" || StrMatchICase(port, "http"))) {
@@ -108,17 +113,17 @@ Net_Socket *Http_Connect(const String host, const String port, Http_Connection c
 		if (connection == HTTPS_CONNECTION) {
 			if (Net_OpenSecureChannel(http, true)) {
 				Net_SetSocketBlockingMode(http, false);
-				return http;
+				return (Http *)http;
 			}
 			Net_CloseConnection(http);
 			return nullptr;
 		}
-		return http;
+		return (Http *)http;
 	}
 	return nullptr;
 }
 
-Net_Socket *Http_Connect(const String hostname, Http_Connection connection, Memory_Allocator allocator) {
+Http *Http_Connect(const String hostname, Http_Connection connection, Memory_Allocator allocator) {
 	Url url;
 	if (Http_UrlExtract(hostname, &url)) {
 		if (connection == HTTP_DEFAULT && (url.scheme == "80" || StrMatchICase(url.scheme, "http")))
@@ -129,8 +134,8 @@ Net_Socket *Http_Connect(const String hostname, Http_Connection connection, Memo
 	return nullptr;
 }
 
-void Http_Disconnect(Net_Socket *http) {
-	Net_CloseConnection(http);
+void Http_Disconnect(Http *http) {
+	Net_CloseConnection((Net_Socket *)http);
 }
 
 //
@@ -141,8 +146,8 @@ void Http_InitRequest(Http_Request *req) {
 	memset(req, 0, sizeof(*req));
 }
 
-void Http_SetHost(Http_Request *req, Net_Socket *http) {
-	req->headers.known[HTTP_HEADER_HOST] = Net_GetHostname(http);
+void Http_SetHost(Http_Request *req, Http *http) {
+	req->headers.known[HTTP_HEADER_HOST] = Net_GetHostname((Net_Socket *)http);
 }
 
 void Http_SetHeader(Http_Request *req, Http_Header_Id id, String value) {
@@ -299,10 +304,10 @@ String Http_GetHeader(Http_Response *res, const String name) {
 //
 //
 
-static inline int Http_Send(Net_Socket *http, uint8_t *bytes, int length) {
-	int ret = Net_SendBlocked(http, bytes, length);
+static inline int Http_Send(Http *http, uint8_t *bytes, int length) {
+	int ret = Net_SendBlocked((Net_Socket *)http, bytes, length);
 	if (ret >= 0) return ret;
-	Net_Error error = Net_GetLastError(http);
+	Net_Error error = Net_GetLastError((Net_Socket *)http);
 	if (error == NET_E_TIMED_OUT) {
 		LogErrorEx("Http", "Sending timed out");
 		return -1;
@@ -310,7 +315,7 @@ static inline int Http_Send(Net_Socket *http, uint8_t *bytes, int length) {
 	return -1;
 }
 
-static inline bool Http_IterateSend(Net_Socket *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
+static inline bool Http_IterateSend(Http *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
 	while (bytes_to_write > 0) {
 		int bytes_sent = Http_Send(http, bytes, (int)bytes_to_write);
 		if (bytes_sent < 0)
@@ -321,10 +326,10 @@ static inline bool Http_IterateSend(Net_Socket *http, uint8_t *bytes, ptrdiff_t 
 	return true;
 }
 
-static inline int Http_Receive(Net_Socket *http, uint8_t *buffer, int length) {
-	int ret = Net_ReceiveBlocked(http, buffer, length);
+static inline int Http_Receive(Http *http, uint8_t *buffer, int length) {
+	int ret = Net_ReceiveBlocked((Net_Socket *)http, buffer, length);
 	if (ret >= 0) return ret;
-	Net_Error error = Net_GetLastError(http);
+	Net_Error error = Net_GetLastError((Net_Socket *)http);
 	if (error == NET_E_TIMED_OUT) {
 		LogErrorEx("Http", "Receiving timed out");
 		return -1;
@@ -332,14 +337,14 @@ static inline int Http_Receive(Net_Socket *http, uint8_t *buffer, int length) {
 	return -1;
 }
 
-static inline void Http_FlushRead(Net_Socket *http, Http_Response *res) {
+static inline void Http_FlushRead(Http *http, Http_Response *res) {
 	while (true) {
-		int bytes_read = Net_ReceiveBlocked(http, res->buffer, HTTP_MAX_HEADER_SIZE);
+		int bytes_read = Net_ReceiveBlocked((Net_Socket *)http, res->buffer, HTTP_MAX_HEADER_SIZE);
 		if (bytes_read < 0) break;
 	}
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
 
 	{
@@ -609,15 +614,15 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return true;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, writer);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, writer);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, writer);
 }
 
@@ -635,7 +640,7 @@ static int Http_BufferReaderProc(uint8_t *buffer, int length, void *context) {
 	return copy_len;
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	Http_Buffer_Reader buffer_reader;
 	buffer_reader.written = 0;
 	buffer_reader.length  = req.body.length;
@@ -649,15 +654,15 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return result;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "POST", endpoint, req, res, writer);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "GET", endpoint, req, res, writer);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, writer);
 }
 
@@ -665,7 +670,7 @@ struct Http_Arena_Writer {
 	Memory_Arena *arena;
 	uint8_t *     last_pos;
 	ptrdiff_t     length;
-	Net_Socket *  socket;
+	Http *  socket;
 };
 
 static void Http_ArenaWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context) {
@@ -680,12 +685,12 @@ static void Http_ArenaWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t
 			return;
 		}
 	}
-	Net_SetError(writer->socket, NET_E_OUT_OF_MEMORY);
+	Net_SetError((Net_Socket *)writer->socket, NET_E_OUT_OF_MEMORY);
 	LogErrorEx("Http", "Receiving body failed: arena writer out of memory");
 	writer->length = -1;
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
 	uint8_t *body = (uint8_t *)MemoryArenaGetCurrent(arena);
 	auto temp     = BeginTemporaryMemory(arena);
 
@@ -710,19 +715,19 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return false;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, arena);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, arena);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, arena);
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	Http_Buffer_Reader res_body_reader;
 	res_body_reader.written = 0;
 	res_body_reader.length  = req.body.length;
@@ -736,15 +741,15 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return result;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "POST", endpoint, req, res, arena);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "GET", endpoint, req, res, arena);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, arena);
 }
 
@@ -752,7 +757,7 @@ struct Http_Buffer_Writer {
 	ptrdiff_t   written;
 	ptrdiff_t   length;
 	uint8_t *   buffer;
-	Net_Socket *socket;
+	Http *socket;
 };
 
 static void Http_BufferWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context) {
@@ -762,12 +767,12 @@ static void Http_BufferWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_
 		writer->written += length;
 		return;
 	}
-	Net_SetError(writer->socket, NET_E_OUT_OF_MEMORY);
+	Net_SetError((Net_Socket *)writer->socket, NET_E_OUT_OF_MEMORY);
 	LogErrorEx("Http", "Receiving body failed: arena writer out of memory");
 	writer->written = -1;
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	Http_Buffer_Writer buffer_writer;
 	buffer_writer.written = 0;
 	buffer_writer.length = length;
@@ -786,19 +791,19 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return false;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, memory, length);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "GET", endpoint, req, reader, res, memory, length);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, memory, length);
 }
 
-bool Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	Http_Buffer_Writer buffer_writer;
 	buffer_writer.written = 0;
 	buffer_writer.length  = length;
@@ -817,14 +822,14 @@ bool Http_CustomMethod(Net_Socket *http, const String method, const String endpo
 	return false;
 }
 
-bool Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "POST", endpoint, req, res, memory, length);
 }
 
-bool Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "GET", endpoint, req, res, memory, length);
 }
 
-bool Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, memory, length);
 }

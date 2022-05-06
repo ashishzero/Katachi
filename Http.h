@@ -127,42 +127,47 @@ struct Http_Writer {
 	void *           context;
 };
 
-Net_Socket *   Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator);
-Net_Socket *   Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
-void           Http_Disconnect(Net_Socket *http);
+struct Http;
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+Net_Socket *Http_GetSocket(Http *http);
+Http *      Http_FromSocket(Net_Socket *socket);
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+Http *Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator);
+Http *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
+void  Http_Disconnect(Http *http);
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
 
-bool   Http_CustomMethod(Net_Socket *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Post(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Get(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
-bool   Http_Put(Net_Socket *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 
 void   Http_InitRequest(Http_Request *req);
-void   Http_SetHost(Http_Request *req, Net_Socket *http);
+void   Http_SetHost(Http_Request *req, Http *http);
 void   Http_SetHeader(Http_Request *req, Http_Header_Id id, String value);
 void   Http_SetHeader(Http_Request *req, String name, String value);
 void   Http_AppendHeader(Http_Request *req, Http_Header_Id id, String value);
