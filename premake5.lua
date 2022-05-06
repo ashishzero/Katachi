@@ -5,17 +5,16 @@ workspace "Katachi"
    configurations { "Debug", "Developer", "Release" }
 
 project "Katachi"
-   kind "WindowedApp"
+   kind "ConsoleApp"
    language "C++"
    cppdialect "C++17"
-   staticruntime "On"
-   flags { "FatalWarnings" }
 
    targetdir ("%{wks.location}/bin/%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}")
    objdir ("%{wks.location}/bin/int/%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}/%{prj.name}")
 
    files { "Kr/**.h", "Kr/**.cpp", "*.cpp", "*.h", "SHA1/*.h", "SHA1/*.cpp" }
 
+   ignoredefaultlibraries { "MSVCRT" }
    defines { "NETWORK_OPENSSL_ENABLE" }
 
    filter "configurations:Debug"
@@ -43,3 +42,4 @@ project "Katachi"
       systemversion "latest"
       files { "Kr/**.natvis" }
       defines { "_CRT_SECURE_NO_WARNINGS" }
+      includedirs { "OpenSSL/include" }

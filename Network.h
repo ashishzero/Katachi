@@ -28,10 +28,12 @@ void   Net_Shutdown();
 * Receive: -ve means error, +ve means number of bytes received, 0 means wait
 */
 
+Net_Socket * Net_OpenConnection(const String node, const String service, Net_Socket_Type type, ptrdiff_t user_size, Memory_Allocator allocator = ThreadContext.allocator);
 Net_Socket  *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator = ThreadContext.allocator);
 bool         Net_OpenSecureChannel(Net_Socket *net, bool verify = true);
 void         Net_CloseConnection(Net_Socket *net);
 void         Net_Shutdown(Net_Socket *net);
+void *       Net_GetUserBuffer(Net_Socket *net);
 Net_Error    Net_GetLastError(Net_Socket *net);
 void         Net_SetError(Net_Socket *net, Net_Error error);
 bool         Net_TryReconnect(Net_Socket *net);

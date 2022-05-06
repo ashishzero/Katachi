@@ -894,6 +894,17 @@ Net_Socket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *
 	return nullptr;
 }
 
+static int NextPowerOf2(int n) {
+	int count = 0;
+	if (n && !(n & (n - 1)))
+		return n;
+	while (n != 0) {
+		n >>= 1;
+		count += 1;
+	}
+	return 1 << count;
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -1023,6 +1034,8 @@ int main(int argc, char **argv) {
 
 	Websocket_Frame_Reader frame_reader;
 	Websocket_FrameReaderInit(&frame_reader, read_arena);
+
+	
 
 	bool connected = true;
 	while (connected) {

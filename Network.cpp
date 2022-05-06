@@ -23,6 +23,8 @@
 //
 //
 
+constexpr int NET_DEFAULT_USER_SIZE = 8;
+
 typedef int(*Net_Write_Proc)(struct Net_Socket *net, void *buffer, int length);
 typedef int(*Net_Read_Proc)(struct Net_Socket *net, void *buffer, int length);
 
@@ -37,11 +39,12 @@ struct Net_Socket {
 	int              family;
 	int              type;
 	int              protocol;
-	ptrdiff_t        hostlen;
+	int              hostlen;
 	char             hostname[NET_MAX_CANON_NAME];
-	ptrdiff_t        addrlen;
+	int              addrlen;
 	sockaddr_storage address;
 	Memory_Allocator allocator;
+	uint8_t          user[NET_DEFAULT_USER_SIZE];
 };
 
 static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };
@@ -137,7 +140,7 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 	FreeAddrInfoW(address);
 
 	if (error) {
-		PL_Net_ReportError(error);
+		PL_Net_ReportError(WSAGetLastError());
 	}
 
 	return descriptor;
@@ -250,7 +253,7 @@ static SOCKET PL_Net_OpenSocketDescriptor(const String node, const String servic
 	freeaddrinfo(address);
 
 	if (error) {
-		PL_Net_ReportError(error);
+		PL_Net_ReportError(errno);
 	}
 
 	return descriptor;
@@ -444,7 +447,7 @@ void Net_Shutdown() {
 //
 //
 
-Net_Socket *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator) {
+Net_Socket *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, ptrdiff_t user_size, Memory_Allocator allocator) {
 	char hostname[NET_MAX_CANON_NAME];
 
 	sockaddr_storage addr;
@@ -454,7 +457,10 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 	if (descriptor == INVALID_SOCKET)
 		return nullptr;
 
-	Net_Socket *net = (Net_Socket *)MemoryAllocate(sizeof(*net), allocator);
+	user_size = Maximum(user_size, NET_DEFAULT_USER_SIZE);
+	ptrdiff_t allocation_size = user_size - NET_DEFAULT_USER_SIZE;
+
+	Net_Socket *net = (Net_Socket *)MemoryAllocate(sizeof(*net) + allocation_size, allocator);
 
 	if (net) {
 		memset(net, 0, sizeof(*net));
@@ -466,11 +472,13 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 		net->type       = socktype;
 		net->protocol   = protocol;
 		net->allocator  = allocator;
-		net->addrlen    = addr_len;
-		net->hostlen    = strlen(hostname);
+		net->addrlen    = (int)addr_len;
+		net->hostlen    = (int)strlen(hostname);
 
 		memcpy(net->hostname, hostname, sizeof(hostname));
 		memcpy(&net->address, &addr, sizeof(addr));
+
+		memset(net->user, 0, user_size);
 
 		return net;
 	}
@@ -478,6 +486,10 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 	PL_Net_CloseSocketDescriptor(descriptor);
 
 	return nullptr;
+}
+
+Net_Socket *Net_OpenConnection(const String node, const String service, Net_Socket_Type type, Memory_Allocator allocator) {
+	return Net_OpenConnection(node, service, type, NET_DEFAULT_USER_SIZE, allocator);
 }
 
 bool Net_OpenSecureChannel(Net_Socket *net, bool verify) {
@@ -497,6 +509,10 @@ void Net_Shutdown(Net_Socket *net) {
 	int how = SHUT_RDWR;
 #endif
 	shutdown(net->descriptor, how);
+}
+
+void *Net_GetUserBuffer(Net_Socket *net) {
+	return net->user;
 }
 
 Net_Error Net_GetLastError(Net_Socket *net) {

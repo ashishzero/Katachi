@@ -370,3 +370,7 @@ FodyWeavers.xsd
 # Extras
 run.sh
 .vscode/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
