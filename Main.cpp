@@ -925,8 +925,6 @@ int main(int argc, char **argv) {
 	Websocket_Frame_Reader frame_reader;
 	Websocket_FrameReaderInit(&frame_reader, WEBSOCKET_DEFAULT_READ_SIZE, ThreadContext.allocator);
 
-	
-
 	bool connected = true;
 	while (connected) {
 		pollfd fd;
@@ -941,44 +939,55 @@ int main(int argc, char **argv) {
 		if (presult < 0) break;
 
 		if (presult > 0) {
-			// TODO: Loop until we can no longer sent data
 			if (fd.revents & POLLWRNORM) {
-				Assert(frame_writer.start != frame_writer.stop);
-
-				int bytes_sent = 0;
-				if (frame_writer.stop >= frame_writer.start) {
-					bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(frame_writer.stop - frame_writer.start));
-				} else {
-					bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(frame_writer.p2size - frame_writer.start));
-				}
-
-				if (bytes_sent < 0) break;
-				frame_writer.start = (frame_writer.start + bytes_sent) & (frame_writer.p2size - 1);
-			}
-
-			// TODO: Loop until we can't reveive data
-			if (fd.revents & POLLRDNORM) {
-				int bytes_received;
-				if (frame_reader.stop >= frame_reader.start) {
-					bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(frame_reader.p2size - frame_reader.stop));
-				} else {
-					bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(frame_reader.start - frame_reader.stop - 1));
-				}
-				if (bytes_received < 0) break;
-				frame_reader.stop = (frame_reader.stop + bytes_received) & (frame_reader.p2size - 1);
-
-				if (Websocket_FrameReaderUpdate(&frame_reader, read_arena)) {
-					if (frame_reader.frame.masked) break; // servers don't mask
-					if (frame_reader.frame.opcode & 0x80) {
-						if (frame_reader.frame.payload.length > 125) break; // not allowed by specs
-						// TODO: handle control frames
-						LogInfoEx("Websocket", "control frame");
+				while (frame_writer.start != frame_writer.stop) {
+					int bytes_sent = 0;
+					if (frame_writer.stop >= frame_writer.start) {
+						bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(frame_writer.stop - frame_writer.start));
 					} else {
-						OnWebsocketMessage(frame_reader.frame.payload, read_arena);
+						bytes_sent = Net_Send(websocket, frame_writer.buffer + frame_writer.start, (int)(frame_writer.p2size - frame_writer.start));
 					}
 
-					MemoryArenaReset(read_arena);
-					Websocket_FrameReaderNext(&frame_reader);
+					if (bytes_sent == 0) break;
+					if (bytes_sent < 0) {
+						connected = false;
+						break;
+					}
+
+					frame_writer.start = (frame_writer.start + bytes_sent) & (frame_writer.p2size - 1);
+				}
+			}
+
+			if (fd.revents & POLLRDNORM) {
+				while (true) {
+					int bytes_received;
+					if (frame_reader.stop >= frame_reader.start) {
+						bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(frame_reader.p2size - frame_reader.stop));
+					} else {
+						bytes_received = Net_Receive(websocket, frame_reader.buffer + frame_reader.stop, (int)(frame_reader.start - frame_reader.stop - 1));
+					}
+
+					if (bytes_received == 0) break;
+					if (bytes_received < 0) {
+						connected = false;
+						break;
+					}
+
+					frame_reader.stop = (frame_reader.stop + bytes_received) & (frame_reader.p2size - 1);
+
+					if (Websocket_FrameReaderUpdate(&frame_reader, read_arena)) {
+						if (frame_reader.frame.masked) break; // servers don't mask
+						if (frame_reader.frame.opcode & 0x80) {
+							if (frame_reader.frame.payload.length > 125) break; // not allowed by specs
+							// TODO: handle control frames
+							LogInfoEx("Websocket", "control frame");
+						} else {
+							OnWebsocketMessage(frame_reader.frame.payload, read_arena);
+						}
+
+						MemoryArenaReset(read_arena);
+						Websocket_FrameReaderNext(&frame_reader);
+					}
 				}
 			}
 		}
