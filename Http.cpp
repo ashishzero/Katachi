@@ -118,6 +118,7 @@ Http *Http_Connect(const String host, const String port, Http_Connection connect
 			Net_CloseConnection(http);
 			return nullptr;
 		}
+		Net_SetSocketBlockingMode(http, false);
 		return (Http *)http;
 	}
 	return nullptr;
