@@ -216,11 +216,14 @@ static void *MemoryArenaAllocatorAllocate(size_t size, void *context) {
 
 static void *MemoryArenaAllocatorReallocate(void *ptr, size_t previous_size, size_t new_size, void *context) {
 	Memory_Arena *arena = (Memory_Arena *)context;
+	uint8_t *mem        = (uint8_t *)arena;
 
-	if (previous_size > new_size)
+	if (previous_size > new_size) {
+		if (mem + arena->current == ((uint8_t *)ptr + previous_size))
+			PopSize(arena, previous_size - new_size);
 		return ptr;
+	}
 
-	uint8_t *mem = (uint8_t *)arena;
 	if (mem + arena->current == ((uint8_t *)ptr + previous_size)) {
 		if (PushSize(arena, new_size - previous_size))
 			return ptr;

@@ -146,7 +146,7 @@ Json JsonFromObject(Json_Object object) {
 }
 
 void JsonObjectPut(Json_Object *json, String key, Json value) {
-	auto prev = json->FindOrPut(key);
+	auto prev = json->FindOrDefault(key, Json{});
 	if (prev->type != JSON_TYPE_NULL)
 		JsonFree(prev);
 	*prev = value;

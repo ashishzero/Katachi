@@ -53,7 +53,7 @@ struct Json_Number {
 using Json_Bool = bool;
 using Json_String = String;
 using Json_Array = Array<struct Json>;
-using Json_Object = Table<String, struct Json>;
+using Json_Object = Hash_Table<String, struct Json>;
 
 union Json_Value {
 	Json_Bool boolean;
