@@ -34,6 +34,7 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 	fprintf(fp, "\n");
 }
 
+#if 1
 namespace Discord {
 	enum Gateway_Opcode {
 		GATEWAY_OP_DISPATH = 0,
@@ -71,26 +72,22 @@ void OnWebsocketMessage(Websocket *websocket, Discord::Client *client, String pa
 		LogError("Invalid JSON received: %.*s", (int)payload.length, payload.data);
 		return;
 	}
-	Assert(json_event.type == JSON_TYPE_OBJECT);
-	Json_Object *obj = &json_event.value.object;
+	Json_Object obj = JsonGetObject(json_event);
 
-	int opcode = (int)JsonObjectFind(obj, "op")->value.number.value.integer;
+	int opcode = (int)JsonGetInt(obj, "op");
 
-	auto s = JsonObjectFind(obj, "s");
+	auto s = obj.Find("s");
 	if (s && s->type == JSON_TYPE_NUMBER) {
-		client->s = s->value.number.value.integer;
+		client->s = (int)s->value.number;
 	}
 
-	auto t = JsonObjectFind(obj, "t");
-	if (t && t->type == JSON_TYPE_STRING) {
-		String name = t->value.string;
-		LogInfoEx("Discord Event", "%.*s", (int)name.length, name.data);
-	}
+	String t = JsonGetString(obj, "t");
+	LogInfoEx("Discord Event", StrFmt, StrArg(t));
 
 	switch (opcode) {
 		case Discord::GATEWAY_OP_HELLO: {
-			auto d = &JsonObjectFind(obj, "d")->value.object;
-			int timeout = JsonObjectFind(d, "heartbeat_interval")->value.number.value.integer;
+			Json_Object d = JsonGetObject(obj, "d");
+			int timeout = JsonGetInt(d, "heartbeat_interval");
 			Websocket_SetTimeout(websocket, timeout);
 			client->hello_received = true;
 			client->identify = true;
@@ -205,6 +202,11 @@ void HandleWebsocketEvent(Websocket *websocket, const Websocket_Event &event, vo
 		}
 	}
 }
+#endif
+
+namespace Discord {
+	const String UserAgent = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
+}
 
 int main(int argc, char **argv) {
 	InitThreadContext(MegaBytes(64));
@@ -217,24 +219,70 @@ int main(int argc, char **argv) {
 
 	Net_Initialize();
 
-	String authorization = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
+	const char *token = argv[1];
+
+	Memory_Arena *arena = MemoryArenaAllocate(MegaBytes(1));
+	if (!arena) {
+		return 1; // @todo log error
+	}
+
+	String authorization = FmtStr(arena, "Bot %s", token);
+
+	Http *http = Http_Connect("https://discord.com");
+	if (!http) {
+		return 1;
+	}
+
+	auto temp = BeginTemporaryMemory(arena);
+
+	Http_Request req;
+	Http_InitRequest(&req);
+	Http_SetHost(&req, http);
+	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
+	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
 	Http_Response res;
+	if (!Http_Get(http, "/api/v9/gateway/bot", req, &res, arena)) {
+		return 1; // @todo EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
+	}
+
+	Json json;
+	if (!JsonParse(res.body, &json, MemoryArenaAllocator(arena))) {
+		return 1; // @todo log EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
+	}
+
+	const Json_Object obj = JsonGetObject(json);
+
+	if (res.status.code != 200) {
+		String msg = JsonGetString(obj, "message");
+		LogErrorEx("Discord", "Code: %u, Message: " StrFmt, res.status.code, StrArg(msg));
+		return 1; // @todo log EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
+	}
+
+	Http_Disconnect(http);
+
+	String url = JsonGetString(obj, "url");
+	int shards = JsonGetInt(obj, "shards");
+	// @todo: Handle sharding
+	Trace("Getway URL: " StrFmt ", Shards: %d", StrArg(url), shards);
+
 	Websocket_Header headers;
 	Websocket_InitHeader(&headers);
 	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, authorization);
-	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, "Katachi");
+	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
-	Websocket *websocket = Websocket_Connect("wss://gateway.discord.gg/?v=9&encoding=json", &res, &headers);
-
+	Websocket *websocket = Websocket_Connect(url, &res, &headers);
 	if (!websocket) {
 		return 1;
 	}
+
+	EndTemporaryMemory(&temp);
 
 	Discord::Client client;
 	client.token = argv[1];
 
 	Websocket_Loop(websocket, HandleWebsocketEvent, &client);
+
 	Net_Shutdown();
 
 	return 0;

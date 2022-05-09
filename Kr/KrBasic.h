@@ -275,7 +275,7 @@ struct Hash_Table {
 	inline const Pair *begin() const { return storage.begin(); }
 	inline const Pair *end() const { return storage.end(); }
 
-	size_t GetHash(const K key) {
+	size_t GetHash(const K key) const {
 		size_t hash = hasher(key);
 		if (hash <= HASHTABLE_MAX_RES_HASH)
 			hash += HASHTABLE_MAX_RES_HASH + 1;
@@ -347,7 +347,7 @@ struct Hash_Table {
 		return true;
 	}
 
-	ptrdiff_t FindSlot(const K key) {
+	ptrdiff_t FindSlot(const K key) const {
 		if (!count)
 			return -1;
 
@@ -383,6 +383,16 @@ struct Hash_Table {
 	}
 
 	V *Find(const K key) {
+		ptrdiff_t slot = FindSlot(key);
+		if (slot >= 0) {
+			Bucket *bucket = &buckets[slot >> HASHTABLE_BUCKET_SHIFT];
+			int index = (int)(slot & HASHTABLE_BUCKET_MASK);
+			return &storage[bucket->index[index]].value;
+		}
+		return nullptr;
+	}
+
+	const V *Find(const K key) const {
 		ptrdiff_t slot = FindSlot(key);
 		if (slot >= 0) {
 			Bucket *bucket = &buckets[slot >> HASHTABLE_BUCKET_SHIFT];
@@ -520,13 +530,13 @@ struct Hash_Table {
 	}
 };
 
-template <typename K, typename V>
-void Free(Hash_Table<K, V> *table) {
+template <typename K, typename V, typename Hasher, typename Key_Alloc, typename Key_Free>
+void Free(Hash_Table<K, V, Hasher, Key_Alloc, Key_Free> *table) {
 	ptrdiff_t bucket_count = table->p2allocated >> HASHTABLE_BUCKET_SHIFT;
-	MemoryFree(table->buckets, sizeof(Hash_Table<K, V>::Bucket) * bucket_count, table->allocator);
+	MemoryFree(table->buckets, sizeof(typename Hash_Table<K, V, Hasher, Key_Alloc, Key_Free>::Bucket) * bucket_count, table->allocator);
 	for (auto &pair : table->storage) {
 		table->key_free(&pair.key);
 	}
 	Free(&table->storage);
-	*table = Hash_Table<K, V>(table->allocator);
+	*table = Hash_Table<K, V, Hasher, Key_Alloc, Key_Free>(table->allocator);
 }

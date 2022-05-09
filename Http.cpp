@@ -785,8 +785,8 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	writer.context = &buffer_writer;
 
 	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
-	if (result && buffer_writer.length >= 0) {
-		res->body = Buffer(memory, buffer_writer.length);
+	if (result && buffer_writer.written >= 0) {
+		res->body = Buffer(memory, buffer_writer.written);
 		return true;
 	}
 	return false;
@@ -816,8 +816,8 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	writer.context = &buffer_writer;
 
 	bool result = Http_CustomMethod(http, method, endpoint, req, res, writer);
-	if (result && buffer_writer.length >= 0) {
-		res->body = Buffer(memory, buffer_writer.length);
+	if (result && buffer_writer.written >= 0) {
+		res->body = Buffer(memory, buffer_writer.written);
 		return true;
 	}
 	return false;

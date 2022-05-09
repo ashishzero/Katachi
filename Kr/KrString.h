@@ -351,7 +351,7 @@ INLINE_PROCEDURE void StrTokenizerInit(Str_Tokenizer *tokenizer, String content)
 INLINE_PROCEDURE bool StrTokenize(Str_Tokenizer *tokenizer, const String delims) {
 	uint8_t *last  = tokenizer->buffer.data + tokenizer->buffer.length;
 	uint8_t *start = tokenizer->current;
-	while (tokenizer->current < last) {
+	for (; tokenizer->current < last; ++tokenizer->current) {
 		uint8_t *current = tokenizer->current;
 		for (auto d : delims) {
 			if (d == *current) {
@@ -371,4 +371,11 @@ INLINE_PROCEDURE bool StrTokenize(Str_Tokenizer *tokenizer, const String delims)
 		return true;
 	}
 	return false;
+}
+
+INLINE_PROCEDURE bool StrTokenizeEnd(Str_Tokenizer *tokenizer) {
+	uint8_t *start = tokenizer->current;
+	uint8_t *last = tokenizer->buffer.data + tokenizer->buffer.length;
+	tokenizer->token = String(start, last - start);
+	return tokenizer->token.length == 0;
 }

@@ -1,118 +1,6 @@
 #include "Json.h"
-#include "StringBuilder.h"
 
 #include <stdlib.h>
-
-Json_Builder JsonBuilderCreate(String_Builder *builder) {
-	Json_Builder json;
-	json.builder = builder;
-	json.depth = 0;
-	return json;
-}
-
-int JsonWriteNextElement(Json_Builder *json) {
-	int written = 0;
-	if (json->depth & 0x1) {
-		written = Write(json->builder, ",");
-	}
-	else {
-		json->depth |= 0x1;
-	}
-	return written;
-}
-
-int JsonWriteBeginObject(Json_Builder *json) {
-	Assert((json->depth & 0x8000000000000000) == 0);
-	int written = JsonWriteNextElement(json);
-	json->depth = json->depth << 1;
-	return written + Write(json->builder, "{");
-}
-
-int JsonWriteEndObject(Json_Builder *json) {
-	json->depth = json->depth >> 1;
-	return Write(json->builder, "}");
-}
-
-int JsonWriteBeginArray(Json_Builder *json) {
-	Assert((json->depth & 0x8000000000000000) == 0);
-	int written = JsonWriteNextElement(json);
-	json->depth = json->depth << 1;
-	return written + Write(json->builder, "[");
-}
-
-int JsonWriteEndArray(Json_Builder *json) {
-	json->depth = json->depth >> 1;
-	return Write(json->builder, "]");
-}
-
-int JsonWriteKey(Json_Builder *json, String key) {
-	int written = 0;
-	written += JsonWriteNextElement(json);
-	written += Write(json->builder, '"');
-	written += Write(json->builder, key);
-	written += Write(json->builder, '"');
-	written += Write(json->builder, ':');
-	json->depth &= ~(uint64_t)0x1;
-	return written;
-}
-
-int JsonWriteNull(Json_Builder *json) {
-	int written = Write(json->builder, "null");
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteString(Json_Builder *json, String value) {
-	int written = WriteFormatted(json->builder, "\"%\"", value);
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteBool(Json_Builder *json, bool value) {
-	int written = Write(json->builder, value);
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteNumber(Json_Builder *json, int value) {
-	int written = Write(json->builder, value);
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteNumber(Json_Builder *json, float value) {
-	int written = Write(json->builder, value);
-	json->depth |= 0x1;
-	return written;
-}
-
-int JsonWriteKeyString(Json_Builder *json, String key, String value) {
-	int written = 0;
-	written += JsonWriteKey(json, key);
-	written += JsonWriteString(json, value);
-	return written;
-}
-
-int JsonWriteKeyBool(Json_Builder *json, String key, bool value) {
-	int written = 0;
-	written += JsonWriteKey(json, key);
-	written += JsonWriteBool(json, value);
-	return written;
-}
-
-int JsonWriteKeyNumber(Json_Builder *json, String key, int value) {
-	int written = 0;
-	written += JsonWriteKey(json, key);
-	written += JsonWriteNumber(json, value);
-	return written;
-}
-
-int JsonWriteKeyNumber(Json_Builder *json, String key, float value) {
-	int written = 0;
-	written += JsonWriteKey(json, key);
-	written += JsonWriteNumber(json, value);
-	return written;
-}
 
 //
 //
@@ -122,8 +10,7 @@ void JsonFree(Json *json) {
 	auto type = json->type;
 	if (type == JSON_TYPE_ARRAY) {
 		Free(&json->value.array);
-	}
-	else if (type == JSON_TYPE_OBJECT) {
+	} else if (type == JSON_TYPE_OBJECT) {
 		for (auto &item : json->value.object) {
 			JsonFree(&item.value);
 		}
@@ -131,80 +18,99 @@ void JsonFree(Json *json) {
 	}
 }
 
-Json JsonFromArray(Json_Array arr) {
-	Json json;
-	json.type = JSON_TYPE_ARRAY;
-	json.value.array = arr;
-	return json;
+//
+//
+//
+
+
+bool JsonGetBool(const Json &json, bool def) {
+	if (json.type == JSON_TYPE_BOOL)
+		return json.value.boolean;
+	return def;
 }
 
-Json JsonFromObject(Json_Object object) {
-	Json json;
-	json.type = JSON_TYPE_OBJECT;
-	json.value.object = object;
-	return json;
+float JsonGetFloat(const Json &json, float def) {
+	if (json.type == JSON_TYPE_NUMBER)
+		return json.value.number;
+	return def;
 }
 
-void JsonObjectPut(Json_Object *json, String key, Json value) {
-	auto prev = json->FindOrDefault(key, Json{});
-	if (prev->type != JSON_TYPE_NULL)
-		JsonFree(prev);
-	*prev = value;
-	json->Put(key, value);
+int JsonGetInt(const Json &json, int def) {
+	if (json.type == JSON_TYPE_NUMBER)
+		return (int)json.value.number;
+	return def;
 }
 
-void JsonObjectPutBool(Json_Object *json, String key, bool boolean) {
-	Json value;
-	value.type = JSON_TYPE_BOOL;
-	value.value.boolean = boolean;
-	JsonObjectPut(json, key, value);
+String JsonGetString(const Json &json, String def) {
+	if (json.type == JSON_TYPE_STRING)
+		return json.value.string;
+	return def;
 }
 
-void JsonObjectPutNumber(Json_Object *json, String key, float number) {
-	Json value;
-	value.type = JSON_TYPE_NUMBER;
-	value.value.number.kind = JSON_NUMBER_FLOATING;
-	value.value.number.value.floating = number;
-	JsonObjectPut(json, key, value);
+Json_Array JsonGetArray(const Json &json, Json_Array def) {
+	if (json.type == JSON_TYPE_ARRAY)
+		return json.value.array;
+	return def;
 }
 
-void JsonObjectPutNumber(Json_Object *json, String key, int number) {
-	Json value;
-	value.type = JSON_TYPE_NUMBER;
-	value.value.number.kind = JSON_NUMBER_INTEGER;
-	value.value.number.value.integer = number;
-	JsonObjectPut(json, key, value);
+Json_Object JsonGetObject(const Json &json, Json_Object def) {
+	if (json.type == JSON_TYPE_OBJECT)
+		return json.value.object;
+	return def;
 }
 
-void JsonObjectPutString(Json_Object *json, String key, String string) {
-	Json value;
-	value.type = JSON_TYPE_STRING;
-	value.value.string = string;
-	JsonObjectPut(json, key, value);
+Json JsonGet(const Json_Object &obj, const String key, Json def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return *elem;
+	return def;
 }
 
-void JsonObjectPutArray(Json_Object *json, String key, Json_Array array) {
-	Json value;
-	value.type = JSON_TYPE_ARRAY;
-	value.value.array = array;
-	JsonObjectPut(json, key, value);
+bool JsonGetBool(const Json_Object &obj, const String key, bool def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetBool(*elem);
+	return def;
 }
 
-void JsonObjectPutObject(Json_Object *json, String key, Json_Object object) {
-	Json value;
-	value.type = JSON_TYPE_OBJECT;
-	value.value.object = object;
-	JsonObjectPut(json, key, value);
+float JsonGetFloat(const Json_Object &obj, const String key, float def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetFloat(*elem);
+	return def;
 }
 
-Json *JsonObjectFind(Json_Object *json, String key) {
-	return json->Find(key);
+int JsonGetInt(const Json_Object &obj, const String key, int def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetInt(*elem);
+	return def;
+}
+
+String JsonGetString(const Json_Object &obj, const String key, String def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetString(*elem);
+	return def;
+}
+
+Json_Array JsonGetArray(const Json_Object &obj, const String key, Json_Array def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetArray(*elem);
+	return def;
+}
+
+Json_Object JsonGetObject(const Json_Object &obj, const String key, Json_Object def) {
+	const Json *elem = obj.Find(key);
+	if (elem)
+		return JsonGetObject(*elem);
+	return def;
 }
 
 //
 //
 //
-
 
 enum Json_Token_Kind {
 	JSON_TOKEN_OPEN_CURLY_BRACKET,
@@ -226,7 +132,7 @@ struct Json_Token {
 	Json_Token_Kind kind;
 	String          content;
 	String          identifier;
-	Json_Number     number;
+	float           number;
 };
 
 struct Json_Tokenizer {
@@ -328,31 +234,23 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 
 			buffer[0] = value;
 			int pos = 1;
-			bool period_found = false;
 			for (tokenizer->current += 1; tokenizer->current < last; ++tokenizer->current) {
 				if (JsonIsNumber(*tokenizer->current) || *tokenizer->current == '.') {
 					if (pos >= sizeof(buffer) - 1) return false;
 					buffer[pos++] = *tokenizer->current;
-					period_found  = (*tokenizer->current == '.');
 				} else {
 					break;
 				}
 			}
 			buffer[pos] = 0;
 
-			char *str_end = nullptr;
-			if (period_found) {
-				tokenizer->token.number.kind = JSON_NUMBER_FLOATING;
-				tokenizer->token.number.value.floating = (float)strtod(buffer, &str_end);
-			} else {
-				tokenizer->token.number.kind = JSON_NUMBER_INTEGER;
-				tokenizer->token.number.value.integer = (int)strtol(buffer, &str_end, 10);
-			}
+			char *str_end           = nullptr;
+			tokenizer->token.number = (float)strtod(buffer, &str_end);
 
 			if (str_end != buffer + pos)
 				return false;
 
-			tokenizer->token.kind = JSON_TOKEN_NUMBER;
+			tokenizer->token.kind    = JSON_TOKEN_NUMBER;
 			tokenizer->token.content = JsonTokenizerMakeTokenContent(tokenizer, start);
 			return true;
 		}
@@ -559,7 +457,7 @@ static bool JsonParseBody(Json_Parser *parser, Json_Object *json) {
 			String key;
 			Json value;
 			if (JsonParseKeyValuePair(parser, &key, &value)) {
-				JsonObjectPut(json, key, value);
+				json->Put(key, value);
 				if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
 					parsed = true;
 					break;
@@ -652,41 +550,4 @@ bool JsonParse(String json_string, Json *out_json, Memory_Allocator allocator) {
 		*out_json = {};
 	}
 	return parsed;
-}
-
-//
-//
-//
-
-void JsonBuild(Json_Builder *builder, const Json &json) {
-	auto type = json.type;
-
-	if (type == JSON_TYPE_NULL)
-		JsonWriteNull(builder);
-	else if (type == JSON_TYPE_BOOL)
-		JsonWriteBool(builder, json.value.boolean);
-	else if (type == JSON_TYPE_NUMBER) {
-		if (json.value.number.kind == JSON_NUMBER_INTEGER)
-			JsonWriteNumber(builder, (int)json.value.number.value.integer);
-		else
-			JsonWriteNumber(builder, json.value.number.value.floating);
-	} else if (type == JSON_TYPE_STRING)
-		JsonWriteString(builder, json.value.string);
-	else if (type == JSON_TYPE_ARRAY) {
-		JsonWriteBeginArray(builder);
-		for (auto &e : json.value.array)
-			JsonBuild(builder, e);
-		JsonWriteEndArray(builder);
-	}
-	else if (type == JSON_TYPE_OBJECT) {
-		JsonWriteBeginObject(builder);
-		for (auto &p : json.value.object) {
-			JsonWriteKey(builder, p.key);
-			JsonBuild(builder, p.value);
-		}
-		JsonWriteEndObject(builder);
-	}
-	else {
-		Unreachable();
-	}
 }

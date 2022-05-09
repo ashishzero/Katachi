@@ -452,8 +452,8 @@ void LogEx(Log_Level level, const char *source, const char *fmt, ...);
 #define LogError(fmt, ...)   LogEx(LOG_LEVEL_ERROR, "", fmt, ##__VA_ARGS__)
 
 #if defined(BUILD_DEBUG) || defined(BUILD_DEVELOPER)
-#define Trace   LogInfo
-#define TraceEx LogInfoEx
+#define Trace(fmt, ...) LogEx(LOG_LEVEL_INFO, "Trace", fmt, ##__VA_ARGS__)
+#define TraceEx         LogInfoEx
 #else
 #define Trace(...) 
 #define TraceEx(...) 
