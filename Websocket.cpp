@@ -1046,15 +1046,15 @@ void Websocket_Loop(Websocket *websocket, Websocket_On_Event_Proc event_proc, vo
 				bool is_control_frame = false;
 
 				if (context->writer.control_buffer.length) {
-					if (!context->writer.curr_buffer->written) {
+					if (context->writer.curr_buffer && !context->writer.curr_buffer->written) {
 						buffer           = &context->writer.control_buffer;
 						is_control_frame = true;
-					} else {
+					} else if (context->writer.curr_buffer) {
 						buffer = context->writer.curr_buffer;
 						context->writer.curr_buffer = buffer->next;
 						buffer->next = nullptr;
 					}
-				} else {
+				} else if (context->writer.curr_buffer) {
 					buffer = context->writer.curr_buffer;
 					context->writer.curr_buffer = buffer->next;
 					buffer->next = nullptr;

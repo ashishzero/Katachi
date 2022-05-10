@@ -19,6 +19,10 @@ struct String_Builder {
 	Bucket *free_list = nullptr;
 
 	Memory_Allocator allocator = ThreadContext.allocator;
+
+	String_Builder() = default;
+	String_Builder(Memory_Allocator _allocator): allocator(_allocator) {}
+	String_Builder(Memory_Arena *arena): allocator(MemoryArenaAllocator(arena)) {}
 };
 
 int WriteBuffer(String_Builder *builder, void *buffer, int64_t size);

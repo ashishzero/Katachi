@@ -1,6 +1,51 @@
 #pragma once
 #include "Kr/KrBasic.h"
 
+struct Jsonify {
+	static constexpr int PUSH_SIZE = KiloBytes(4);
+
+	enum { FLAG_REPEAT = 0x1, FLAG_ARRAY = 0x2, FLAG_OBJECT = 0x4 };
+
+	uint8_t * start     = nullptr;
+	ptrdiff_t pos       = 0;
+	ptrdiff_t allocated = 0;
+
+	uint8_t   flags[2048];
+	int       index = 0;
+
+	Memory_Arena *arena = ThreadScratchpad();
+
+	Jsonify() = default;
+	Jsonify(Memory_Arena *_arena) : arena(_arena) {}
+
+	void PushByte(uint8_t byte);
+	void PushBuffer(Buffer buff);
+	void NextElement(bool iskey);
+	void PushScope(uint8_t flag);
+	void PopScope();
+	void BeginObject();
+	void EndObject();
+	void BeginArray();
+	void EndArray();
+	void PushKey(String key);
+	void PushString(String str);
+	void PushFloat(float number);
+	void PushInt(int number);
+	void PushBool(bool boolean);
+	void PushNull();
+	void KeyValue(String key, String value);
+	void KeyValue(String key, int value);
+	void KeyValue(String key, float value);
+	void KeyValue(String key, bool value);
+	void KeyNull(String key);
+};
+
+String Jsonify_BuildString(Jsonify *jsonify);
+
+//
+//
+//
+
 enum Json_Type {
 	JSON_TYPE_NULL,
 	JSON_TYPE_BOOL,

@@ -34,16 +34,22 @@
 
 #if defined(__ANDROID__) || defined(__ANDROID_API__)
 #define PLATFORM_ANDROID 1
+#define __PLATFORM__ "Andriod"
 #elif defined(__gnu_linux__) || defined(__linux__) || defined(linux) || defined(__linux)
 #define PLATFORM_LINUX 1
+#define __PLATFORM__ "linux"
 #elif defined(macintosh) || defined(Macintosh)
 #define PLATFORM_MAC 1
+#define __PLATFORM__ "Mac"
 #elif defined(__APPLE__) && defined(__MACH__)
 #define PLATFORM_MAC 1
+#define __PLATFORM__ "Mac"
 #elif defined(__APPLE__)
 #define PLATFORM_IOS 1
+#define __PLATFORM__ "iOS"
 #elif defined(_WIN64) || defined(_WIN32)
 #define PLATFORM_WINDOWS 1
+#define __PLATFORM__ "Windows"
 #else
 #error Missing Operating System Detection
 #endif

@@ -66,6 +66,7 @@ struct Array {
 			if (!Reserve(c))
 				return nullptr;
 		}
+		data[count] = T{};
 		count += 1;
 		return data + (count - 1);
 	}

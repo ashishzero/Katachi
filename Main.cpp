@@ -1,6 +1,5 @@
 ﻿#include "Kr/KrBasic.h"
 #include "Network.h"
-#include "Discord.h"
 #include "Kr/KrString.h"
 #include "StringBuilder.h"
 #include "Websocket.h"
@@ -35,7 +34,9 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 }
 
 namespace Discord {
-	enum Gateway_Opcode {
+	struct Snowflake { uint64_t value = 0; };
+
+	enum GatewayOpcode {
 		GATEWAY_OP_DISPATH = 0,
 		GATEWAY_OP_HEARTBEAT = 1,
 		GATEWAY_OP_IDENTIFY = 2,
@@ -49,6 +50,124 @@ namespace Discord {
 		GATEWAY_OP_HEARTBEAT_ACK = 11,
 	};
 
+	enum GatewayIntent {
+		GUILDS                    = 1 << 0,
+		GUILD_MEMBERS             = 1 << 1,
+		GUILD_BANS                = 1 << 2,
+		GUILD_EMOJIS_AND_STICKERS = 1 << 3,
+		GUILD_INTEGRATIONS        = 1 << 4,
+		GUILD_WEBHOOKS            = 1 << 5,
+		GUILD_INVITES             = 1 << 6,
+		GUILD_VOICE_STATES        = 1 << 7,
+		GUILD_PRESENCES           = 1 << 8,
+		GUILD_MESSAGES            = 1 << 9,
+		GUILD_MESSAGE_REACTIONS   = 1 << 10,
+		GUILD_MESSAGE_TYPING      = 1 << 11,
+		DIRECT_MESSAGES           = 1 << 12,
+		DIRECT_MESSAGE_REACTIONS  = 1 << 13,
+		DIRECT_MESSAGE_TYPING     = 1 << 14,
+		GUILD_SCHEDULED_EVENTS    = 1 << 15,
+	};
+
+	enum class StatusType { ONLINE, DO_NOT_DISTURB, AFK, INVISIBLE, OFFLINE };
+
+	enum class ActivityType { GAME, STREAMING, LISTENING, WATCHING, CUSTOM, COMPETING };
+
+	enum class ActivityFlag {
+		INSTANCE                    = 1 << 0,
+		JOIN                        = 1 << 1,
+		SPECTATE                    = 1 << 2,
+		JOIN_REQUEST                = 1 << 3,
+		SYNC                        = 1 << 4,
+		PLAY                        = 1 << 5,
+		PARTY_PRIVACY_FRIENDS       = 1 << 6,
+		PARTY_PRIVACY_VOICE_CHANNEL = 1 << 7,
+		EMBEDDED                    = 1 << 8
+	};
+
+	struct ActivityTimestamps {
+		int32_t start = 0;
+		int32_t end   = 0;
+	};
+
+	struct ActivityEmoji {
+		String    name;
+		Snowflake id;
+		bool      animated = false;
+	};
+
+	struct ActivityParty {
+		String  id;
+		int32_t size[2] = {0,0};
+	};
+
+	struct ActivityAssets {
+		String large_image;
+		String large_text;
+		String small_image;
+		String small_text;
+	};
+
+	struct ActivitySecrets {
+		String join;
+		String spectate;
+		String match;
+	};
+
+	struct ActivityButton {
+		String label;
+		String url;
+	};
+
+	struct Activity {
+		String                name;
+		ActivityType          type = ActivityType::GAME;
+		String                url;
+		int32_t               created_at = 0;
+		ActivityTimestamps    timestamps;
+		Snowflake             application_id;
+		String                details;
+		String                state;
+		ActivityEmoji *       emoji    = nullptr;
+		ActivityParty *       party    = nullptr;
+		ActivityAssets *      assets   = nullptr;
+		ActivitySecrets *     secrets  = nullptr;
+		bool                  instance = false;
+		int32_t               flags    = 0;
+		Array<ActivityButton> buttons;
+
+		Activity() = default;
+		Activity(Memory_Allocator allocator): buttons(allocator) {}
+	};
+
+	struct PresenceUpdate {
+		int32_t         since  = 0;
+		Array<Activity> activities;
+		StatusType      status = StatusType::ONLINE;
+		bool            afk    = false;
+
+		PresenceUpdate() = default;
+		PresenceUpdate(Memory_Allocator allocator): activities(allocator) {}
+	};
+
+	struct Identify {
+		String          token;
+		struct {
+			String      os = __PLATFORM__;
+			String      browser;
+			String      device;
+		}               properties;
+		bool            compress = false;
+		int32_t         large_threshold = 0;
+		int32_t         shard[2] = {0, 1};
+		PresenceUpdate *presence = nullptr;
+		int32_t         intents  = 0;
+
+		Identify() = default;
+		Identify(String _token, int32_t _intents, PresenceUpdate *_presence = nullptr) :
+			token(_token), presence(_presence), intents(_intents) {}
+	};
+
 	enum Client_State {
 		CLIENT_CONNECTING,
 		CLIENT_CONNECTED,
@@ -59,9 +178,9 @@ namespace Discord {
 	struct Client {
 		Client_State state = CLIENT_CONNECTING;
 
-		int heartbeats = 0;
+		int heartbeats       = 0;
 		int acknowledgements = 0;
-		int sequence = -1;
+		int sequence         = -1;
 
 		String token;
 		String authorization;
@@ -70,21 +189,96 @@ namespace Discord {
 	};
 }
 
+static void Discord_Jsonify(const Discord::Activity &activity, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("name", activity.name);
+	j->KeyValue("type", (int)activity.type);
+	if (activity.url.length)
+		j->KeyValue("url", activity.url);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::PresenceUpdate &presence, Jsonify *j) {
+	j->BeginObject();
+	if (presence.since)
+		j->KeyValue("since", presence.since);
+
+	j->PushKey("activities");
+	j->BeginArray();
+	for (const auto &activity : presence.activities)
+		Discord_Jsonify(activity, j);
+	j->EndArray();
+
+	j->PushKey("status");
+	switch (presence.status) {
+		case Discord::StatusType::ONLINE:         j->PushString("online"); break;
+		case Discord::StatusType::DO_NOT_DISTURB: j->PushString("dnd"); break;
+		case Discord::StatusType::AFK:            j->PushString("idle"); break;
+		case Discord::StatusType::INVISIBLE:      j->PushString("invisible"); break;
+		case Discord::StatusType::OFFLINE:        j->PushString("offline"); break;
+		NoDefaultCase();
+	}
+
+	j->KeyValue("afk", presence.afk);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::Identify &identify, Jsonify *j) {
+	j->BeginObject();
+
+	j->KeyValue("op", Discord::GATEWAY_OP_IDENTIFY);
+	j->PushKey("d");
+	j->BeginObject();
+
+	j->KeyValue("token", identify.token);
+	j->PushKey("properties");
+	j->BeginObject();
+	if (identify.properties.os.length) j->KeyValue("$os", identify.properties.os);
+	if (identify.properties.browser.length) j->KeyValue("$browser", identify.properties.browser);
+	if (identify.properties.device.length) j->KeyValue("$device", identify.properties.device);
+	j->EndObject();
+
+	j->KeyValue("compress", identify.compress);
+	if (identify.large_threshold >= 50 && identify.large_threshold <= 250)
+		j->KeyValue("large_threshold", identify.large_threshold);
+
+	if (identify.shard[1]) {
+		j->PushKey("shard");
+		j->BeginArray();
+		j->PushInt(identify.shard[0]);
+		j->PushInt(identify.shard[1]);
+		j->EndArray();
+	}
+
+	if (identify.presence) {
+		j->PushKey("presence");
+		Discord_Jsonify(*identify.presence, j);
+	}
+
+	j->KeyValue("intents", identify.intents);
+
+	j->EndObject();
+
+	j->EndObject();
+}
+
 static void Discord_Hearbeat(Websocket *websocket, Discord::Client *client) {
 	if (client->heartbeats != client->acknowledgements) {
 		// @todo: only wait for certain number of times
 		LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeats, client->acknowledgements);
 	}
 
-	int buffer_cap  = 4096;
-	uint8_t *buffer = PushArray(client->arena, uint8_t, buffer_cap);
-
-	int length = 0;
-	if (client->sequence > 0)
-		length = snprintf((char *)buffer, buffer_cap, "{\"op\": 1, \"d\":%d}", client->sequence);
+	Jsonify j(client->arena);
+	j.BeginObject();
+	j.KeyValue("op", Discord::GATEWAY_OP_HEARTBEAT);
+	if (client->sequence >= 0)
+		j.KeyValue("d", client->sequence);
 	else
-		length = snprintf((char *)buffer, buffer_cap, "{\"op\": 1, \"d\":null}");
-	Websocket_SendText(websocket, Buffer(buffer, length));
+		j.KeyNull("d");
+	j.EndObject();
+
+	String msg = Jsonify_BuildString(&j);
+	Websocket_SendText(websocket, msg);
 	client->heartbeats += 1;
 
 	Trace("Heartbeat (%d)", client->heartbeats);
@@ -113,28 +307,43 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 		switch (client->state) {
 			case Discord::CLIENT_CONNECTING: {
 				if (opcode == Discord::GATEWAY_OP_HELLO) {
-					Json_Object d = JsonGetObject(obj, "d");
+					Json_Object d          = JsonGetObject(obj, "d");
 					int heartbeat_interval = JsonGetInt(d, "heartbeat_interval", 45000);
 					Websocket_SetTimeout(websocket, heartbeat_interval);
 
+					// @todo: don't got the connected state yet wait for "ready" event from discord
+					// reconnect or disconnect is "ready" event is not present within some time limit
 					client->state = Discord::CLIENT_CONNECTED;
 
-					int buffer_cap = 4096;
-					uint8_t *buffer = PushArray(client->arena, uint8_t, buffer_cap);
-					int length = snprintf((char *)buffer, buffer_cap, R"foo(
-{
-  "op": 2,
-  "d": {
-    "token": "%.*s",
-    "intents": 513,
-    "properties": {
-      "$os": "Windows"
-    }
-  }
-}
-)foo", StrArg(client->token));
+					int intents = 0;
+					intents |= Discord::GatewayIntent::DIRECT_MESSAGES;
+					intents |= Discord::GatewayIntent::GUILD_MESSAGES;
+					intents |= Discord::GatewayIntent::GUILD_MESSAGE_REACTIONS;
 
-					Websocket_SendText(websocket, Buffer(buffer, length));
+					Memory_Allocator allocator = MemoryArenaAllocator(client->arena);
+
+					Discord::PresenceUpdate presence(allocator);
+					presence.status = Discord::StatusType::DO_NOT_DISTURB;
+					Discord::Activity *activity = presence.activities.Add();
+					activity->name = "Spotify";
+					activity->type = Discord::ActivityType::LISTENING;
+					activity->url  = "https://open.spotify.com/track/0ZiO07cHvb675UDaKB1iix?si=7e198a75a163493c";
+
+					Discord::Identify identify(client->token, intents, &presence);
+
+					Jsonify j(client->arena);
+					Discord_Jsonify(identify, &j);
+					String msg = Jsonify_BuildString(&j);
+
+					// @note:
+					// @reference: https://discord.com/developers/docs/topics/gateway#identifying-example-gateway-identify
+					// Clients are limited to 1000 IDENTIFY calls to the websocket in a 24-hour period.
+					// This limit is global and across all shards, but does not include RESUME calls.
+					// Upon hitting this limit, all active sessions for the bot will be terminated,
+					// the bot's token will be reset, and the owner will receive an email notification.
+					// It's up to the owner to update their application with the new token.
+
+					Websocket_SendText(websocket, msg);
 				}
 			} break;
 

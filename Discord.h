@@ -1427,13 +1427,6 @@ namespace Discord {
 		IDENTIFY, RESUME, HEARTBEAT, GUILD_MEMBERS_REQUEST, VOICE_STATE_UPDATE, PRESENCE_UPDATE
 	};
 
-	struct GatewayCommandPresenceUpdate {
-		int32_t since;
-		Array<Activity> activities;
-		StatusType status;
-		bool afk;
-	};
-
 	struct PresenceUpdate {
 		int32_t since;
 		Array<Activity> activities;

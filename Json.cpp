@@ -1,6 +1,152 @@
 #include "Json.h"
 
 #include <stdlib.h>
+#include <stdio.h>
+
+void Jsonify::PushByte(uint8_t byte) {
+	if (pos >= allocated) {
+		void *mem = PushSize(arena, Jsonify::PUSH_SIZE);
+		if (!mem) return;
+		if (!start)
+			start = (uint8_t *)mem;
+		Assert(mem == start + allocated);
+		allocated += Jsonify::PUSH_SIZE;
+	}
+	start[pos++] = byte;
+}
+
+void Jsonify::PushBuffer(Buffer buff) {
+	if (pos + buff.length > allocated) {
+		ptrdiff_t allocation_size = AlignPower2Up(Maximum(Jsonify::PUSH_SIZE, buff.length), Jsonify::PUSH_SIZE);
+		void *mem = PushSize(arena, allocation_size);
+		if (!mem) return;
+		if (!start)
+			start = (uint8_t *)mem;
+		Assert(mem == start + allocated);
+		allocated += allocation_size;
+	}
+	memcpy(start + pos, buff.data, buff.length);
+	pos += buff.length;
+}
+
+void Jsonify::NextElement(bool iskey) {
+	if (iskey && flags[index] & FLAG_OBJECT) {
+		if (flags[index] & FLAG_REPEAT) {
+			Jsonify::PushByte(',');
+			return;
+		}
+		flags[index] |= FLAG_REPEAT;
+	} else if (flags[index] & FLAG_ARRAY) {
+		if (flags[index] & FLAG_REPEAT) {
+			Jsonify::PushByte(',');
+			return;
+		}
+		flags[index] |= FLAG_REPEAT;
+	}
+}
+
+void Jsonify::PushScope(uint8_t flag) {
+	Assert(index + 1 < ArrayCount(flags));
+	index += 1;
+	flags[index] = flag;
+}
+
+void Jsonify::PopScope() {
+	Assert(index);
+	index -= 1;
+}
+
+void Jsonify::BeginObject() {
+	PushByte('{');
+	PushScope(FLAG_OBJECT);
+}
+
+void Jsonify::EndObject() {
+	PopScope();
+	PushByte('}');
+}
+
+void Jsonify::BeginArray() {
+	PushByte('[');
+	PushScope(FLAG_ARRAY);
+}
+
+void Jsonify::EndArray() {
+	PopScope();
+	PushByte(']');
+}
+
+void Jsonify::PushKey(String key) {
+	NextElement(true);
+	PushByte('"');
+	PushBuffer(key);
+	PushByte('"');
+	PushByte(':');
+}
+
+void Jsonify::PushString(String str) {
+	NextElement(false);
+	PushByte('"');
+	PushBuffer(str);
+	PushByte('"');
+}
+
+void Jsonify::PushFloat(float number) {
+	NextElement(false);
+	char buff[100];
+	int len = snprintf(buff, sizeof(buff), "%f", number);
+	PushBuffer(Buffer(buff, len));
+}
+
+void Jsonify::PushInt(int number) {
+	NextElement(false);
+	char buff[100];
+	int len = snprintf(buff, sizeof(buff), "%d", number);
+	PushBuffer(Buffer(buff, len));
+}
+
+void Jsonify::PushBool(bool boolean) {
+	NextElement(false);
+	String str = boolean ? String("true") : String("false");
+	PushBuffer(str);
+}
+
+void Jsonify::PushNull() {
+	NextElement(false);
+	PushBuffer("null");
+}
+
+void Jsonify::KeyValue(String key, String value) {
+	PushKey(key);
+	PushString(value);
+}
+
+void Jsonify::KeyValue(String key, int value) {
+	PushKey(key);
+	PushInt(value);
+}
+
+void Jsonify::KeyValue(String key, float value) {
+	PushKey(key);
+	PushFloat(value);
+}
+
+void Jsonify::KeyValue(String key, bool value) {
+	PushKey(key);
+	PushBool(value);
+}
+
+void Jsonify::KeyNull(String key) {
+	PushKey(key);
+	PushNull();
+}
+
+String Jsonify_BuildString(Jsonify *jsonify) {
+	String str(jsonify->start, jsonify->pos);
+	PopSize(jsonify->arena, jsonify->allocated - jsonify->pos);
+	*jsonify = Jsonify(jsonify->arena);
+	return str;
+}
 
 //
 //
@@ -459,11 +605,11 @@ static bool JsonParseBody(Json_Parser *parser, Json_Object *json) {
 			if (JsonParseKeyValuePair(parser, &key, &value)) {
 				json->Put(key, value);
 				if (!JsonParseAcceptToken(parser, JSON_TOKEN_COMMA)) {
+					json->storage.Pack();
 					parsed = true;
 					break;
 				}
-			}
-			else {
+			} else {
 				break;
 			}
 		}
