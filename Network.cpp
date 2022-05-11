@@ -44,6 +44,7 @@ struct Net_Socket {
 	int              addrlen;
 	sockaddr_storage address;
 	Memory_Allocator allocator;
+	ptrdiff_t        allocated;
 	uint8_t          user[NET_DEFAULT_USER_SIZE];
 };
 
@@ -459,8 +460,9 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 
 	user_size = Maximum(user_size, NET_DEFAULT_USER_SIZE);
 	ptrdiff_t allocation_size = user_size - NET_DEFAULT_USER_SIZE;
+	allocation_size += sizeof(Net_Socket);
 
-	Net_Socket *net = (Net_Socket *)MemoryAllocate(sizeof(*net) + allocation_size, allocator);
+	Net_Socket *net = (Net_Socket *)MemoryAllocate(allocation_size, allocator);
 
 	if (net) {
 		memset(net, 0, sizeof(*net));
@@ -474,6 +476,7 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 		net->allocator  = allocator;
 		net->addrlen    = (int)addr_len;
 		net->hostlen    = (int)strlen(hostname);
+		net->allocated  = allocation_size;
 
 		memcpy(net->hostname, hostname, sizeof(hostname));
 		memcpy(&net->address, &addr, sizeof(addr));
@@ -499,7 +502,7 @@ bool Net_OpenSecureChannel(Net_Socket *net, bool verify) {
 void Net_CloseConnection(Net_Socket *net) {
 	PL_Net_OpenSSLCloseChannel(net);
 	PL_Net_CloseSocketDescriptor(net->descriptor);
-	MemoryFree(net, sizeof(*net), net->allocator);
+	MemoryFree(net, net->allocated, net->allocator);
 }
 
 void Net_Shutdown(Net_Socket *net) {

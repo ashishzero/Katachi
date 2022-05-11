@@ -341,7 +341,7 @@ static inline int Http_Receive(Http *http, uint8_t *buffer, int length) {
 static inline void Http_FlushRead(Http *http, Http_Response *res) {
 	while (true) {
 		int bytes_read = Net_ReceiveBlocked((Net_Socket *)http, res->buffer, HTTP_MAX_HEADER_SIZE);
-		if (bytes_read < 0) break;
+		if (bytes_read <= 0) break;
 	}
 }
 

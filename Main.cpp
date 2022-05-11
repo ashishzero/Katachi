@@ -1,7 +1,6 @@
 ﻿#include "Kr/KrBasic.h"
 #include "Network.h"
 #include "Kr/KrString.h"
-#include "StringBuilder.h"
 #include "Websocket.h"
 
 #include <stdio.h>
@@ -178,6 +177,8 @@ namespace Discord {
 	struct Client {
 		Client_State state = CLIENT_CONNECTING;
 
+		int heartbeat_time   = 2000;
+		int heartbeat_rem    = 0;
 		int heartbeats       = 0;
 		int acknowledgements = 0;
 		int sequence         = -1;
@@ -278,15 +279,13 @@ static void Discord_Hearbeat(Websocket *websocket, Discord::Client *client) {
 	j.EndObject();
 
 	String msg = Jsonify_BuildString(&j);
-	Websocket_SendText(websocket, msg);
+	Websocket_SendText(websocket, msg, client->heartbeat_rem);
 	client->heartbeats += 1;
 
 	Trace("Heartbeat (%d)", client->heartbeats);
 }
 
-static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_Event &event, void *user_context) {
-	Discord::Client *client = (Discord::Client *)user_context;
-
+static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_Event &event, Discord::Client *client) {
 	if (event.type == WEBSOCKET_EVENT_TEXT) {
 		auto temp = BeginTemporaryMemory(client->arena);
 		Defer{ EndTemporaryMemory(&temp); };
@@ -307,9 +306,11 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 		switch (client->state) {
 			case Discord::CLIENT_CONNECTING: {
 				if (opcode == Discord::GATEWAY_OP_HELLO) {
+					Trace("Hello");
+
 					Json_Object d          = JsonGetObject(obj, "d");
 					int heartbeat_interval = JsonGetInt(d, "heartbeat_interval", 45000);
-					Websocket_SetTimeout(websocket, heartbeat_interval);
+					client->heartbeat_time = heartbeat_interval;
 
 					// @todo: don't got the connected state yet wait for "ready" event from discord
 					// reconnect or disconnect is "ready" event is not present within some time limit
@@ -343,7 +344,7 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 					// the bot's token will be reset, and the owner will receive an email notification.
 					// It's up to the owner to update their application with the new token.
 
-					Websocket_SendText(websocket, msg);
+					Websocket_SendText(websocket, msg, client->heartbeat_rem);
 				}
 			} break;
 
@@ -357,11 +358,6 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 			} break;
 		}
 
-		return;
-	}
-
-	if (event.type == WEBSOCKET_EVENT_TIMEOUT) {
-		Discord_Hearbeat(websocket, client);
 		return;
 	}
 }
@@ -441,7 +437,38 @@ int main(int argc, char **argv) {
 
 	EndTemporaryMemory(&temp);
 
-	Websocket_Loop(websocket, Discord_HandleWebsocketEvent, &client);
+	ptrdiff_t buff_len = KiloBytes(16);
+
+	Websocket_Event event = {};
+	event.message.data = PushArray(client.arena, uint8_t, buff_len);
+
+	clock_t counter = clock();
+
+	client.heartbeat_rem = client.heartbeat_time;
+
+	while (Websocket_IsConnected(websocket)) {
+		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, client.heartbeat_rem);
+
+		if (res == WEBSOCKET_OK) {
+			Discord_HandleWebsocketEvent(websocket, event, &client);
+		}
+
+		if (res == WEBSOCKET_E_CLOSED) break;
+
+		clock_t new_counter = clock();
+		float spent = (1000.0f * (new_counter - counter)) / CLOCKS_PER_SEC;
+		client.heartbeat_rem -= spent;
+		counter = new_counter;
+
+		if (client.heartbeat_rem <= 0) {
+			client.heartbeat_rem = client.heartbeat_time;
+			res = WEBSOCKET_E_WAIT;
+		}
+
+		if (res == WEBSOCKET_E_WAIT) {
+			Discord_Hearbeat(websocket, &client);
+		}
+	}
 
 	Net_Shutdown();
 
