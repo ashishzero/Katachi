@@ -1,8 +1,9 @@
 #pragma once
 #include "Http.h"
 
-constexpr int WEBSOCKET_MAX_PROTOCOLS = 16;
-constexpr int WEBSOCKET_MAX_WAIT_MS   = 500;
+constexpr int WEBSOCKET_MAX_PROTOCOLS   = 16;
+constexpr int WEBSOCKET_MAX_WAIT_MS     = 500;
+constexpr int WEBSOCKET_DEFAULT_TIMEOUT = 1000;
 
 struct Websocket_Procotols {
 	ptrdiff_t count;
@@ -81,11 +82,15 @@ enum Websocket_Close_Reason {
 	WEBSOCKET_CLOSE_TLS_HANDSHAKE = 1012
 };
 
-bool Websocket_IsConnected(Websocket *websocket);
+bool      Websocket_IsConnected(Websocket *websocket);
 ptrdiff_t Websocket_GetFrameSize(Websocket *websocket, ptrdiff_t payload_len);
-Websocket_Result Websocket_Send(Websocket *websocket, String raw_data, Websocket_Opcode opcode, int timeout);
-Websocket_Result Websocket_SendText(Websocket *websocket, String raw_data, int timeout);
-Websocket_Result Websocket_SendBinary(Websocket *websocket, String raw_data, int timeout);
-Websocket_Result Websocket_Ping(Websocket *websocket, String raw_data, int timeout);
-Websocket_Result Websocket_Close(Websocket *websocket, Websocket_Close_Reason reason, int timeout);
-Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, ptrdiff_t bufflen, int timeout);
+int       Websocket_EventCloseCode(const Websocket_Event &event);
+String    Websocket_EventCloseMessage(const Websocket_Event &event);
+
+Websocket_Result Websocket_Send(Websocket *websocket, String raw_data, Websocket_Opcode opcode, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_SendText(Websocket *websocket, String raw_data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_SendBinary(Websocket *websocket, String raw_data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Ping(Websocket *websocket, String raw_data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Close(Websocket *websocket, Websocket_Close_Reason reason, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Close(Websocket *websocket, int reason, String data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, ptrdiff_t bufflen, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);

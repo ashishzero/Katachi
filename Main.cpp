@@ -33,20 +33,24 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 }
 
 namespace Discord {
+	const String UserAgent = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
+
 	struct Snowflake { uint64_t value = 0; };
 
-	enum GatewayOpcode {
-		GATEWAY_OP_DISPATH = 0,
-		GATEWAY_OP_HEARTBEAT = 1,
-		GATEWAY_OP_IDENTIFY = 2,
-		GATEWAY_OP_PRESECE_UPDATE = 3,
-		GATEWAY_OP_VOICE_STATE_UPDATE = 4,
-		GATEWAY_OP_RESUME = 6,
-		GATEWAY_OP_RECONNECT = 7,
-		GATEWAY_OP_REQUEST_GUILD_MEMBERS = 8,
-		GATEWAY_OP_INVALID_SESSION = 9,
-		GATEWAY_OP_HELLO = 10,
-		GATEWAY_OP_HEARTBEAT_ACK = 11,
+	enum class GatewayOpcode {
+		DISPATH               = 0,
+		HEARTBEAT             = 1,
+		IDENTIFY              = 2,
+		PRESECE_UPDATE        = 3,
+		VOICE_STATE_UPDATE    = 4,
+		RESUME                = 6,
+		RECONNECT             = 7,
+		REQUEST_GUILD_MEMBERS = 8,
+		INVALID_SESSION       = 9,
+		HELLO                 = 10,
+		HEARTBEAT_ACK         = 11,
+
+		_COUNT_
 	};
 
 	enum GatewayIntent {
@@ -167,25 +171,19 @@ namespace Discord {
 			token(_token), presence(_presence), intents(_intents) {}
 	};
 
-	enum Client_State {
-		CLIENT_CONNECTING,
-		CLIENT_CONNECTED,
-
-		_CLIENT_STATE_COUNT
+	struct Heartbeat {
+		float interval     = 2000.0f;
+		float remaining    = 0.0f;
+		int   count        = 0;
+		int   acknowledged = 0;
 	};
 
 	struct Client {
-		Client_State state = CLIENT_CONNECTING;
+		Identify      identify;
+		Heartbeat     heartbeat;
+		int           sequence = -1;
 
-		int heartbeat_time   = 2000;
-		int heartbeat_rem    = 0;
-		int heartbeats       = 0;
-		int acknowledgements = 0;
-		int sequence         = -1;
-
-		String token;
-		String authorization;
-
+		String        token;
 		Memory_Arena *arena = nullptr;
 	};
 }
@@ -227,7 +225,7 @@ static void Discord_Jsonify(const Discord::PresenceUpdate &presence, Jsonify *j)
 static void Discord_Jsonify(const Discord::Identify &identify, Jsonify *j) {
 	j->BeginObject();
 
-	j->KeyValue("op", Discord::GATEWAY_OP_IDENTIFY);
+	j->KeyValue("op", (int)Discord::GatewayOpcode::IDENTIFY);
 	j->PushKey("d");
 	j->BeginObject();
 
@@ -264,14 +262,14 @@ static void Discord_Jsonify(const Discord::Identify &identify, Jsonify *j) {
 }
 
 static void Discord_Hearbeat(Websocket *websocket, Discord::Client *client) {
-	if (client->heartbeats != client->acknowledgements) {
+	if (client->heartbeat.count != client->heartbeat.acknowledged) {
 		// @todo: only wait for certain number of times
-		LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeats, client->acknowledgements);
+		LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeat.count, client->heartbeat.acknowledged);
 	}
 
 	Jsonify j(client->arena);
 	j.BeginObject();
-	j.KeyValue("op", Discord::GATEWAY_OP_HEARTBEAT);
+	j.KeyValue("op", (int)Discord::GatewayOpcode::HEARTBEAT);
 	if (client->sequence >= 0)
 		j.KeyValue("d", client->sequence);
 	else
@@ -279,95 +277,94 @@ static void Discord_Hearbeat(Websocket *websocket, Discord::Client *client) {
 	j.EndObject();
 
 	String msg = Jsonify_BuildString(&j);
-	Websocket_SendText(websocket, msg, client->heartbeat_rem);
-	client->heartbeats += 1;
+	Websocket_SendText(websocket, msg);
+	client->heartbeat.count += 1;
 
-	Trace("Heartbeat (%d)", client->heartbeats);
+	Trace("Heartbeat (%d)", client->heartbeat.count);
 }
 
+typedef void(*Discord_Gateway_Handler)(Websocket *websocket, const Json &data, Discord::Client *client);
+
+static void Discord_GatewayDispatch(Websocket *websocket, const Json &data, Discord::Client *client) {
+}
+
+static void Discord_GatewayHeartbeat(Websocket *websocket, const Json &data, Discord::Client *client) {
+	Discord_Hearbeat(websocket, client);
+}
+
+static void Discord_GatewayReconnect(Websocket *websocket, const Json &data, Discord::Client *client) {
+}
+
+static void Discord_GatewayInvalidSession(Websocket *websocket, const Json &data, Discord::Client *client) {
+}
+
+static void Discord_GatewayHello(Websocket *websocket, const Json &data, Discord::Client *client) {
+	Json_Object obj = JsonGetObject(data);
+
+	client->heartbeat.interval = JsonGetInt(obj, "heartbeat_interval", 45000);
+
+	Jsonify j(client->arena);
+	Discord_Jsonify(client->identify, &j);
+	String msg = Jsonify_BuildString(&j);
+	Websocket_SendText(websocket, msg);
+}
+
+static void Discord_GatewayHeartbeatAck(Websocket *websocket, const Json &data, Discord::Client *client) {
+	client->heartbeat.acknowledged += 1;
+	Trace("Acknowledgement (%d)", client->heartbeat.acknowledged);
+}
+
+static void Discord_GatewayUnreachable(Websocket *websocket, const Json &data, Discord::Client *client) {
+	Unreachable();
+}
+
+static constexpr Discord_Gateway_Handler DiscordGatewayHandlers[] = {
+		Discord_GatewayDispatch,            // 0
+		Discord_GatewayHeartbeat,           // 1
+		Discord_GatewayUnreachable,         // 2
+		Discord_GatewayUnreachable,         // 3
+		Discord_GatewayUnreachable,         // 4
+		Discord_GatewayUnreachable,         // 5
+		Discord_GatewayUnreachable,         // 6
+		Discord_GatewayReconnect,           // 7
+		Discord_GatewayUnreachable,         // 8
+		Discord_GatewayInvalidSession,      // 9
+		Discord_GatewayHello,               // 10
+		Discord_GatewayHeartbeatAck         // 11
+};
+static_assert((int)Discord::GatewayOpcode::_COUNT_ == ArrayCount(DiscordGatewayHandlers), "");
+
 static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_Event &event, Discord::Client *client) {
-	if (event.type == WEBSOCKET_EVENT_TEXT) {
-		auto temp = BeginTemporaryMemory(client->arena);
-		Defer{ EndTemporaryMemory(&temp); };
+	if (event.type != WEBSOCKET_EVENT_TEXT)
+		return;
 
-		String message = event.message;
+	auto temp = BeginTemporaryMemory(client->arena);
+	Defer{ EndTemporaryMemory(&temp); };
 
-		Json json;
-		if (!JsonParse(message, &json, MemoryArenaAllocator(client->arena))) {
-			LogError("Invalid Event received: " StrFmt, StrArg(message));
-			return;
-		}
+	Json json;
+	if (JsonParse(event.message, &json, MemoryArenaAllocator(client->arena))) {
+		Json_Object payload = JsonGetObject(json);
+		int opcode          = JsonGetInt(payload, "op");
+		Json        data    = JsonGet(payload, "d");
+		client->sequence    = JsonGetInt(payload, "s", client->sequence);
+		String event_name   = JsonGetString(payload, "t");
 
-		Json_Object obj  = JsonGetObject(json);
-		client->sequence = JsonGetInt(obj, "s", client->sequence);
+		Trace("Discord Gateway; Opcode: %d, " StrFmt, opcode, StrArg(event_name));
 
-		int opcode       = JsonGetInt(obj, "op");
-
-		switch (client->state) {
-			case Discord::CLIENT_CONNECTING: {
-				if (opcode == Discord::GATEWAY_OP_HELLO) {
-					Trace("Hello");
-
-					Json_Object d          = JsonGetObject(obj, "d");
-					int heartbeat_interval = JsonGetInt(d, "heartbeat_interval", 45000);
-					client->heartbeat_time = heartbeat_interval;
-
-					// @todo: don't got the connected state yet wait for "ready" event from discord
-					// reconnect or disconnect is "ready" event is not present within some time limit
-					client->state = Discord::CLIENT_CONNECTED;
-
-					int intents = 0;
-					intents |= Discord::GatewayIntent::DIRECT_MESSAGES;
-					intents |= Discord::GatewayIntent::GUILD_MESSAGES;
-					intents |= Discord::GatewayIntent::GUILD_MESSAGE_REACTIONS;
-
-					Memory_Allocator allocator = MemoryArenaAllocator(client->arena);
-
-					Discord::PresenceUpdate presence(allocator);
-					presence.status = Discord::StatusType::DO_NOT_DISTURB;
-					Discord::Activity *activity = presence.activities.Add();
-					activity->name = "Spotify";
-					activity->type = Discord::ActivityType::LISTENING;
-					activity->url  = "https://open.spotify.com/track/0ZiO07cHvb675UDaKB1iix?si=7e198a75a163493c";
-
-					Discord::Identify identify(client->token, intents, &presence);
-
-					Jsonify j(client->arena);
-					Discord_Jsonify(identify, &j);
-					String msg = Jsonify_BuildString(&j);
-
-					// @note:
-					// @reference: https://discord.com/developers/docs/topics/gateway#identifying-example-gateway-identify
-					// Clients are limited to 1000 IDENTIFY calls to the websocket in a 24-hour period.
-					// This limit is global and across all shards, but does not include RESUME calls.
-					// Upon hitting this limit, all active sessions for the bot will be terminated,
-					// the bot's token will be reset, and the owner will receive an email notification.
-					// It's up to the owner to update their application with the new token.
-
-					Websocket_SendText(websocket, msg, client->heartbeat_rem);
-				}
-			} break;
-
-			case Discord::CLIENT_CONNECTED: {
-				if (opcode == Discord::GATEWAY_OP_HEARTBEAT) {
-					Discord_Hearbeat(websocket, client);
-				} else if (opcode == Discord::GATEWAY_OP_HEARTBEAT_ACK) {
-					client->acknowledgements += 1;
-					Trace("Acknowledgement (%d)", client->acknowledgements);
-				}
-			} break;
-		}
+		DiscordGatewayHandlers[(int)opcode](websocket, data, client);
 
 		return;
 	}
+
+	LogError("Invalid Event received: " StrFmt, StrArg(event.message));
 }
 
-namespace Discord {
-	const String UserAgent = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
-}
+// @todo
+// Resume: https://discord.com/developers/docs/topics/gateway#resuming
+// Disconnect: https://discord.com/developers/docs/topics/gateway#disconnections
 
 int main(int argc, char **argv) {
-	InitThreadContext(MegaBytes(64));
+	InitThreadContext(KiloBytes(64));
 	ThreadContextSetLogger({ LogProcedure, nullptr });
 
 	if (argc != 2) {
@@ -378,14 +375,14 @@ int main(int argc, char **argv) {
 	Net_Initialize();
 
 	Discord::Client client;
-	client.arena = MemoryArenaAllocate(MegaBytes(1));
+	client.arena = MemoryArenaAllocate(MegaBytes(32));
 
 	if (!client.arena) {
 		return 1; // @todo log error
 	}
 
 	client.token         = FmtStr(client.arena, "%s", argv[1]);
-	client.authorization = FmtStr(client.arena, "Bot %s", argv[1]);
+	String authorization = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
 
 	Http *http = Http_Connect("https://discord.com");
 	if (!http) {
@@ -397,7 +394,7 @@ int main(int argc, char **argv) {
 	Http_Request req;
 	Http_InitRequest(&req);
 	Http_SetHost(&req, http);
-	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, client.authorization);
+	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
 	Http_Response res;
@@ -427,47 +424,67 @@ int main(int argc, char **argv) {
 
 	Websocket_Header headers;
 	Websocket_InitHeader(&headers);
-	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, client.authorization);
+	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, authorization);
 	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
-	Websocket *websocket = Websocket_Connect(url, &res, &headers);
+	Websocket_Spec spec;
+	spec.queue_size = 16;
+	spec.read_size  = MegaBytes(16);
+	spec.write_size = KiloBytes(12);
+
+	Websocket *websocket = Websocket_Connect(url, &res, &headers, spec);
 	if (!websocket) {
 		return 1;
 	}
 
 	EndTemporaryMemory(&temp);
 
-	ptrdiff_t buff_len = KiloBytes(16);
+	ptrdiff_t buff_len = MegaBytes(16);
 
 	Websocket_Event event = {};
 	event.message.data = PushArray(client.arena, uint8_t, buff_len);
 
-	clock_t counter = clock();
+	int intents = 0;
+	intents |= Discord::GatewayIntent::GUILDS;
+	intents |= Discord::GatewayIntent::GUILD_MEMBERS;
+	intents |= Discord::GatewayIntent::GUILD_MESSAGES;
+	intents |= Discord::GatewayIntent::DIRECT_MESSAGE_REACTIONS;
 
-	client.heartbeat_rem = client.heartbeat_time;
+	Discord::PresenceUpdate presence(MemoryArenaAllocator(client.arena));
+	presence.status = Discord::StatusType::DO_NOT_DISTURB;
+	auto activity   = presence.activities.Add();
+	activity->name  = "Twitch";
+	activity->url   = "https://www.twitch.tv/ashishzero";
+	activity->type  = Discord::ActivityType::STREAMING;
+
+	client.identify = Discord::Identify(client.token, intents, &presence);
+
+	clock_t counter = clock();
+	client.heartbeat.remaining = client.heartbeat.interval;
 
 	while (Websocket_IsConnected(websocket)) {
-		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, client.heartbeat_rem);
-
-		if (res == WEBSOCKET_OK) {
-			Discord_HandleWebsocketEvent(websocket, event, &client);
-		}
+		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, client.heartbeat.remaining);
 
 		if (res == WEBSOCKET_E_CLOSED) break;
 
+		if (res == WEBSOCKET_OK) {
+			Discord_HandleWebsocketEvent(websocket, event, &client);
+		} else if (res == WEBSOCKET_E_NOMEM) {
+			LogWarningEx("Discord", "Packet lost. Reason: Buffer size too small");
+		}
+
 		clock_t new_counter = clock();
 		float spent = (1000.0f * (new_counter - counter)) / CLOCKS_PER_SEC;
-		client.heartbeat_rem -= spent;
+		client.heartbeat.remaining -= spent;
 		counter = new_counter;
 
-		if (client.heartbeat_rem <= 0) {
-			client.heartbeat_rem = client.heartbeat_time;
+		if (client.heartbeat.remaining <= 0) {
+			client.heartbeat.remaining = client.heartbeat.interval;
 			res = WEBSOCKET_E_WAIT;
 		}
 
-		if (res == WEBSOCKET_E_WAIT) {
+		if (res == WEBSOCKET_E_WAIT)
 			Discord_Hearbeat(websocket, &client);
-		}
 	}
 
 	Net_Shutdown();

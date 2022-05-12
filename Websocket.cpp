@@ -103,7 +103,8 @@ enum Websocket_Connection {
 	WEBSOCKET_CONNECTED,
 	WEBSOCKET_RECEIVED_CLOSE,
 	WEBSOCKET_SENT_CLOSE,
-	WEBSOCKET_CLOSED,
+	WEBSOCKET_DISCONNECTING,
+	WEBSOCKET_DISCONNECTED,
 };
 
 enum Websocket_Role {
@@ -522,7 +523,7 @@ static void Websocket_InspectForCloseFrame(Websocket_Context *ctx, int opcode) {
 		if (ctx->connection == WEBSOCKET_CONNECTED)
 			ctx->connection = WEBSOCKET_SENT_CLOSE;
 		else
-			ctx->connection = WEBSOCKET_CLOSED;
+			ctx->connection = WEBSOCKET_DISCONNECTING;
 	}
 }
 
@@ -653,7 +654,9 @@ static ptrdiff_t Websocket_CreateFrame(uint8_t *dst, ptrdiff_t dst_size, Buffer 
 }
 
 static void Websocket_ImmSendControlMessage(Websocket_Context *ctx, String msg, Websocket_Opcode opcode) {
-	if (ctx->connection == WEBSOCKET_CLOSED || ctx->connection == WEBSOCKET_SENT_CLOSE)
+	if (ctx->connection == WEBSOCKET_DISCONNECTING ||
+		ctx->connection == WEBSOCKET_DISCONNECTED || 
+		ctx->connection == WEBSOCKET_SENT_CLOSE)
 		return;
 	Assert(msg.length <= 125);
 	bool masked = ctx->role == WEBSOCKET_ROLE_CLIENT;
@@ -883,7 +886,7 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 				Websocket_ImmSendControlMessage(ctx, msg, WEBSOCKET_OP_CONNECTION_CLOSE);
 				ctx->connection = WEBSOCKET_RECEIVED_CLOSE;
 			} else {
-				ctx->connection = WEBSOCKET_CLOSED;
+				ctx->connection = WEBSOCKET_DISCONNECTING;
 			}
 		} break;
 		}
@@ -938,7 +941,7 @@ static int Websocket_ThreadProc(void *arg) {
 	pollfd fd;
 	fd.fd = Net_GetSocketDescriptor(websocket);
 
-	while (ctx->connection != WEBSOCKET_CLOSED) {
+	while (ctx->connection != WEBSOCKET_DISCONNECTING) {
 		fd.events  = 0;
 		fd.revents = 0;
 
@@ -962,7 +965,7 @@ static int Websocket_ThreadProc(void *arg) {
 					int sent = Net_SendBlocked(websocket, write_ptr, (int)remaining);
 					if (sent < 0) {
 						LogErrorEx("Websocket", "Connection lost abrubtly");
-						ctx->connection = WEBSOCKET_CLOSED;
+						ctx->connection = WEBSOCKET_DISCONNECTING;
 						return 1;
 					}
 					remaining -= sent;
@@ -1001,7 +1004,7 @@ static int Websocket_ThreadProc(void *arg) {
 			
 			if (!Websocket_StreamDump(&ctx->reader.stream, reader)) {
 				LogErrorEx("Websocket", "Connection lost abrubtly");
-				ctx->connection = WEBSOCKET_CLOSED;
+				ctx->connection = WEBSOCKET_DISCONNECTING;
 				return 1;
 			}
 
@@ -1013,7 +1016,7 @@ static int Websocket_ThreadProc(void *arg) {
 
 		if (fd.revents & (POLLHUP | POLLERR)) {
 			LogErrorEx("Websocket", "Connection lost abrubtly");
-			ctx->connection = WEBSOCKET_CLOSED;
+			ctx->connection = WEBSOCKET_DISCONNECTING;
 			return 1;
 		}
 	}
@@ -1028,7 +1031,7 @@ static int Websocket_ThreadProc(void *arg) {
 bool Websocket_IsConnected(Websocket *websocket) {
 	Net_Socket *sock = (Net_Socket *)websocket;
 	Websocket_Context *context = (Websocket_Context *)Net_GetUserBuffer(sock);
-	return context->connection != WEBSOCKET_CLOSED;
+	return context->connection != WEBSOCKET_DISCONNECTED;
 }
 
 ptrdiff_t Websocket_GetFrameSize(Websocket *websocket, ptrdiff_t payload_len) {
@@ -1051,6 +1054,24 @@ ptrdiff_t Websocket_GetFrameSize(Websocket *websocket, ptrdiff_t payload_len) {
 	return header_size + payload_len;
 }
 
+int Websocket_EventCloseCode(const Websocket_Event &event) {
+	Assert(event.type == WEBSOCKET_EVENT_CLOSE);
+	if (event.message.length >= 2) {
+		int a    = event.message[0];
+		int b    = event.message[1];
+		int code = ((a << 8) | b);
+		return code;
+	}
+	return -1;
+}
+
+String Websocket_EventCloseMessage(const Websocket_Event &event) {
+	Assert(event.type == WEBSOCKET_EVENT_CLOSE);
+	String reason = event.message;
+	reason = StrRemovePrefix(reason, 2);
+	return reason;
+}
+
 Websocket_Result Websocket_Send(Websocket *websocket, String raw_data, Websocket_Opcode opcode, int timeout) {
 	Net_Socket *socket     = (Net_Socket *)websocket;
 	Websocket_Context *ctx = (Websocket_Context *)Net_GetUserBuffer(socket);
@@ -1062,7 +1083,9 @@ Websocket_Result Websocket_Send(Websocket *websocket, String raw_data, Websocket
 	int res = Semaphore_Wait(ctx->writesem, timeout);
 	if (res == 0) return WEBSOCKET_E_WAIT;
 	if (res > 0) {
-		if (ctx->connection == WEBSOCKET_CLOSED || ctx->connection == WEBSOCKET_SENT_CLOSE)
+		if (ctx->connection == WEBSOCKET_DISCONNECTING || 
+			ctx->connection == WEBSOCKET_DISCONNECTED || 
+			ctx->connection == WEBSOCKET_SENT_CLOSE)
 			return WEBSOCKET_E_CLOSED;
 		Websocket_Queue::Node *node = Websocket_QueueAlloc(&ctx->writeq);
 
@@ -1102,6 +1125,18 @@ Websocket_Result Websocket_Close(Websocket *websocket, Websocket_Close_Reason re
 	return Websocket_Send(websocket, String(payload, message.length + 2), WEBSOCKET_OP_CONNECTION_CLOSE, timeout);
 }
 
+Websocket_Result Websocket_Close(Websocket *websocket, int reason, String data, int timeout) {
+	uint8_t payload[125];
+
+	payload[0] = ((0xff00 & reason) >> 8);
+	payload[1] = 0xff & reason;
+
+	Assert(data.length <= sizeof(payload) - 2);
+	memcpy(payload + 2, data.data, data.length);
+
+	return Websocket_Send(websocket, String(payload, data.length + 2), WEBSOCKET_OP_CONNECTION_CLOSE, timeout);
+}
+
 static Websocket_Event_Type Websocket_OpcodeToEventType(int opcode) {
 	switch (opcode) {
 		case WEBSOCKET_OP_TEXT_FRAME:       return WEBSOCKET_EVENT_TEXT;
@@ -1120,15 +1155,14 @@ Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event,
 
 	int res = Semaphore_Wait(ctx->readsem, timeout);
 	if (res == 0) {
-		if (ctx->connection == WEBSOCKET_CLOSED)
+		if (ctx->connection == WEBSOCKET_DISCONNECTING) {
+			ctx->connection = WEBSOCKET_DISCONNECTED;
 			return WEBSOCKET_E_CLOSED;
+		}
 		return WEBSOCKET_E_WAIT;
 	}
 
 	if (res > 0) {
-		if (ctx->connection == WEBSOCKET_CLOSED)
-			return WEBSOCKET_E_CLOSED;
-
 		Websocket_Queue::Node *node = Websocket_QueuePop(&ctx->readq);
 		Websocket_Result res;
 
