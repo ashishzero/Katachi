@@ -41,8 +41,8 @@ namespace Discord {
 		DISPATH               = 0,
 		HEARTBEAT             = 1,
 		IDENTIFY              = 2,
-		PRESECE_UPDATE        = 3,
-		VOICE_STATE_UPDATE    = 4,
+		UPDATE_PRESECE        = 3,
+		UPDATE_VOICE_STATE    = 4,
 		RESUME                = 6,
 		RECONNECT             = 7,
 		REQUEST_GUILD_MEMBERS = 8,
@@ -171,6 +171,25 @@ namespace Discord {
 			token(_token), presence(_presence), intents(_intents) {}
 	};
 
+	struct GuildMembersRequest {
+		Snowflake        guild_id;
+		String           query;
+		int32_t          limit     = 0;
+		bool             presences = false;
+		Array<Snowflake> user_ids;
+		String           nonce;
+
+		GuildMembersRequest() = default;
+		GuildMembersRequest(Memory_Allocator _allocator): user_ids(_allocator){}
+	};
+
+	struct VoiceStateUpdate {
+		Snowflake guild_id;
+		Snowflake channel_id;
+		bool      self_mute = false;
+		bool      self_deaf = false;
+	};
+
 	struct Heartbeat {
 		float interval     = 2000.0f;
 		float remaining    = 0.0f;
@@ -179,11 +198,14 @@ namespace Discord {
 	};
 
 	struct Client {
-		Identify      identify;
+		Websocket *   websocket;
+		Identify      identify; // @todo: @remove
 		Heartbeat     heartbeat;
-		int           sequence = -1;
 
 		String        token;
+		String        session_id;
+		int           sequence = -1;
+
 		Memory_Arena *arena = nullptr;
 	};
 }
@@ -225,10 +247,6 @@ static void Discord_Jsonify(const Discord::PresenceUpdate &presence, Jsonify *j)
 static void Discord_Jsonify(const Discord::Identify &identify, Jsonify *j) {
 	j->BeginObject();
 
-	j->KeyValue("op", (int)Discord::GatewayOpcode::IDENTIFY);
-	j->PushKey("d");
-	j->BeginObject();
-
 	j->KeyValue("token", identify.token);
 	j->PushKey("properties");
 	j->BeginObject();
@@ -257,30 +275,123 @@ static void Discord_Jsonify(const Discord::Identify &identify, Jsonify *j) {
 	j->KeyValue("intents", identify.intents);
 
 	j->EndObject();
+}
 
+static void Discord_Jsonify(const Discord::GuildMembersRequest &req_guild_mems, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("guild_id", req_guild_mems.guild_id.value);
+	j->KeyValue("limit", req_guild_mems.limit);
+	j->KeyValue("presences", req_guild_mems.presences);
+	if (req_guild_mems.user_ids.count) {
+		j->PushKey("user_ids");
+		j->BeginArray();
+		for (Discord::Snowflake id : req_guild_mems.user_ids)
+			j->PushId(id.value);
+		j->EndArray();
+	} else {
+		j->KeyValue("query", req_guild_mems.query);
+	}
+	if (req_guild_mems.nonce.length)
+		j->KeyValue("nonce", req_guild_mems.nonce);
 	j->EndObject();
 }
 
-static void Discord_Hearbeat(Websocket *websocket, Discord::Client *client) {
-	if (client->heartbeat.count != client->heartbeat.acknowledged) {
-		// @todo: only wait for certain number of times
-		LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeat.count, client->heartbeat.acknowledged);
+static void Discord_Jsonify(const Discord::VoiceStateUpdate &update_voice_state, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("guild_id", update_voice_state.guild_id.value);
+	if (update_voice_state.channel_id.value)
+		j->KeyValue("channel_id", update_voice_state.channel_id.value);
+	else
+		j->KeyNull("channel_id");
+	j->KeyValue("self_mute", update_voice_state.self_mute);
+	j->KeyValue("self_deaf", update_voice_state.self_deaf);
+	j->EndObject();
+}
+
+namespace Discord {
+	void SendIdentify(Client *client, const Identify &identify) {
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::IDENTIFY);
+		j.PushKey("d");
+		Discord_Jsonify(client->identify, &j);
+		j.EndObject();
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
 	}
 
-	Jsonify j(client->arena);
-	j.BeginObject();
-	j.KeyValue("op", (int)Discord::GatewayOpcode::HEARTBEAT);
-	if (client->sequence >= 0)
-		j.KeyValue("d", client->sequence);
-	else
-		j.KeyNull("d");
-	j.EndObject();
+	void SendResume(Client *client) {
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::RESUME);
+		j.PushKey("d");
+		j.BeginObject();
+		j.KeyValue("token", client->token);
+		j.KeyValue("session_id", client->session_id);
+		if (client->sequence >= 0)
+			j.KeyValue("seq", client->sequence);
+		else
+			j.KeyNull("seq");
+		j.EndObject();
+		j.EndObject();
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
+	}
 
-	String msg = Jsonify_BuildString(&j);
-	Websocket_SendText(websocket, msg);
-	client->heartbeat.count += 1;
+	void SendHearbeat(Client *client) {
+		if (client->heartbeat.count != client->heartbeat.acknowledged) {
+			// @todo: only wait for certain number of times
+			LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeat.count, client->heartbeat.acknowledged);
+		}
 
-	Trace("Heartbeat (%d)", client->heartbeat.count);
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::HEARTBEAT);
+		if (client->sequence >= 0)
+			j.KeyValue("d", client->sequence);
+		else
+			j.KeyNull("d");
+		j.EndObject();
+
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
+		client->heartbeat.count += 1;
+
+		Trace("Heartbeat (%d)", client->heartbeat.count);
+	}
+
+	void SendGuildMembersRequest(Client *client, const GuildMembersRequest &req_guild_mems) {
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::REQUEST_GUILD_MEMBERS);
+		j.PushKey("d");
+		Discord_Jsonify(req_guild_mems, &j);
+		j.EndObject();
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
+	}
+
+	void SendVoiceStateUpdate(Client *client, const VoiceStateUpdate &update_voice_state) {
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::UPDATE_VOICE_STATE);
+		j.PushKey("d");
+		Discord_Jsonify(update_voice_state, &j);
+		j.EndObject();
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
+	}
+
+	void SendPresenceUpdate(Client *client, const PresenceUpdate &presence_update) {
+		Jsonify j(client->arena);
+		j.BeginObject();
+		j.KeyValue("op", (int)Discord::GatewayOpcode::UPDATE_PRESECE);
+		j.PushKey("d");
+		Discord_Jsonify(presence_update, &j);
+		j.EndObject();
+		String msg = Jsonify_BuildString(&j);
+		Websocket_SendText(client->websocket, msg);
+	}
 }
 
 typedef void(*Discord_Gateway_Handler)(Websocket *websocket, const Json &data, Discord::Client *client);
@@ -289,7 +400,7 @@ static void Discord_GatewayDispatch(Websocket *websocket, const Json &data, Disc
 }
 
 static void Discord_GatewayHeartbeat(Websocket *websocket, const Json &data, Discord::Client *client) {
-	Discord_Hearbeat(websocket, client);
+	Discord::SendHearbeat(client);
 }
 
 static void Discord_GatewayReconnect(Websocket *websocket, const Json &data, Discord::Client *client) {
@@ -301,12 +412,9 @@ static void Discord_GatewayInvalidSession(Websocket *websocket, const Json &data
 static void Discord_GatewayHello(Websocket *websocket, const Json &data, Discord::Client *client) {
 	Json_Object obj = JsonGetObject(data);
 
-	client->heartbeat.interval = JsonGetInt(obj, "heartbeat_interval", 45000);
+	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
 
-	Jsonify j(client->arena);
-	Discord_Jsonify(client->identify, &j);
-	String msg = Jsonify_BuildString(&j);
-	Websocket_SendText(websocket, msg);
+	Discord::SendIdentify(client, client->identify);
 }
 
 static void Discord_GatewayHeartbeatAck(Websocket *websocket, const Json &data, Discord::Client *client) {
@@ -334,7 +442,7 @@ static constexpr Discord_Gateway_Handler DiscordGatewayHandlers[] = {
 };
 static_assert((int)Discord::GatewayOpcode::_COUNT_ == ArrayCount(DiscordGatewayHandlers), "");
 
-static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_Event &event, Discord::Client *client) {
+static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event) {
 	if (event.type != WEBSOCKET_EVENT_TEXT)
 		return;
 
@@ -351,7 +459,7 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 
 		Trace("Discord Gateway; Opcode: %d, " StrFmt, opcode, StrArg(event_name));
 
-		DiscordGatewayHandlers[(int)opcode](websocket, data, client);
+		DiscordGatewayHandlers[(int)opcode](client->websocket, data, client);
 
 		return;
 	}
@@ -362,6 +470,8 @@ static void Discord_HandleWebsocketEvent(Websocket *websocket, const Websocket_E
 // @todo
 // Resume: https://discord.com/developers/docs/topics/gateway#resuming
 // Disconnect: https://discord.com/developers/docs/topics/gateway#disconnections
+// Sharding: https://discord.com/developers/docs/topics/gateway#sharding
+// Commands: https://discord.com/developers/docs/topics/gateway#commands-and-events-gateway-commands
 
 int main(int argc, char **argv) {
 	InitThreadContext(KiloBytes(64));
@@ -375,7 +485,7 @@ int main(int argc, char **argv) {
 	Net_Initialize();
 
 	Discord::Client client;
-	client.arena = MemoryArenaAllocate(MegaBytes(32));
+	client.arena = MemoryArenaAllocate(MegaBytes(64));
 
 	if (!client.arena) {
 		return 1; // @todo log error
@@ -457,18 +567,20 @@ int main(int argc, char **argv) {
 	activity->url   = "https://www.twitch.tv/ashishzero";
 	activity->type  = Discord::ActivityType::STREAMING;
 
-	client.identify = Discord::Identify(client.token, intents, &presence);
+	client.websocket = websocket;
+	client.identify  = Discord::Identify(client.token, intents, &presence);
 
 	clock_t counter = clock();
 	client.heartbeat.remaining = client.heartbeat.interval;
 
 	while (Websocket_IsConnected(websocket)) {
-		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, client.heartbeat.remaining);
+		// @todo; use arena for websocket_receive
+		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, (int)client.heartbeat.remaining);
 
 		if (res == WEBSOCKET_E_CLOSED) break;
 
 		if (res == WEBSOCKET_OK) {
-			Discord_HandleWebsocketEvent(websocket, event, &client);
+			Discord_HandleWebsocketEvent(&client, event);
 		} else if (res == WEBSOCKET_E_NOMEM) {
 			LogWarningEx("Discord", "Packet lost. Reason: Buffer size too small");
 		}
@@ -484,7 +596,7 @@ int main(int argc, char **argv) {
 		}
 
 		if (res == WEBSOCKET_E_WAIT)
-			Discord_Hearbeat(websocket, &client);
+			Discord::SendHearbeat(&client);
 	}
 
 	Net_Shutdown();

@@ -91,6 +91,14 @@ void Jsonify::PushString(String str) {
 	PushByte('"');
 }
 
+void Jsonify::PushId(uint64_t id) {
+	char buff[100];
+	int len = snprintf(buff, sizeof(buff), "%zu", id);
+	PushByte('"');
+	PushBuffer(Buffer(buff, len));
+	PushByte('"');
+}
+
 void Jsonify::PushFloat(float number) {
 	NextElement(false);
 	char buff[100];
@@ -119,6 +127,11 @@ void Jsonify::PushNull() {
 void Jsonify::KeyValue(String key, String value) {
 	PushKey(key);
 	PushString(value);
+}
+
+void Jsonify::KeyValue(String key, uint64_t value) {
+	PushKey(key);
+	PushId(value);
 }
 
 void Jsonify::KeyValue(String key, int value) {

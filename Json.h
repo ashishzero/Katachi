@@ -29,11 +29,13 @@ struct Jsonify {
 	void EndArray();
 	void PushKey(String key);
 	void PushString(String str);
+	void PushId(uint64_t id);
 	void PushFloat(float number);
 	void PushInt(int number);
 	void PushBool(bool boolean);
 	void PushNull();
 	void KeyValue(String key, String value);
+	void KeyValue(String key, uint64_t value);
 	void KeyValue(String key, int value);
 	void KeyValue(String key, float value);
 	void KeyValue(String key, bool value);

@@ -1448,33 +1448,6 @@ namespace Discord {
 		uint32_t intents;
 	};
 
-	struct GatewayCommandResume {
-		String token;
-		String session_id;
-		int32_t seq;
-	};
-
-	struct GatewayCommandHeartbeat {
-		int32_t op;
-		int32_t d;
-	};
-
-	struct GatewayCommandGuildMembersRequest {
-		Snowflake guild_id;
-		String query;
-		int32_t limit;
-		bool presences;
-		Array<Snowflake> user_ids;
-		String nonce;
-	};
-
-	struct GatewayCommandVoiceStateUpdate {
-		Snowflake guild_id;
-		Snowflake channel_id;
-		bool self_mute;
-		bool self_deaf;
-	};
-
 	enum class GatewayEvent {
 		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION, 
 
