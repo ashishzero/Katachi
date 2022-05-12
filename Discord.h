@@ -1488,11 +1488,11 @@ namespace Discord {
 
 	struct GatewayEventReady {
 		int32_t v;
-		User *user;
+		User user;
 		Array<UnavailableGuild> guilds;
 		String session_id;
 		int32_t shard[2];
-		Application *application;
+		Application application;
 	};
 
 	struct GatewayEventReconnect {

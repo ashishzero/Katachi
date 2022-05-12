@@ -37,6 +37,157 @@ namespace Discord {
 
 	struct Snowflake { uint64_t value = 0; };
 
+	typedef uint64_t Permission;
+	struct PermissionBit {
+		enum : uint64_t {
+			CREATE_INSTANT_INVITE      = 1ull << 0,
+			KICK_MEMBERS               = 1ull << 1,
+			BAN_MEMBERS                = 1ull << 2,
+			ADMINISTRATOR              = 1ull << 3,
+			MANAGE_CHANNELS            = 1ull << 4,
+			MANAGE_GUILD               = 1ull << 5,
+			ADD_REACTIONS              = 1ull << 6,
+			VIEW_AUDIT_LOG             = 1ull << 7,
+			PRIORITY_SPEAKER           = 1ull << 8,
+			STREAM                     = 1ull << 9,
+			VIEW_CHANNEL               = 1ull << 10,
+			SEND_MESSAGES              = 1ull << 11,
+			SEND_TTS_MESSAGES          = 1ull << 12,
+			MANAGE_MESSAGES            = 1ull << 13,
+			EMBED_LINKS                = 1ull << 14,
+			ATTACH_FILES               = 1ull << 15,
+			READ_MESSAGE_HISTORY       = 1ull << 16,
+			MENTION_EVERYONE           = 1ull << 17,
+			USE_EXTERNAL_EMOJIS        = 1ull << 18,
+			VIEW_GUILD_INSIGHTS        = 1ull << 19,
+			CONNECT                    = 1ull << 20,
+			SPEAK                      = 1ull << 21,
+			MUTE_MEMBERS               = 1ull << 22,
+			DEAFEN_MEMBERS             = 1ull << 23,
+			MOVE_MEMBERS               = 1ull << 24,
+			USE_VAD                    = 1ull << 25,
+			CHANGE_NICKNAME            = 1ull << 26,
+			MANAGE_NICKNAMES           = 1ull << 27,
+			MANAGE_ROLES               = 1ull << 28,
+			MANAGE_WEBHOOKS            = 1ull << 29,
+			MANAGE_EMOJIS_AND_STICKERS = 1ull << 30,
+			USE_APPLICATION_COMMANDS   = 1ull << 31,
+			REQUEST_TO_SPEAK           = 1ull << 32,
+			MANAGE_EVENTS              = 1ull << 33,
+			MANAGE_THREADS             = 1ull << 34,
+			CREATE_PUBLIC_THREADS      = 1ull << 35,
+			CREATE_PRIVATE_THREADS     = 1ull << 36,
+			USE_EXTERNAL_STICKERS      = 1ull << 37,
+			SEND_MESSAGES_IN_THREADS   = 1ull << 38,
+			START_EMBEDDED_ACTIVITIES  = 1ull << 39,
+			MODERATE_MEMBERS           = 1ull << 40
+		};
+	};
+
+	//
+	//
+	//
+
+	enum class PremiumType {
+		NONE          = 0,
+		NITRO_CLASSIC = 1,
+		NITRO         = 2
+	};
+
+	typedef int32_t UserFlag;
+	struct UserFlagBit {
+		enum : int32_t {
+			STAFF                    = 1 << 0,
+			PARTNER                  = 1 << 1,
+			HYPESQUAD                = 1 << 2,
+			BUG_HUNTER_LEVEL_1       = 1 << 3,
+			HYPESQUAD_ONLINE_HOUSE_1 = 1 << 6,
+			HYPESQUAD_ONLINE_HOUSE_2 = 1 << 7,
+			HYPESQUAD_ONLINE_HOUSE_3 = 1 << 8,
+			PREMIUM_EARLY_SUPPORTER  = 1 << 9,
+			TEAM_PSEUDO_USER         = 1 << 10,
+			BUG_HUNTER_LEVEL_2       = 1 << 14,
+			VERIFIED_BOT             = 1 << 16,
+			VERIFIED_DEVELOPER       = 1 << 17,
+			CERTIFIED_MODERATOR      = 1 << 18,
+			BOT_HTTP_INTERACTIONS    = 1 << 19,
+		};
+	};
+
+	struct User {
+		Snowflake   id;
+		String      username;
+		String      discriminator;
+		String      avatar;
+		bool        bot = false;
+		bool        system = false;
+		bool        mfa_enabled = false;
+		String      banner;
+		int32_t     accent_color = 0;
+		String      locale;
+		bool        verified = false;
+		String      email;
+		UserFlag    flags = 0;
+		PremiumType premium_type = PremiumType::NONE;
+		UserFlag    public_flags = 0;
+	};
+
+	//
+	//
+	//
+
+	typedef int32_t ApplicationFlag;
+	struct ApplicationFlagBit {
+		enum : int32_t {
+			GATEWAY_PRESENCE                 = 1 << 12,
+			GATEWAY_PRESENCE_LIMITED         = 1 << 13,
+			GATEWAY_GUILD_MEMBERS            = 1 << 14,
+			GATEWAY_GUILD_MEMBERS_LIMITED    = 1 << 15,
+			VERIFICATION_PENDING_GUILD_LIMIT = 1 << 16,
+			EMBEDDED                         = 1 << 17,
+			GATEWAY_MESSAGE_CONTENT          = 1 << 18,
+			GATEWAY_MESSAGE_CONTENT_LIMITED  = 1 << 19,
+		};
+	};
+
+	struct InstallParams {
+		Array<String> scopes;
+		Permission    permissions = 0;
+
+		InstallParams() = default;
+		InstallParams(Memory_Allocator allocator): scopes(allocator) {}
+	};
+
+	struct Application {
+		Snowflake       id;
+		String          name;
+		String          icon;
+		String          description;
+		Array<String>   rpc_origins;
+		bool            bot_public = false;
+		bool            bot_require_code_grant = false;
+		String          terms_of_service_url;
+		String          privacy_policy_url;
+		User *          owner = nullptr;
+		String          verify_key;
+		struct Team *   team = nullptr;
+		Snowflake       guild_id;
+		Snowflake       primary_sku_id;
+		String          slug;
+		String          cover_image;
+		ApplicationFlag flags = 0;
+		String          tags[5];
+		InstallParams * install_params = nullptr;
+		String          custom_install_url;
+
+		Application() = default;
+		Application(Memory_Allocator allocator): rpc_origins(allocator) {}
+	};
+
+	//
+	//
+	//
+
 	enum class Opcode {
 		DISPATH               = 0,
 		HEARTBEAT             = 1,
@@ -55,39 +206,44 @@ namespace Discord {
 	//
 	//
 
-	enum Intent {
-		GUILDS                    = 1 << 0,
-		GUILD_MEMBERS             = 1 << 1,
-		GUILD_BANS                = 1 << 2,
-		GUILD_EMOJIS_AND_STICKERS = 1 << 3,
-		GUILD_INTEGRATIONS        = 1 << 4,
-		GUILD_WEBHOOKS            = 1 << 5,
-		GUILD_INVITES             = 1 << 6,
-		GUILD_VOICE_STATES        = 1 << 7,
-		GUILD_PRESENCES           = 1 << 8,
-		GUILD_MESSAGES            = 1 << 9,
-		GUILD_MESSAGE_REACTIONS   = 1 << 10,
-		GUILD_MESSAGE_TYPING      = 1 << 11,
-		DIRECT_MESSAGES           = 1 << 12,
-		DIRECT_MESSAGE_REACTIONS  = 1 << 13,
-		DIRECT_MESSAGE_TYPING     = 1 << 14,
-		GUILD_SCHEDULED_EVENTS    = 1 << 15,
+	struct Intent {
+		enum : int {
+			GUILDS                    = 1 << 0,
+			GUILD_MEMBERS             = 1 << 1,
+			GUILD_BANS                = 1 << 2,
+			GUILD_EMOJIS_AND_STICKERS = 1 << 3,
+			GUILD_INTEGRATIONS        = 1 << 4,
+			GUILD_WEBHOOKS            = 1 << 5,
+			GUILD_INVITES             = 1 << 6,
+			GUILD_VOICE_STATES        = 1 << 7,
+			GUILD_PRESENCES           = 1 << 8,
+			GUILD_MESSAGES            = 1 << 9,
+			GUILD_MESSAGE_REACTIONS   = 1 << 10,
+			GUILD_MESSAGE_TYPING      = 1 << 11,
+			DIRECT_MESSAGES           = 1 << 12,
+			DIRECT_MESSAGE_REACTIONS  = 1 << 13,
+			DIRECT_MESSAGE_TYPING     = 1 << 14,
+			GUILD_SCHEDULED_EVENTS    = 1 << 15,
+		};
 	};
 
 	enum class StatusType { ONLINE, DO_NOT_DISTURB, AFK, INVISIBLE, OFFLINE };
 
 	enum class ActivityType { GAME, STREAMING, LISTENING, WATCHING, CUSTOM, COMPETING };
 
-	enum ActivityFlag {
-		INSTANCE                    = 1 << 0,
-		JOIN                        = 1 << 1,
-		SPECTATE                    = 1 << 2,
-		JOIN_REQUEST                = 1 << 3,
-		SYNC                        = 1 << 4,
-		PLAY                        = 1 << 5,
-		PARTY_PRIVACY_FRIENDS       = 1 << 6,
-		PARTY_PRIVACY_VOICE_CHANNEL = 1 << 7,
-		EMBEDDED                    = 1 << 8
+	typedef int32_t ActivityFlag;
+	struct ActivityFlagBit {
+		enum : int32_t {
+			INSTANCE                    = 1 << 0,
+			JOIN                        = 1 << 1,
+			SPECTATE                    = 1 << 2,
+			JOIN_REQUEST                = 1 << 3,
+			SYNC                        = 1 << 4,
+			PLAY                        = 1 << 5,
+			PARTY_PRIVACY_FRIENDS       = 1 << 6,
+			PARTY_PRIVACY_VOICE_CHANNEL = 1 << 7,
+			EMBEDDED                    = 1 << 8
+		};
 	};
 
 	struct ActivityTimestamps {
@@ -138,7 +294,7 @@ namespace Discord {
 		ActivityAssets *      assets   = nullptr;
 		ActivitySecrets *     secrets  = nullptr;
 		bool                  instance = false;
-		int32_t               flags    = 0;
+		ActivityFlag          flags    = 0;
 		Array<ActivityButton> buttons;
 
 		Activity() = default;
@@ -242,7 +398,29 @@ namespace Discord {
 
 	struct Event {
 		EventType type;
+	};
 
+	struct Hello : public Event {
+		int32_t heartbeat_interval;
+	};
+
+	struct Ready : public Event {
+		int32_t          v;
+		User             user;
+		Array<Snowflake> guilds;
+		String           session_id;
+		int32_t          shard[2] = {};
+		Application      application;
+
+		Ready() = default;
+		Ready(Memory_Allocator allocator): guilds(allocator), application(allocator) {}
+	};
+
+	struct Resumed : public Event {};
+	struct Reconnect : public Event {};
+
+	struct InvalidSession : public Event {
+		bool resumable = false;
 	};
 
 	//
@@ -649,6 +827,8 @@ int main(int argc, char **argv) {
 			TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
 		}
 	}
+
+	Websocket_Close(websocket, WEBSOCKET_CLOSE_GOING_AWAY);
 
 	Net_Shutdown();
 
