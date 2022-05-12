@@ -93,4 +93,5 @@ Websocket_Result Websocket_SendBinary(Websocket *websocket, String raw_data, int
 Websocket_Result Websocket_Ping(Websocket *websocket, String raw_data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
 Websocket_Result Websocket_Close(Websocket *websocket, Websocket_Close_Reason reason, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
 Websocket_Result Websocket_Close(Websocket *websocket, int reason, String data, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
-Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, ptrdiff_t bufflen, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, uint8_t *buff, ptrdiff_t bufflen, int timeout = WEBSOCKET_DEFAULT_TIMEOUT);
+Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, Memory_Arena *arena, int timeout);

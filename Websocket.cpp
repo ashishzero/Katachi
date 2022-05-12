@@ -1149,39 +1149,84 @@ static Websocket_Event_Type Websocket_OpcodeToEventType(int opcode) {
 	return WEBSOCKET_EVENT_CLOSE;
 }
 
-Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, ptrdiff_t bufflen, int timeout) {
+static Websocket_Queue::Node *Websocket_ReceiveNode(Websocket_Context *ctx, Websocket_Result *res, int timeout) {
+	int wait = Semaphore_Wait(ctx->readsem, timeout);
+	if (wait == 0) {
+		if (ctx->connection == WEBSOCKET_DISCONNECTING) {
+			ctx->connection = WEBSOCKET_DISCONNECTED;
+			*res = WEBSOCKET_E_CLOSED;
+			return nullptr;
+		}
+		*res = WEBSOCKET_E_WAIT;
+		return nullptr;
+	}
+
+	if (wait > 0)
+		return Websocket_QueuePop(&ctx->readq);
+	*res = WEBSOCKET_E_SYSTEM;
+	return nullptr;
+}
+
+Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, uint8_t *buff, ptrdiff_t bufflen, int timeout) {
 	Net_Socket *socket     = (Net_Socket *)websocket;
 	Websocket_Context *ctx = (Websocket_Context *)Net_GetUserBuffer(socket);
 
-	int res = Semaphore_Wait(ctx->readsem, timeout);
-	if (res == 0) {
-		if (ctx->connection == WEBSOCKET_DISCONNECTING) {
-			ctx->connection = WEBSOCKET_DISCONNECTED;
-			return WEBSOCKET_E_CLOSED;
-		}
-		return WEBSOCKET_E_WAIT;
-	}
-
-	if (res > 0) {
-		Websocket_Queue::Node *node = Websocket_QueuePop(&ctx->readq);
-		Websocket_Result res;
-
+	Websocket_Result res;
+	Websocket_Queue::Node *node = Websocket_ReceiveNode(ctx, &res, timeout);
+	if (node) {
 		event->type = Websocket_OpcodeToEventType(node->header & 0x0f);
 
+		event->message.data = buff;
 		if (node->len <= bufflen) {
 			memcpy(event->message.data, node->buff, node->len);
 			event->message.length = node->len;
 			res = WEBSOCKET_OK;
 		} else {
+			LogWarningEx("Websocket", "Full frame not read. Reason: Out of memory");
 			memcpy(event->message.data, node->buff, bufflen);
 			event->message.length = bufflen;
 			res = WEBSOCKET_E_NOMEM;
 		}
 
 		Websocket_QueueFree(&ctx->readq, node);
-
-		return res;
 	}
 
-	return WEBSOCKET_E_SYSTEM;
+	return res;
+}
+
+Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event, Memory_Arena *arena, int timeout) {
+	Net_Socket *socket = (Net_Socket *)websocket;
+	Websocket_Context *ctx = (Websocket_Context *)Net_GetUserBuffer(socket);
+
+	Websocket_Result res;
+	Websocket_Queue::Node *node = Websocket_ReceiveNode(ctx, &res, timeout);
+	if (node) {
+		event->type = Websocket_OpcodeToEventType(node->header & 0x0f);
+
+		uint8_t *buff = (uint8_t *)PushSize(arena, node->len);
+		if (buff) {
+			event->message.data = buff;
+			memcpy(event->message.data, node->buff, node->len);
+			event->message.length = node->len;
+			Websocket_QueueFree(&ctx->readq, node);
+			return WEBSOCKET_OK;
+		}
+
+		LogWarningEx("Websocket", "Full frame not read. Reason: Out of memory");
+
+		ptrdiff_t len = MemoryArenaEmptySize(arena);
+		buff = (uint8_t *)PushSize(arena, len);
+		if (buff) {
+			event->message.data = buff;
+			memcpy(event->message.data, node->buff, len);
+			event->message.length = len;
+		} else {
+			event->message = Buffer();
+		}
+
+		Websocket_QueueFree(&ctx->readq, node);
+		return WEBSOCKET_E_NOMEM;
+	}
+
+	return res;
 }

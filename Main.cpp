@@ -446,9 +446,6 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 	if (event.type != WEBSOCKET_EVENT_TEXT)
 		return;
 
-	auto temp = BeginTemporaryMemory(client->arena);
-	Defer{ EndTemporaryMemory(&temp); };
-
 	Json json;
 	if (JsonParse(event.message, &json, MemoryArenaAllocator(client->arena))) {
 		Json_Object payload = JsonGetObject(json);
@@ -549,11 +546,6 @@ int main(int argc, char **argv) {
 
 	EndTemporaryMemory(&temp);
 
-	ptrdiff_t buff_len = MegaBytes(16);
-
-	Websocket_Event event = {};
-	event.message.data = PushArray(client.arena, uint8_t, buff_len);
-
 	int intents = 0;
 	intents |= Discord::GatewayIntent::GUILDS;
 	intents |= Discord::GatewayIntent::GUILD_MEMBERS;
@@ -574,8 +566,11 @@ int main(int argc, char **argv) {
 	client.heartbeat.remaining = client.heartbeat.interval;
 
 	while (Websocket_IsConnected(websocket)) {
-		// @todo; use arena for websocket_receive
-		Websocket_Result res = Websocket_Receive(websocket, &event, buff_len, (int)client.heartbeat.remaining);
+		auto temp = BeginTemporaryMemory(client.arena);
+		Defer{ EndTemporaryMemory(&temp); };
+
+		Websocket_Event event;
+		Websocket_Result res = Websocket_Receive(websocket, &event, client.arena, (int)client.heartbeat.remaining);
 
 		if (res == WEBSOCKET_E_CLOSED) break;
 
