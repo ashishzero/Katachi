@@ -1144,6 +1144,8 @@ Websocket_Result Websocket_Receive(Websocket *websocket, Websocket_Event *event,
 			res = WEBSOCKET_E_NOMEM;
 		}
 
+		Websocket_QueueFree(&ctx->readq, node);
+
 		return res;
 	}
 
