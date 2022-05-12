@@ -166,6 +166,8 @@ bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 
+void   Http_DumpHeader(const Http_Request &req);
+void   Http_DumpHeader(const Http_Response &res);
 void   Http_InitRequest(Http_Request *req);
 void   Http_SetHost(Http_Request *req, Http *http);
 void   Http_SetHeader(Http_Request *req, Http_Header_Id id, String value);

@@ -143,6 +143,32 @@ void Http_Disconnect(Http *http) {
 //
 //
 
+void Http_DumpHeader(const Http_Request &req) {
+	LogInfoEx("Http", "================== Header Dump ==================");
+	LogInfo("%s ", (req.version == HTTP_VERSION_1_0 ? "HTTP/1.0" : "HTTP/1.1"));
+	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id)
+		LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(req.headers.known[id]));
+	for (int index = 0; index < req.headers.raw.count; ++index) {
+		const auto &raw = req.headers.raw.data[index];
+		LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
+	}
+	LogInfoEx("Http", "=================================================");
+}
+
+void Http_DumpHeader(const Http_Response &res) {
+	const char *version = (res.status.version == HTTP_VERSION_1_0 ? "HTTP/1.0" : "HTTP/1.1");
+
+	LogInfoEx("Http", "================== Header Dump ==================");
+	LogInfo("%s %u " StrFmt, version, res.status.code, StrArg(res.status.name));
+	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id)
+		LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(res.headers.known[id]));
+	for (int index = 0; index < res.headers.raw.count; ++index) {
+		const auto &raw = res.headers.raw.data[index];
+		LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
+	}
+	LogInfoEx("Http", "=================================================");
+}
+
 void Http_InitRequest(Http_Request *req) {
 	memset(req, 0, sizeof(*req));
 }
@@ -573,6 +599,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 				ptrdiff_t data_pos = StrFind(chunk_header, "\r\n");
 				if (data_pos < 0) {
 					LogErrorEx("Http", "Transfer-Encoding: chunk size not present");
+					Http_DumpHeader(*res);
 					Http_FlushRead(http, res);
 					return false;
 				}

@@ -394,53 +394,8 @@ namespace Discord {
 	}
 }
 
-typedef void(*Discord_Gateway_Handler)(Websocket *websocket, const Json &data, Discord::Client *client);
-
-static void Discord_GatewayDispatch(Websocket *websocket, const Json &data, Discord::Client *client) {
+static void Discord_HandleEvent(Discord::Client *client, String event, const Json_Object &data) {
 }
-
-static void Discord_GatewayHeartbeat(Websocket *websocket, const Json &data, Discord::Client *client) {
-	Discord::SendHearbeat(client);
-}
-
-static void Discord_GatewayReconnect(Websocket *websocket, const Json &data, Discord::Client *client) {
-}
-
-static void Discord_GatewayInvalidSession(Websocket *websocket, const Json &data, Discord::Client *client) {
-}
-
-static void Discord_GatewayHello(Websocket *websocket, const Json &data, Discord::Client *client) {
-	Json_Object obj = JsonGetObject(data);
-
-	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
-
-	Discord::SendIdentify(client, client->identify);
-}
-
-static void Discord_GatewayHeartbeatAck(Websocket *websocket, const Json &data, Discord::Client *client) {
-	client->heartbeat.acknowledged += 1;
-	Trace("Acknowledgement (%d)", client->heartbeat.acknowledged);
-}
-
-static void Discord_GatewayUnreachable(Websocket *websocket, const Json &data, Discord::Client *client) {
-	Unreachable();
-}
-
-static constexpr Discord_Gateway_Handler DiscordGatewayHandlers[] = {
-		Discord_GatewayDispatch,            // 0
-		Discord_GatewayHeartbeat,           // 1
-		Discord_GatewayUnreachable,         // 2
-		Discord_GatewayUnreachable,         // 3
-		Discord_GatewayUnreachable,         // 4
-		Discord_GatewayUnreachable,         // 5
-		Discord_GatewayUnreachable,         // 6
-		Discord_GatewayReconnect,           // 7
-		Discord_GatewayUnreachable,         // 8
-		Discord_GatewayInvalidSession,      // 9
-		Discord_GatewayHello,               // 10
-		Discord_GatewayHeartbeatAck         // 11
-};
-static_assert((int)Discord::GatewayOpcode::_COUNT_ == ArrayCount(DiscordGatewayHandlers), "");
 
 static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event) {
 	if (event.type != WEBSOCKET_EVENT_TEXT)
@@ -452,16 +407,49 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		int opcode          = JsonGetInt(payload, "op");
 		Json        data    = JsonGet(payload, "d");
 		client->sequence    = JsonGetInt(payload, "s", client->sequence);
-		String event_name   = JsonGetString(payload, "t");
 
-		Trace("Discord Gateway; Opcode: %d, " StrFmt, opcode, StrArg(event_name));
+		Trace("Discord Gateway; Opcode: %d", opcode);
 
-		DiscordGatewayHandlers[(int)opcode](client->websocket, data, client);
+		if (opcode == (int)Discord::GatewayOpcode::DISPATH) {
+			String event_name = JsonGetString(payload, "t");
+			Trace("Discord Event; " StrFmt, StrArg(event_name));
+			Discord_HandleEvent(client, event_name, JsonGetObject(data));
+			return;
+		}
 
+		if (opcode == (int)Discord::GatewayOpcode::HEARTBEAT) {
+			Discord::SendHearbeat(client);
+			return;
+		}
+
+		if (opcode == (int)Discord::GatewayOpcode::RECONNECT) {
+			Unimplemented();
+			return;
+		}
+
+		if (opcode == (int)Discord::GatewayOpcode::INVALID_SESSION) {
+			Unimplemented();
+			return;
+		}
+
+		if (opcode == (int)Discord::GatewayOpcode::HELLO) {
+			Json_Object obj           = JsonGetObject(data);
+			client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
+			Discord::SendIdentify(client, client->identify);
+			return;
+		}
+
+		if (opcode == (int)Discord::GatewayOpcode::HEARTBEAT_ACK) {
+			client->heartbeat.acknowledged += 1;
+			Trace("Acknowledgement (%d)", client->heartbeat.acknowledged);
+			return;
+		}
+
+		Unreachable();
 		return;
 	}
 
-	LogError("Invalid Event received: " StrFmt, StrArg(event.message));
+	LogErrorEx("Discord", "Invalid Frame received: " StrFmt, StrArg(event.message));
 }
 
 // @todo
