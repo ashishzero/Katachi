@@ -37,7 +37,7 @@ namespace Discord {
 
 	struct Snowflake { uint64_t value = 0; };
 
-	enum class GatewayOpcode {
+	enum class Opcode {
 		DISPATH               = 0,
 		HEARTBEAT             = 1,
 		IDENTIFY              = 2,
@@ -49,11 +49,13 @@ namespace Discord {
 		INVALID_SESSION       = 9,
 		HELLO                 = 10,
 		HEARTBEAT_ACK         = 11,
-
-		_COUNT_
 	};
 
-	enum GatewayIntent {
+	//
+	//
+	//
+
+	enum Intent {
 		GUILDS                    = 1 << 0,
 		GUILD_MEMBERS             = 1 << 1,
 		GUILD_BANS                = 1 << 2,
@@ -76,7 +78,7 @@ namespace Discord {
 
 	enum class ActivityType { GAME, STREAMING, LISTENING, WATCHING, CUSTOM, COMPETING };
 
-	enum class ActivityFlag {
+	enum ActivityFlag {
 		INSTANCE                    = 1 << 0,
 		JOIN                        = 1 << 1,
 		SPECTATE                    = 1 << 2,
@@ -189,6 +191,63 @@ namespace Discord {
 		bool      self_mute = false;
 		bool      self_deaf = false;
 	};
+
+	//
+	//
+	//
+
+	enum class EventType {
+		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION,
+		APPLICATION_COMMAND_PERMISSIONS_UPDATE,
+		CHANNEL_CREATE, CHANNEL_UPDATE, CHANNEL_DELETE, CHANNEL_PINS_UPDATE,
+		THREAD_CREATE, THREAD_UPDATE, THREAD_DELETE,
+		THREAD_LIST_SYNC, THREAD_MEMBER_UPDATE, THREAD_MEMBERS_UPDATE,
+		GUILD_CREATE, GUILD_DELETE, GUILD_BAN_ADD, GUILD_BAN_REMOVE,
+		GUILD_EMOJIS_UPDATE, GUILD_STICKERS_UPDATE, GUILD_INTEGRATIONS_UPDATE,
+		GUILD_MEMBER_ADD, GUILD_MEMBER_REMOVE, GUILD_MEMBER_UPDATE, GUILD_MEMBERS_CHUNK,
+		GUILD_ROLE_CREATE, GUILD_ROLE_UPDATE, GUILD_ROLE_DELETE,
+		GUILD_SCHEDULED_EVENT_CREATE, GUILD_SCHEDULED_EVENT_UPDATE, GUILD_SCHEDULED_EVENT_DELETE,
+		GUILD_SCHEDULED_EVENT_USER_ADD, GUILD_SCHEDULED_EVENT_USER_REMOVE,
+		INTEGRATION_CREATE, INTEGRATION_UPDATE, INTEGRATION_DELETE, INTERACTION_CREATE,
+		INVITE_CREATE, INVITE_DELETE, MESSAGE_CREATE, MESSAGE_UPDATE, MESSAGE_DELETE,
+		MESSAGE_DELETE_BULK, MESSAGE_REACTION_ADD, MESSAGE_REACTION_REMOVE,
+		MESSAGE_REACTION_REMOVE_ALL, MESSAGE_REACTION_REMOVE_EMOJI,
+		PRESENCE_UPDATE, STAGE_INSTANCE_CREATE, STAGE_INSTANCE_DELETE, STAGE_INSTANCE_UPDATE,
+		TYPING_START, USER_UPDATE, VOICE_STATE_UPDATE, VOICE_SERVER_UPDATE, WEBHOOKS_UPDATE,
+
+		EVENT_COUNT
+	};
+
+	static const String EventNames[] = {
+		"HELLO", "READY", "RESUMED", "RECONNECT", "INVALID_SESSION",
+		"APPLICATION_COMMAND_PERMISSIONS_UPDATE",
+		"CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE", "CHANNEL_PINS_UPDATE",
+		"THREAD_CREATE", "THREAD_UPDATE", "THREAD_DELETE",
+		"THREAD_LIST_SYNC", "THREAD_MEMBER_UPDATE", "THREAD_MEMBERS_UPDATE",
+		"GUILD_CREATE", "GUILD_DELETE", "GUILD_BAN_ADD", "GUILD_BAN_REMOVE",
+		"GUILD_EMOJIS_UPDATE", "GUILD_STICKERS_UPDATE", "GUILD_INTEGRATIONS_UPDATE",
+		"GUILD_MEMBER_ADD", "GUILD_MEMBER_REMOVE", "GUILD_MEMBER_UPDATE", "GUILD_MEMBERS_CHUNK",
+		"GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE", "GUILD_ROLE_DELETE",
+		"GUILD_SCHEDULED_EVENT_CREATE", "GUILD_SCHEDULED_EVENT_UPDATE", "GUILD_SCHEDULED_EVENT_DELETE",
+		"GUILD_SCHEDULED_EVENT_USER_ADD", "GUILD_SCHEDULED_EVENT_USER_REMOVE",
+		"INTEGRATION_CREATE", "INTEGRATION_UPDATE", "INTEGRATION_DELETE", "INTERACTION_CREATE",
+		"INVITE_CREATE", "INVITE_DELETE", "MESSAGE_CREATE", "MESSAGE_UPDATE", "MESSAGE_DELETE",
+		"MESSAGE_DELETE_BULK", "MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE",
+		"MESSAGE_REACTION_REMOVE_ALL", "MESSAGE_REACTION_REMOVE_EMOJI",
+		"PRESENCE_UPDATE", "STAGE_INSTANCE_CREATE", "STAGE_INSTANCE_DELETE", "STAGE_INSTANCE_UPDATE",
+		"TYPING_START", "USER_UPDATE", "VOICE_STATE_UPDATE", "VOICE_SERVER_UPDATE", "WEBHOOKS_UPDATE",
+	};
+
+	static_assert(ArrayCount(EventNames) == (int)EventType::EVENT_COUNT, "");
+
+	struct Event {
+		EventType type;
+
+	};
+
+	//
+	//
+	//
 
 	struct Heartbeat {
 		float interval     = 2000.0f;
@@ -312,7 +371,7 @@ namespace Discord {
 	void SendIdentify(Client *client, const Identify &identify) {
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::IDENTIFY);
+		j.KeyValue("op", (int)Discord::Opcode::IDENTIFY);
 		j.PushKey("d");
 		Discord_Jsonify(client->identify, &j);
 		j.EndObject();
@@ -323,7 +382,7 @@ namespace Discord {
 	void SendResume(Client *client) {
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::RESUME);
+		j.KeyValue("op", (int)Discord::Opcode::RESUME);
 		j.PushKey("d");
 		j.BeginObject();
 		j.KeyValue("token", client->token);
@@ -346,7 +405,7 @@ namespace Discord {
 
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::HEARTBEAT);
+		j.KeyValue("op", (int)Discord::Opcode::HEARTBEAT);
 		if (client->sequence >= 0)
 			j.KeyValue("d", client->sequence);
 		else
@@ -356,14 +415,12 @@ namespace Discord {
 		String msg = Jsonify_BuildString(&j);
 		Websocket_SendText(client->websocket, msg);
 		client->heartbeat.count += 1;
-
-		Trace("Heartbeat (%d)", client->heartbeat.count);
 	}
 
 	void SendGuildMembersRequest(Client *client, const GuildMembersRequest &req_guild_mems) {
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::REQUEST_GUILD_MEMBERS);
+		j.KeyValue("op", (int)Discord::Opcode::REQUEST_GUILD_MEMBERS);
 		j.PushKey("d");
 		Discord_Jsonify(req_guild_mems, &j);
 		j.EndObject();
@@ -374,7 +431,7 @@ namespace Discord {
 	void SendVoiceStateUpdate(Client *client, const VoiceStateUpdate &update_voice_state) {
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::UPDATE_VOICE_STATE);
+		j.KeyValue("op", (int)Discord::Opcode::UPDATE_VOICE_STATE);
 		j.PushKey("d");
 		Discord_Jsonify(update_voice_state, &j);
 		j.EndObject();
@@ -385,7 +442,7 @@ namespace Discord {
 	void SendPresenceUpdate(Client *client, const PresenceUpdate &presence_update) {
 		Jsonify j(client->arena);
 		j.BeginObject();
-		j.KeyValue("op", (int)Discord::GatewayOpcode::UPDATE_PRESECE);
+		j.KeyValue("op", (int)Discord::Opcode::UPDATE_PRESECE);
 		j.PushKey("d");
 		Discord_Jsonify(presence_update, &j);
 		j.EndObject();
@@ -395,6 +452,12 @@ namespace Discord {
 }
 
 static void Discord_HandleEvent(Discord::Client *client, String event, const Json_Object &data) {
+	for (int index = 0; index < ArrayCount(Discord::EventNames); ++index) {
+		if (event == Discord::EventNames[index]) {
+			return;
+		}
+	}
+	LogErrorEx("Discord", "Unknown event: " StrFmt, event);
 }
 
 static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event) {
@@ -404,44 +467,47 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 	Json json;
 	if (JsonParse(event.message, &json, MemoryArenaAllocator(client->arena))) {
 		Json_Object payload = JsonGetObject(json);
-		int opcode          = JsonGetInt(payload, "op");
+		int         opcode  = JsonGetInt(payload, "op");
 		Json        data    = JsonGet(payload, "d");
-		client->sequence    = JsonGetInt(payload, "s", client->sequence);
 
-		Trace("Discord Gateway; Opcode: %d", opcode);
-
-		if (opcode == (int)Discord::GatewayOpcode::DISPATH) {
+		if (opcode == (int)Discord::Opcode::DISPATH) {
+			client->sequence  = JsonGetInt(payload, "s", client->sequence);
 			String event_name = JsonGetString(payload, "t");
-			Trace("Discord Event; " StrFmt, StrArg(event_name));
+
+			TraceEx("Discord", "Event: " StrFmt, StrArg(event_name));
 			Discord_HandleEvent(client, event_name, JsonGetObject(data));
 			return;
 		}
 
-		if (opcode == (int)Discord::GatewayOpcode::HEARTBEAT) {
+		if (opcode == (int)Discord::Opcode::HEARTBEAT) {
+			TraceEx("Discord", "Heartbeat (%d)", client->heartbeat.count);
 			Discord::SendHearbeat(client);
 			return;
 		}
 
-		if (opcode == (int)Discord::GatewayOpcode::RECONNECT) {
+		if (opcode == (int)Discord::Opcode::RECONNECT) {
 			Unimplemented();
+			TraceEx("Discord", "Reconnect");
 			return;
 		}
 
-		if (opcode == (int)Discord::GatewayOpcode::INVALID_SESSION) {
+		if (opcode == (int)Discord::Opcode::INVALID_SESSION) {
 			Unimplemented();
+			TraceEx("Discord", "Invalid Session");
 			return;
 		}
 
-		if (opcode == (int)Discord::GatewayOpcode::HELLO) {
-			Json_Object obj           = JsonGetObject(data);
+		if (opcode == (int)Discord::Opcode::HELLO) {
+			TraceEx("Discord", "Hello");
+			Json_Object obj            = JsonGetObject(data);
 			client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
 			Discord::SendIdentify(client, client->identify);
 			return;
 		}
 
-		if (opcode == (int)Discord::GatewayOpcode::HEARTBEAT_ACK) {
+		if (opcode == (int)Discord::Opcode::HEARTBEAT_ACK) {
 			client->heartbeat.acknowledged += 1;
-			Trace("Acknowledgement (%d)", client->heartbeat.acknowledged);
+			TraceEx("Discord", "Acknowledgement (%d)", client->heartbeat.acknowledged);
 			return;
 		}
 
@@ -515,7 +581,7 @@ int main(int argc, char **argv) {
 	String url = JsonGetString(obj, "url");
 	int shards = JsonGetInt(obj, "shards");
 	// @todo: Handle sharding
-	Trace("Getway URL: " StrFmt ", Shards: %d", StrArg(url), shards);
+	TraceEx("Discord", "Getway URL: " StrFmt ", Shards: %d", StrArg(url), shards);
 
 	Websocket_Header headers;
 	Websocket_InitHeader(&headers);
@@ -535,10 +601,10 @@ int main(int argc, char **argv) {
 	EndTemporaryMemory(&temp);
 
 	int intents = 0;
-	intents |= Discord::GatewayIntent::GUILDS;
-	intents |= Discord::GatewayIntent::GUILD_MEMBERS;
-	intents |= Discord::GatewayIntent::GUILD_MESSAGES;
-	intents |= Discord::GatewayIntent::DIRECT_MESSAGE_REACTIONS;
+	intents |= Discord::Intent::GUILDS;
+	intents |= Discord::Intent::GUILD_MEMBERS;
+	intents |= Discord::Intent::GUILD_MESSAGES;
+	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 
 	Discord::PresenceUpdate presence(MemoryArenaAllocator(client.arena));
 	presence.status = Discord::StatusType::DO_NOT_DISTURB;
@@ -578,8 +644,10 @@ int main(int argc, char **argv) {
 			res = WEBSOCKET_E_WAIT;
 		}
 
-		if (res == WEBSOCKET_E_WAIT)
+		if (res == WEBSOCKET_E_WAIT) {
 			Discord::SendHearbeat(&client);
+			TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
+		}
 	}
 
 	Net_Shutdown();
