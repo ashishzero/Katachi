@@ -92,6 +92,30 @@ namespace Discord {
 	//
 	//
 
+	enum class ApplicationCommandPermissionType {
+		ROLE = 1, USER = 2, CHANNEL = 3
+	};
+
+	struct ApplicationCommandPermission {
+		Snowflake                        id;
+		ApplicationCommandPermissionType type;
+		bool                             permission = false;
+	};
+
+	struct ApplicationCommandPermissions {
+		Snowflake                           id;
+		Snowflake                           application_id;
+		Snowflake                           guild_id;
+		Array<ApplicationCommandPermission> permissions;
+
+		ApplicationCommandPermissions() = default;
+		ApplicationCommandPermissions(Memory_Allocator allocator): permissions(allocator) {}
+	};
+
+	//
+	//
+	//
+
 	enum class PremiumType {
 		NONE          = 0,
 		NITRO_CLASSIC = 1,
@@ -440,6 +464,14 @@ namespace Discord {
 		InvalidSessionEvent(): Event(EventType::INVALID_SESSION) {}
 	};
 
+	struct ApplicationCommandPermissionsUpdateEvent : public Event {
+		ApplicationCommandPermissions permissions;
+
+		ApplicationCommandPermissionsUpdateEvent(): Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {}
+		ApplicationCommandPermissionsUpdateEvent(Memory_Allocator allocator): 
+			Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE), permissions(allocator) {}
+	};
+
 	//
 	//
 	//
@@ -708,6 +740,29 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::ReadyEvent *rea
 	ready->application.flags = JsonGetInt(application, "flags");
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationCommandPermission *perms) {
+	perms->id         = Discord_ParseId(JsonGetString(obj, "id"));
+	perms->type       = (Discord::ApplicationCommandPermissionType)JsonGetInt(obj, "type");
+	perms->permission = JsonGetBool(obj, "permission");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationCommandPermissions *app_cmd_perms) {
+	app_cmd_perms->id = Discord_ParseId(JsonGetString(obj, "id"));
+	app_cmd_perms->application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
+	app_cmd_perms->guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	Json_Array permissions = JsonGetArray(obj, "permissions");
+	app_cmd_perms->permissions.Resize(permissions.count);
+
+	for (ptrdiff_t index = 0; index < app_cmd_perms->permissions.count; ++index) {
+		Discord_Deserialize(JsonGetObject(permissions[0]), &app_cmd_perms->permissions[index]);
+	}
+}
+
+//
+//
+//
+
 typedef void(*Discord_Event_Handler)(Discord::Client *client, const Json &data);
 
 static void Discord_EventHandlerNone(Discord::Client *client, const Json &data) {}
@@ -751,9 +806,15 @@ static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Js
 	Unimplemented();
 }
 
+static void Discord_EventHandlerApplicationCommandPermissionsUpdate(Discord::Client *client, const Json &data) {
+	Discord::ApplicationCommandPermissionsUpdateEvent app_cmd_perms_update;
+	Discord_Deserialize(JsonGetObject(data), &app_cmd_perms_update.permissions);
+	client->onevent(client, &app_cmd_perms_update);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady, Discord_EventHandlerResumed, Discord_EventHandlerReconnect,
-	Discord_EventHandlerInvalidSession, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerInvalidSession, Discord_EventHandlerApplicationCommandPermissionsUpdate, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -770,6 +831,7 @@ static_assert(ArrayCount(DiscordEventHandlers) == ArrayCount(Discord::EventNames
 static void Discord_HandleEvent(Discord::Client *client, String event, const Json &data) {
 	for (int index = 0; index < ArrayCount(Discord::EventNames); ++index) {
 		if (event == Discord::EventNames[index]) {
+			TraceEx("Discord", "Event " StrFmt, StrArg(event));
 			DiscordEventHandlers[index](client, data);
 			return;
 		}
@@ -838,7 +900,13 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 void KatachiEventHandler(Discord::Client *client, Discord::Event *event) {
 	if (event->type == Discord::EventType::READY) {
 		auto ready = (Discord::ReadyEvent *)event;
-		TraceEx("Event", "Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
+		Trace("Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
+		return;
+	}
+
+	if (event->type == Discord::EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {
+		auto perms = (Discord::ApplicationCommandPermissionsUpdateEvent *)event;
+		Trace("Permission updates: " StrFmt, StrArg(perms->name));
 		return;
 	}
 }
