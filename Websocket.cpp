@@ -127,6 +127,14 @@ struct Websocket_Queue {
 	Node            head;
 	Node *          tail;
 	Node *          free;
+
+#if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
+	struct {
+		int in_queue;
+		int allocated;
+		int free;
+	} debug_info;
+#endif
 };
 
 constexpr uint32_t WEBSOCKET_WRITER_CONTROL_BUFFER_SIZE = 256;
@@ -454,6 +462,10 @@ static Websocket_Queue::Node *Websocket_QueueAlloc(Websocket_Queue *q) {
 	if (node) {
 		q->free    = node->next;
 		node->next = nullptr;
+#if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
+	q->debug_info.allocated += 1;
+	q->debug_info.free -= 1;
+#endif
 	}
 	SpinUnlock(&q->guard);
 	return node;
@@ -464,6 +476,10 @@ static void Websocket_QueueFree(Websocket_Queue *q, Websocket_Queue::Node *node)
 	Assert(!node->prev && !node->next);
 	node->next = q->free;
 	q->free    = node;
+#if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
+	q->debug_info.allocated -= 1;
+	q->debug_info.free += 1;
+#endif
 	SpinUnlock(&q->guard);
 }
 
@@ -473,6 +489,10 @@ static void Websocket_QueuePush(Websocket_Queue *q, Websocket_Queue::Node *node)
 	q->tail->next = node;
 	node->prev = q->tail;
 	node->next = &q->head;
+#if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
+	q->debug_info.allocated -= 1;
+	q->debug_info.in_queue += 1;
+#endif
 	SpinUnlock(&q->guard);
 }
 
@@ -485,6 +505,10 @@ static Websocket_Queue::Node *Websocket_QueuePop(Websocket_Queue *q) {
 		q->head.next = next;
 		next->prev   = &q->head;
 		node->prev   = node->next = nullptr;
+#if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
+	q->debug_info.allocated += 1;
+	q->debug_info.in_queue -= 1;
+#endif
 	}
 	SpinUnlock(&q->guard);
 	return node;
