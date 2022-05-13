@@ -45,6 +45,8 @@ struct Array {
 
 	inline bool Resize(ptrdiff_t new_count) {
 		if (Reserve(new_count)) {
+			for (ptrdiff_t index = count; index < new_count; ++index)
+				data[index] = T{};
 			count = new_count;
 			return true;
 		}
@@ -66,7 +68,6 @@ struct Array {
 			if (!Reserve(c))
 				return nullptr;
 		}
-		data[count] = T{};
 		count += 1;
 		return data + (count - 1);
 	}

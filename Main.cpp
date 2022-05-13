@@ -88,6 +88,17 @@ namespace Discord {
 		};
 	};
 
+	enum class OverwriteType {
+		ROLE = 0, MEMBER = 1
+	};
+
+	struct Overwrite {
+		Snowflake     id;
+		OverwriteType type  = OverwriteType::ROLE;
+		Permission    allow = 0;
+		Permission    deny  = 0;
+	};
+
 	//
 	//
 	//
@@ -210,6 +221,82 @@ namespace Discord {
 
 		Application() = default;
 		Application(Memory_Allocator allocator): rpc_origins(allocator) {}
+	};
+
+	//
+	//
+	//
+
+	enum class ChannelType {
+		GUILD_TEXT           = 0,
+		DM                   = 1,
+		GUILD_VOICE          = 2,
+		GROUP_DM             = 3,
+		GUILD_CATEGORY       = 4,
+		GUILD_NEWS           = 5,
+		GUILD_STORE          = 6,
+		GUILD_NEWS_THREAD    = 10,
+		GUILD_PUBLIC_THREAD  = 11,
+		GUILD_PRIVATE_THREAD = 12,
+		GUILD_STAGE_VOICE    = 13,
+		GUILD_DIRECTORY      = 14,
+		GUILD_FORUM          = 15,
+	};
+
+	typedef int32_t ChannelFlag;
+	struct ChannelFlagBit {
+		enum {
+			PINNED = 1 << 1
+		};
+	};
+
+	struct ThreadMetadata {
+		bool      archived = false;
+		int32_t   auto_archive_duration = 0;
+		ptrdiff_t archive_timestamp = 0;
+		bool      locked = false;
+		bool      invitable = false;
+		ptrdiff_t create_timestamp = 0;
+	};
+
+	struct ThreadMember {
+		Snowflake id;
+		Snowflake user_id;
+		ptrdiff_t join_timestamp = 0;
+		int32_t   flags = 0;
+	};
+
+	struct Channel {
+		Snowflake        id;
+		ChannelType      type = ChannelType::GUILD_TEXT;
+		Snowflake        guild_id;
+		int32_t          position = 0;
+		Array<Overwrite> permission_overwrites;
+		String           name;
+		String           topic;
+		bool             nsfw = false;
+		Snowflake        last_message_id;
+		int32_t          bitrate;
+		int32_t          user_limit;
+		int32_t          rate_limit_per_user;
+		Array<User>      recipients;
+		String           icon;
+		Snowflake        owner_id;
+		Snowflake        application_id;
+		Snowflake        parent_id;
+		ptrdiff_t        last_pin_timestamp = 0;
+		String           rtc_region;
+		int32_t          video_quality_mode = 0;
+		int32_t          message_count = 0;
+		int32_t          member_count = 0;
+		ThreadMetadata * thread_metadata;
+		ThreadMember *   member;
+		int32_t          default_auto_archive_duration = 0;
+		Permission       permissions = 0;
+		ChannelFlag      flags = 0;
+
+		Channel() = default;
+		Channel(Memory_Allocator allocator): permission_overwrites(allocator), recipients(allocator) {}
 	};
 
 	//
@@ -434,12 +521,12 @@ namespace Discord {
 		Event(EventType _type): type(_type), name(EventNames[(int)_type]) {}
 	};
 
-	struct HelloEvent : public Event {
+	struct Hello : public Event {
 		int32_t heartbeat_interval;
-		HelloEvent(): Event(EventType::HELLO) {}
+		Hello(): Event(EventType::HELLO) {}
 	};
 
-	struct ReadyEvent : public Event {
+	struct Ready : public Event {
 		int32_t          v;
 		User             user;
 		Array<Snowflake> guilds;
@@ -447,29 +534,55 @@ namespace Discord {
 		int32_t          shard[2] = {};
 		Application      application;
 
-		ReadyEvent(): Event(EventType::READY) {}
-		ReadyEvent(Memory_Allocator allocator): Event(EventType::READY), guilds(allocator), application(allocator) {}
+		Ready(): Event(EventType::READY) {}
+		Ready(Memory_Allocator allocator): Event(EventType::READY), guilds(allocator), application(allocator) {}
 	};
 
-	struct ResumedEvent : public Event {
-		ResumedEvent(): Event(EventType::RESUMED) {}
+	struct Resumed : public Event {
+		Resumed(): Event(EventType::RESUMED) {}
 	};
 
-	struct ReconnectEvent : public Event {
-		ReconnectEvent() : Event(EventType::RECONNECT) {}
+	struct Reconnect : public Event {
+		Reconnect() : Event(EventType::RECONNECT) {}
 	};
 
-	struct InvalidSessionEvent : public Event {
+	struct InvalidSession : public Event {
 		bool resumable = false;
-		InvalidSessionEvent(): Event(EventType::INVALID_SESSION) {}
+		InvalidSession(): Event(EventType::INVALID_SESSION) {}
 	};
 
-	struct ApplicationCommandPermissionsUpdateEvent : public Event {
+	struct ApplicationCommandPermissionsUpdate : public Event {
 		ApplicationCommandPermissions permissions;
 
-		ApplicationCommandPermissionsUpdateEvent(): Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {}
-		ApplicationCommandPermissionsUpdateEvent(Memory_Allocator allocator): 
+		ApplicationCommandPermissionsUpdate(): Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {}
+		ApplicationCommandPermissionsUpdate(Memory_Allocator allocator): 
 			Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE), permissions(allocator) {}
+	};
+
+	struct ChannelCreate : public Event {
+		Channel channel;
+		ChannelCreate(): Event(EventType::CHANNEL_CREATE) {}
+		ChannelCreate(Memory_Allocator allocator): Event(EventType::CHANNEL_CREATE), channel(allocator) {}
+	};
+
+	struct ChannelUpdate : public Event {
+		Channel channel;
+		ChannelUpdate(): Event(EventType::CHANNEL_UPDATE) {}
+		ChannelUpdate(Memory_Allocator allocator) : Event(EventType::CHANNEL_UPDATE), channel(allocator) {}
+	};
+
+	struct ChannelDelete : public Event {
+		Channel channel;
+		ChannelDelete(): Event(EventType::CHANNEL_DELETE) {}
+		ChannelDelete(Memory_Allocator allocator) : Event(EventType::CHANNEL_DELETE), channel(allocator) {}
+	};
+
+	struct ChannelPinsUpdate : public Event {
+		Snowflake guild_id;
+		Snowflake channel_id;
+		ptrdiff_t last_pin_timestamp;
+
+		ChannelPinsUpdate(): Event(EventType::CHANNEL_PINS_UPDATE) {}
 	};
 
 	//
@@ -691,12 +804,78 @@ namespace Discord {
 	}
 }
 
-static Discord::Snowflake Discord_ParseId(String id) {
+static uint64_t Discord_ParseBigInt(String id) {
 	uint64_t value = 0;
 	for (auto ch : id) {
 		value = value * 10 + (ch - '0');
 	}
+	return value;
+}
+
+static Discord::Snowflake Discord_ParseId(String id) {
+	uint64_t value = Discord_ParseBigInt(id);
 	return Discord::Snowflake(value);
+}
+
+static ptrdiff_t Discord_ParseTimestamp(String timestamp) {
+	// 1990-12-31T23:59:60Z
+	// 1996-12-19T16:39:57-08:00
+	// 1937-01-01T12:00:27.87+00:20
+	// 01234567890123456789
+
+	char buffer[32];
+
+	if (timestamp.length > sizeof(buffer) - 1)
+		return 0;
+
+	int len = (int)timestamp.length;
+	memcpy(buffer, timestamp.data, len);
+	memset(buffer + len, 0, sizeof(buffer) - len);
+
+	buffer[4]  = 0;
+	buffer[7]  = 0;
+	buffer[10] = 0;
+	buffer[13] = 0;
+	buffer[16] = 0;
+
+	long years  = strtol(buffer +  0, nullptr, 10);
+	long months = strtol(buffer +  5, nullptr, 10);
+	long days   = strtol(buffer +  8, nullptr, 10);
+	long hours  = strtol(buffer + 11, nullptr, 10);
+	long mins   = strtol(buffer + 14, nullptr, 10);
+
+	char *end_ptr = nullptr;
+	float frac    = strtof(buffer + 17, &end_ptr);
+	long secs     = (long)frac;
+
+	if (*end_ptr == '+' || *end_ptr == '-') {
+		end_ptr[3] = 0;
+		long offh  = strtol(end_ptr + 0, nullptr, 10);
+		long offm  = strtol(end_ptr + 4, nullptr, 10);
+		hours += offh;
+		mins += offm;
+	}
+
+	constexpr long DaysInMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+	const long UNIX_YEAR = 1970;
+
+	years -= UNIX_YEAR;
+
+	months = Minimum(months, ArrayCount(DaysInMonth));
+	months -= 1;
+	for (long i = 0; i < months; ++i)
+		days += DaysInMonth[i];
+	days -= 1;
+
+	ptrdiff_t epoch = 0;
+	epoch += secs;
+	epoch += mins * 60;
+	epoch += hours * 60 * 60;
+	epoch += days * 24 * 60 * 60;
+	epoch += years * 365 * 24 * 60 * 60;
+
+	return epoch;
 }
 
 static void Discord_Deserialize(const Json_Object &obj, Discord::User *user) {
@@ -717,7 +896,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::User *user) {
 	user->public_flags  = JsonGetInt(obj, "public_flags");
 }
 
-static void Discord_Deserialize(const Json_Object &obj, Discord::ReadyEvent *ready) {
+static void Discord_Deserialize(const Json_Object &obj, Discord::Ready *ready) {
 	ready->v = JsonGetInt(obj, "v");
 	Discord_Deserialize(JsonGetObject(obj, "user"), &ready->user);
 
@@ -747,15 +926,92 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationComm
 }
 
 static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationCommandPermissions *app_cmd_perms) {
-	app_cmd_perms->id = Discord_ParseId(JsonGetString(obj, "id"));
+	app_cmd_perms->id             = Discord_ParseId(JsonGetString(obj, "id"));
 	app_cmd_perms->application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
-	app_cmd_perms->guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	app_cmd_perms->guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
 	Json_Array permissions = JsonGetArray(obj, "permissions");
 	app_cmd_perms->permissions.Resize(permissions.count);
 
 	for (ptrdiff_t index = 0; index < app_cmd_perms->permissions.count; ++index) {
 		Discord_Deserialize(JsonGetObject(permissions[0]), &app_cmd_perms->permissions[index]);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Overwrite *overwrite) {
+	overwrite->id    = Discord_ParseId(JsonGetString(obj, "id"));
+	overwrite->type  = (Discord::OverwriteType)JsonGetInt(obj, "type");
+	overwrite->allow = Discord_ParseBigInt(JsonGetString(obj, "allow"));
+	overwrite->deny  = Discord_ParseBigInt(JsonGetString(obj, "deny"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ThreadMetadata *metadata) {
+	metadata->archived              = JsonGetBool(obj, "archived");
+	metadata->auto_archive_duration = JsonGetInt(obj, "auto_archive_duration");
+	metadata->archive_timestamp     = Discord_ParseTimestamp(JsonGetString(obj, "archive_timestamp"));
+	metadata->locked                = JsonGetBool(obj, "locked");
+	metadata->invitable             = JsonGetBool(obj, "invitable");
+	metadata->create_timestamp      = Discord_ParseTimestamp(JsonGetString(obj, "create_timestamp"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ThreadMember *member) {
+	member->id             = Discord_ParseId(JsonGetString(obj, "id"));
+	member->user_id        = Discord_ParseId(JsonGetString(obj, "user_id"));
+	member->join_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "join_timestamp"));
+	member->flags          = JsonGetInt(obj, "flags");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Channel *channel) {
+	channel->id       = Discord_ParseId(JsonGetString(obj, "id"));
+	channel->type     = (Discord::ChannelType)JsonGetInt(obj, "type");
+	channel->guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	channel->position = JsonGetInt(obj, "position", -1);
+
+	Json_Array permission_overwrites = JsonGetArray(obj, "permission_overwrites");
+	channel->permission_overwrites.Resize(permission_overwrites.count);
+	for (ptrdiff_t index = 0; index < channel->permission_overwrites.count; ++index) {
+		Discord_Deserialize(JsonGetObject(permission_overwrites[index]), &channel->permission_overwrites[index]);
+	}
+
+	channel->name                = JsonGetString(obj, "name");
+	channel->topic               = JsonGetString(obj, "topic");
+	channel->nsfw                = JsonGetBool(obj, "nsfw");
+	channel->last_message_id     = Discord_ParseId(JsonGetString(obj, "last_message_id"));
+	channel->bitrate             = JsonGetInt(obj, "bitrate");
+	channel->user_limit          = JsonGetInt(obj, "user_limit");
+	channel->rate_limit_per_user = JsonGetInt(obj, "rate_limit_per_user");
+
+	Json_Array recipients = JsonGetArray(obj, "recipients");
+	channel->recipients.Resize(recipients.count);
+	for (ptrdiff_t index = 0; index < channel->recipients.count; ++index) {
+		Discord_Deserialize(JsonGetObject(recipients[index]), &channel->recipients[index]);
+	}
+
+	channel->icon                          = JsonGetString(obj, "icon");
+	channel->owner_id                      = Discord_ParseId(JsonGetString(obj, "owner_id"));
+	channel->application_id                = Discord_ParseId(JsonGetString(obj, "application_id"));
+	channel->parent_id                     = Discord_ParseId(JsonGetString(obj, "parent_id"));
+	channel->last_pin_timestamp            = Discord_ParseTimestamp(JsonGetString(obj, "last_pin_timestamp"));
+	channel->rtc_region                    = JsonGetString(obj, "rtc_region");
+	channel->video_quality_mode            = JsonGetInt(obj, "video_quality_mode", 1);
+	channel->message_count                 = JsonGetInt(obj, "message_count");
+	channel->member_count                  = JsonGetInt(obj, "member_count");
+	channel->default_auto_archive_duration = JsonGetInt(obj, "default_auto_archive_duration");
+	channel->permissions                   = Discord_ParseBigInt(JsonGetString(obj, "permissions"));
+	channel->flags                         = JsonGetInt(obj, "flags");
+
+	const Json *thread_metadata = obj.Find("thread_metadata");
+	if (thread_metadata) {
+		channel->thread_metadata = new Discord::ThreadMetadata;
+		if (channel->thread_metadata)
+			Discord_Deserialize(JsonGetObject(*thread_metadata), channel->thread_metadata);
+	}
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		channel->member = new Discord::ThreadMember;
+		if (channel->member)
+			Discord_Deserialize(JsonGetObject(*member), channel->member);
 	}
 }
 
@@ -770,13 +1026,13 @@ static void Discord_EventHandlerNone(Discord::Client *client, const Json &data) 
 static void Discord_EventHandlerHello(Discord::Client *client, const Json &data) {
 	Json_Object obj = JsonGetObject(data);
 	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
-	Discord::HelloEvent hello;
+	Discord::Hello hello;
 	hello.heartbeat_interval = (int32_t)client->heartbeat.interval;
 	client->onevent(client, &hello);
 }
 
 static void Discord_EventHandlerReady(Discord::Client *client, const Json &data) {
-	Discord::ReadyEvent ready;
+	Discord::Ready ready;
 	Discord_Deserialize(JsonGetObject(data), &ready);
 
 	if (ready.session_id.length) {
@@ -789,41 +1045,73 @@ static void Discord_EventHandlerReady(Discord::Client *client, const Json &data)
 }
 
 static void Discord_EventHandlerResumed(Discord::Client *client, const Json &data) {
-	Discord::ResumedEvent resumed;
+	Discord::Resumed resumed;
 	client->onevent(client, &resumed);
 }
 
 static void Discord_EventHandlerReconnect(Discord::Client *client, const Json &data) {
-	Discord::ReconnectEvent reconnect;
+	Discord::Reconnect reconnect;
 	client->onevent(client, &reconnect);
 	Unimplemented();
 }
 
 static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Json &data) {
-	Discord::InvalidSessionEvent invalid_session;
+	Discord::InvalidSession invalid_session;
 	invalid_session.resumable = JsonGetBool(data);
 	client->onevent(client, &invalid_session);
 	Unimplemented();
 }
 
 static void Discord_EventHandlerApplicationCommandPermissionsUpdate(Discord::Client *client, const Json &data) {
-	Discord::ApplicationCommandPermissionsUpdateEvent app_cmd_perms_update;
+	Discord::ApplicationCommandPermissionsUpdate app_cmd_perms_update;
 	Discord_Deserialize(JsonGetObject(data), &app_cmd_perms_update.permissions);
 	client->onevent(client, &app_cmd_perms_update);
 }
 
+static void Discord_EventHandlerChannelCreate(Discord::Client *client, const Json &data) {
+	Discord::ChannelCreate channel;
+	Discord_Deserialize(JsonGetObject(data), &channel.channel);
+	client->onevent(client, &channel);
+}
+
+static void Discord_EventHandlerChannelUpdate(Discord::Client *client, const Json &data) {
+	Discord::ChannelCreate channel;
+	Discord_Deserialize(JsonGetObject(data), &channel.channel);
+	client->onevent(client, &channel);
+}
+
+static void Discord_EventHandlerChannelDelete(Discord::Client *client, const Json &data) {
+	Discord::ChannelCreate channel;
+	Discord_Deserialize(JsonGetObject(data), &channel.channel);
+	client->onevent(client, &channel);
+}
+
+static void Discord_EventHandlerChannelPinsUpdate(Discord::Client *client, const Json &data) {
+	Discord::ChannelPinsUpdate pins;
+	Json_Object obj         = JsonGetObject(data);
+	pins.guild_id           = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	pins.channel_id         = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	pins.last_pin_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "last_pin_timestamp"));
+	client->onevent(client, &pins);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
-	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady, Discord_EventHandlerResumed, Discord_EventHandlerReconnect,
-	Discord_EventHandlerInvalidSession, Discord_EventHandlerApplicationCommandPermissionsUpdate, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
+	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
+	Discord_EventHandlerApplicationCommandPermissionsUpdate, 
+	Discord_EventHandlerChannelCreate, Discord_EventHandlerChannelUpdate, Discord_EventHandlerChannelDelete,
+	Discord_EventHandlerChannelPinsUpdate,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 };
 static_assert(ArrayCount(DiscordEventHandlers) == ArrayCount(Discord::EventNames), "");
@@ -897,16 +1185,40 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 // Sharding: https://discord.com/developers/docs/topics/gateway#sharding
 // Commands: https://discord.com/developers/docs/topics/gateway#commands-and-events-gateway-commands
 
-void KatachiEventHandler(Discord::Client *client, Discord::Event *event) {
+void TestEventHandler(Discord::Client *client, Discord::Event *event) {
 	if (event->type == Discord::EventType::READY) {
-		auto ready = (Discord::ReadyEvent *)event;
+		auto ready = (Discord::Ready *)event;
 		Trace("Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
 		return;
 	}
 
 	if (event->type == Discord::EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {
-		auto perms = (Discord::ApplicationCommandPermissionsUpdateEvent *)event;
+		auto perms = (Discord::ApplicationCommandPermissionsUpdate *)event;
 		Trace("Permission updates: " StrFmt, StrArg(perms->name));
+		return;
+	}
+
+	if (event->type == Discord::EventType::CHANNEL_CREATE) {
+		auto channel = (Discord::ChannelCreate *)event;
+		Trace("Channel created: " StrFmt, StrArg(channel->channel.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::CHANNEL_UPDATE) {
+		auto channel = (Discord::ChannelUpdate *)event;
+		Trace("Channel updated: " StrFmt, StrArg(channel->channel.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::CHANNEL_DELETE) {
+		auto channel = (Discord::ChannelDelete *)event;
+		Trace("Channel deleted: " StrFmt, StrArg(channel->channel.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::CHANNEL_PINS_UPDATE) {
+		auto pins = (Discord::ChannelPinsUpdate *)event;
+		Trace("Pins Updated");
 		return;
 	}
 }
@@ -1001,13 +1313,12 @@ int main(int argc, char **argv) {
 
 	client.websocket = websocket;
 	client.identify  = Discord::Identify(client.token, intents, &presence);
-	client.onevent   = KatachiEventHandler;
+	client.onevent   = TestEventHandler;
 
 	clock_t counter = clock();
 	client.heartbeat.remaining = client.heartbeat.interval;
 
 	ThreadContext.allocator = MemoryArenaAllocator(client.scratch);
-
 
 	while (Websocket_IsConnected(websocket)) {
 		Websocket_Event event;

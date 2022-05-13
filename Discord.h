@@ -356,8 +356,8 @@ namespace Discord {
 	struct ThreadMember {
 		Snowflake id;
 		Snowflake user_id;
-		uint64_t join_timestamp;
-		int32_t flags;
+		uint64_t  join_timestamp = 0;
+		int32_t   flags = 0;
 	};
 
 	struct Overwrite {
@@ -368,14 +368,14 @@ namespace Discord {
 	};
 
 	struct Channel {
-		Snowflake id;
-		ChannelType type;
-		Snowflake guild_id;
-		int32_t position;
+		Snowflake        id;
+		ChannelType      type = ChannelType::GUILD_TEXT;
+		Snowflake        guild_id;
+		int32_t          position = 0;
 		Array<Overwrite> permission_overwrites;
-		String name;
-		String topic;
-		bool nsfw;
+		String           name;
+		String           topic;
+		bool             nsfw = false;
 		Snowflake last_message_id;
 		int32_t bitrate;
 		int32_t user_limit;
