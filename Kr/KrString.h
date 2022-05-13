@@ -74,16 +74,16 @@ INLINE_PROCEDURE ptrdiff_t StrCopy(String src, char *const dst, ptrdiff_t dst_si
 	return copied;
 }
 
-INLINE_PROCEDURE String StrDuplicate(String src) {
+INLINE_PROCEDURE String StrDup(String src, Memory_Allocator allocator = ThreadContext.allocator) {
 	String dst;
-	dst.data = (uint8_t *)MemoryAllocate(src.length + 1, ThreadContext.allocator);
+	dst.data = (uint8_t *)MemoryAllocate(src.length + 1, allocator);
 	memcpy(dst.data, src.data, src.length);
 	dst.length = src.length;
 	dst.data[dst.length] = 0;
 	return dst;
 }
 
-INLINE_PROCEDURE String StrDuplicate(String src, Memory_Arena *arena) {
+INLINE_PROCEDURE String StrDup(String src, Memory_Arena *arena) {
 	String dst;
 	dst.data = (uint8_t *)PushSize(arena, src.length + 1);
 	memcpy(dst.data, src.data, src.length);

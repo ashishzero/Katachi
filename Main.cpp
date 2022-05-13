@@ -35,7 +35,11 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 namespace Discord {
 	const String UserAgent = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
 
-	struct Snowflake { uint64_t value = 0; };
+	struct Snowflake {
+		uint64_t value = 0;
+		Snowflake() = default;
+		Snowflake(uint64_t _val): value(_val) {}
+	};
 
 	typedef uint64_t Permission;
 	struct PermissionBit {
@@ -353,6 +357,7 @@ namespace Discord {
 	//
 
 	enum class EventType {
+		NONE,
 		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION,
 		APPLICATION_COMMAND_PERMISSIONS_UPDATE,
 		CHANNEL_CREATE, CHANNEL_UPDATE, CHANNEL_DELETE, CHANNEL_PINS_UPDATE,
@@ -375,6 +380,7 @@ namespace Discord {
 	};
 
 	static const String EventNames[] = {
+		"NONE",
 		"HELLO", "READY", "RESUMED", "RECONNECT", "INVALID_SESSION",
 		"APPLICATION_COMMAND_PERMISSIONS_UPDATE",
 		"CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE", "CHANNEL_PINS_UPDATE",
@@ -397,14 +403,19 @@ namespace Discord {
 	static_assert(ArrayCount(EventNames) == (int)EventType::EVENT_COUNT, "");
 
 	struct Event {
-		EventType type;
+		EventType type = EventType::NONE;
+		String    name = "NONE";
+
+		Event() = default;
+		Event(EventType _type): type(_type), name(EventNames[(int)_type]) {}
 	};
 
-	struct Hello : public Event {
+	struct HelloEvent : public Event {
 		int32_t heartbeat_interval;
+		HelloEvent(): Event(EventType::HELLO) {}
 	};
 
-	struct Ready : public Event {
+	struct ReadyEvent : public Event {
 		int32_t          v;
 		User             user;
 		Array<Snowflake> guilds;
@@ -412,16 +423,32 @@ namespace Discord {
 		int32_t          shard[2] = {};
 		Application      application;
 
-		Ready() = default;
-		Ready(Memory_Allocator allocator): guilds(allocator), application(allocator) {}
+		ReadyEvent(): Event(EventType::READY) {}
+		ReadyEvent(Memory_Allocator allocator): Event(EventType::READY), guilds(allocator), application(allocator) {}
 	};
 
-	struct Resumed : public Event {};
-	struct Reconnect : public Event {};
+	struct ResumedEvent : public Event {
+		ResumedEvent(): Event(EventType::RESUMED) {}
+	};
 
-	struct InvalidSession : public Event {
+	struct ReconnectEvent : public Event {
+		ReconnectEvent() : Event(EventType::RECONNECT) {}
+	};
+
+	struct InvalidSessionEvent : public Event {
 		bool resumable = false;
+		InvalidSessionEvent(): Event(EventType::INVALID_SESSION) {}
 	};
+
+	//
+	//
+	//
+
+	using EventHandler = void(*)(struct Client *client, struct Event *event);
+
+	void DefOnEvent(struct Client *client, struct Event *event) {
+		TraceEx("Discord", StrFmt, StrArg(event->name));
+	}
 
 	//
 	//
@@ -443,7 +470,10 @@ namespace Discord {
 		String        session_id;
 		int           sequence = -1;
 
-		Memory_Arena *arena = nullptr;
+		EventHandler onevent = DefOnEvent;
+
+		Memory_Arena *   scratch = nullptr;
+		Memory_Allocator allocator;
 	};
 }
 
@@ -547,7 +577,7 @@ static void Discord_Jsonify(const Discord::VoiceStateUpdate &update_voice_state,
 
 namespace Discord {
 	void SendIdentify(Client *client, const Identify &identify) {
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::IDENTIFY);
 		j.PushKey("d");
@@ -558,7 +588,7 @@ namespace Discord {
 	}
 
 	void SendResume(Client *client) {
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::RESUME);
 		j.PushKey("d");
@@ -581,7 +611,7 @@ namespace Discord {
 			LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeat.count, client->heartbeat.acknowledged);
 		}
 
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::HEARTBEAT);
 		if (client->sequence >= 0)
@@ -596,7 +626,7 @@ namespace Discord {
 	}
 
 	void SendGuildMembersRequest(Client *client, const GuildMembersRequest &req_guild_mems) {
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::REQUEST_GUILD_MEMBERS);
 		j.PushKey("d");
@@ -607,7 +637,7 @@ namespace Discord {
 	}
 
 	void SendVoiceStateUpdate(Client *client, const VoiceStateUpdate &update_voice_state) {
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::UPDATE_VOICE_STATE);
 		j.PushKey("d");
@@ -618,7 +648,7 @@ namespace Discord {
 	}
 
 	void SendPresenceUpdate(Client *client, const PresenceUpdate &presence_update) {
-		Jsonify j(client->arena);
+		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::UPDATE_PRESECE);
 		j.PushKey("d");
@@ -629,9 +659,118 @@ namespace Discord {
 	}
 }
 
-static void Discord_HandleEvent(Discord::Client *client, String event, const Json_Object &data) {
+static Discord::Snowflake Discord_ParseId(String id) {
+	uint64_t value = 0;
+	for (auto ch : id) {
+		value = value * 10 + (ch - '0');
+	}
+	return Discord::Snowflake(value);
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::User *user) {
+	user->id            = Discord_ParseId(JsonGetString(obj, "id"));
+	user->username      = JsonGetString(obj, "username");
+	user->discriminator = JsonGetString(obj, "discriminator");
+	user->avatar        = JsonGetString(obj, "avatar");
+	user->bot           = JsonGetBool(obj, "bot");
+	user->system        = JsonGetBool(obj, "system");
+	user->mfa_enabled   = JsonGetBool(obj, "mfa_enabled");
+	user->banner        = JsonGetString(obj, "banner");
+	user->accent_color  = JsonGetInt(obj, "accent_color");
+	user->locale        = JsonGetString(obj, "locale");
+	user->verified      = JsonGetBool(obj, "verified");
+	user->email         = JsonGetString(obj, "email");
+	user->flags         = JsonGetInt(obj, "flags");
+	user->premium_type  = (Discord::PremiumType)JsonGetInt(obj, "premium_type");
+	user->public_flags  = JsonGetInt(obj, "public_flags");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ReadyEvent *ready) {
+	ready->v = JsonGetInt(obj, "v");
+	Discord_Deserialize(JsonGetObject(obj, "user"), &ready->user);
+
+	Json_Array guilds = JsonGetArray(obj, "guilds");
+	ready->guilds.Resize(guilds.count);
+
+	for (ptrdiff_t index = 0; index < ready->guilds.count; ++index) {
+		Json_Object unavailable_guild = JsonGetObject(guilds[index]);
+		ready->guilds[index] = Discord_ParseId(JsonGetString(unavailable_guild, "id"));
+	}
+
+	ready->session_id = JsonGetString(obj, "session_id");
+	
+	Json_Array shard = JsonGetArray(obj, "shard");
+	ready->shard[0]  = JsonGetInt(shard[0], 0);
+	ready->shard[1]  = JsonGetInt(shard[1], 1);
+
+	Json_Object application  = JsonGetObject(obj, "application");
+	ready->application.id    = Discord_ParseId(JsonGetString(application, "id"));
+	ready->application.flags = JsonGetInt(application, "flags");
+}
+
+typedef void(*Discord_Event_Handler)(Discord::Client *client, const Json &data);
+
+static void Discord_EventHandlerNone(Discord::Client *client, const Json &data) {}
+
+static void Discord_EventHandlerHello(Discord::Client *client, const Json &data) {
+	Json_Object obj = JsonGetObject(data);
+	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
+	Discord::HelloEvent hello;
+	hello.heartbeat_interval = (int32_t)client->heartbeat.interval;
+	client->onevent(client, &hello);
+}
+
+static void Discord_EventHandlerReady(Discord::Client *client, const Json &data) {
+	Discord::ReadyEvent ready;
+	Discord_Deserialize(JsonGetObject(data), &ready);
+
+	if (ready.session_id.length) {
+		if (client->session_id.length)
+			MemoryFree(client->session_id.data, client->session_id.length + 1, client->allocator);
+		client->session_id = StrDup(ready.session_id, client->allocator);
+	}
+
+	client->onevent(client, &ready);
+}
+
+static void Discord_EventHandlerResumed(Discord::Client *client, const Json &data) {
+	Discord::ResumedEvent resumed;
+	client->onevent(client, &resumed);
+}
+
+static void Discord_EventHandlerReconnect(Discord::Client *client, const Json &data) {
+	Discord::ReconnectEvent reconnect;
+	client->onevent(client, &reconnect);
+	Unimplemented();
+}
+
+static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Json &data) {
+	Discord::InvalidSessionEvent invalid_session;
+	invalid_session.resumable = JsonGetBool(data);
+	client->onevent(client, &invalid_session);
+	Unimplemented();
+}
+
+static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
+	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady, Discord_EventHandlerResumed, Discord_EventHandlerReconnect,
+	Discord_EventHandlerInvalidSession, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+};
+static_assert(ArrayCount(DiscordEventHandlers) == ArrayCount(Discord::EventNames), "");
+
+static void Discord_HandleEvent(Discord::Client *client, String event, const Json &data) {
 	for (int index = 0; index < ArrayCount(Discord::EventNames); ++index) {
 		if (event == Discord::EventNames[index]) {
+			DiscordEventHandlers[index](client, data);
 			return;
 		}
 	}
@@ -643,7 +782,7 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		return;
 
 	Json json;
-	if (JsonParse(event.message, &json, MemoryArenaAllocator(client->arena))) {
+	if (JsonParse(event.message, &json)) {
 		Json_Object payload = JsonGetObject(json);
 		int         opcode  = JsonGetInt(payload, "op");
 		Json        data    = JsonGet(payload, "d");
@@ -651,9 +790,7 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		if (opcode == (int)Discord::Opcode::DISPATH) {
 			client->sequence  = JsonGetInt(payload, "s", client->sequence);
 			String event_name = JsonGetString(payload, "t");
-
-			TraceEx("Discord", "Event: " StrFmt, StrArg(event_name));
-			Discord_HandleEvent(client, event_name, JsonGetObject(data));
+			Discord_HandleEvent(client, event_name, data);
 			return;
 		}
 
@@ -664,21 +801,17 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		}
 
 		if (opcode == (int)Discord::Opcode::RECONNECT) {
-			Unimplemented();
-			TraceEx("Discord", "Reconnect");
+			Discord_EventHandlerReconnect(client, data);
 			return;
 		}
 
 		if (opcode == (int)Discord::Opcode::INVALID_SESSION) {
-			Unimplemented();
-			TraceEx("Discord", "Invalid Session");
+			Discord_EventHandlerInvalidSession(client, data);
 			return;
 		}
 
 		if (opcode == (int)Discord::Opcode::HELLO) {
-			TraceEx("Discord", "Hello");
-			Json_Object obj            = JsonGetObject(data);
-			client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
+			Discord_EventHandlerHello(client, data);
 			Discord::SendIdentify(client, client->identify);
 			return;
 		}
@@ -702,8 +835,16 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 // Sharding: https://discord.com/developers/docs/topics/gateway#sharding
 // Commands: https://discord.com/developers/docs/topics/gateway#commands-and-events-gateway-commands
 
+void KatachiEventHandler(Discord::Client *client, Discord::Event *event) {
+	if (event->type == Discord::EventType::READY) {
+		auto ready = (Discord::ReadyEvent *)event;
+		TraceEx("Event", "Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
+		return;
+	}
+}
+
 int main(int argc, char **argv) {
-	InitThreadContext(KiloBytes(64));
+	InitThreadContext(0);
 	ThreadContextSetLogger({ LogProcedure, nullptr });
 
 	if (argc != 2) {
@@ -714,21 +855,20 @@ int main(int argc, char **argv) {
 	Net_Initialize();
 
 	Discord::Client client;
-	client.arena = MemoryArenaAllocate(MegaBytes(64));
+	client.scratch   = MemoryArenaAllocate(MegaBytes(64));
+	client.allocator = ThreadContextDefaultParams.allocator;
 
-	if (!client.arena) {
+	if (!client.scratch) {
 		return 1; // @todo log error
 	}
 
-	client.token         = FmtStr(client.arena, "%s", argv[1]);
-	String authorization = FmtStr(ThreadScratchpad(), "Bot %s", argv[1]);
+	client.token         = StrDup(String(argv[1], strlen(argv[1])), client.allocator);
+	String authorization = FmtStr(client.scratch, "Bot " StrFmt, StrArg(client.token));
 
 	Http *http = Http_Connect("https://discord.com");
 	if (!http) {
 		return 1;
 	}
-
-	auto temp = BeginTemporaryMemory(client.arena);
 
 	Http_Request req;
 	Http_InitRequest(&req);
@@ -737,12 +877,12 @@ int main(int argc, char **argv) {
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
 	Http_Response res;
-	if (!Http_Get(http, "/api/v9/gateway/bot", req, &res, client.arena)) {
+	if (!Http_Get(http, "/api/v9/gateway/bot", req, &res, client.scratch)) {
 		return 1; // @todo EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
 	}
 
 	Json json;
-	if (!JsonParse(res.body, &json, MemoryArenaAllocator(client.arena))) {
+	if (!JsonParse(res.body, &json, MemoryArenaAllocator(client.scratch))) {
 		return 1; // @todo log EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
 	}
 
@@ -776,7 +916,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	EndTemporaryMemory(&temp);
+	MemoryArenaReset(client.scratch);
 
 	int intents = 0;
 	intents |= Discord::Intent::GUILDS;
@@ -784,7 +924,7 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 
-	Discord::PresenceUpdate presence(MemoryArenaAllocator(client.arena));
+	Discord::PresenceUpdate presence(client.allocator);
 	presence.status = Discord::StatusType::DO_NOT_DISTURB;
 	auto activity   = presence.activities.Add();
 	activity->name  = "Twitch";
@@ -793,16 +933,17 @@ int main(int argc, char **argv) {
 
 	client.websocket = websocket;
 	client.identify  = Discord::Identify(client.token, intents, &presence);
+	client.onevent   = KatachiEventHandler;
 
 	clock_t counter = clock();
 	client.heartbeat.remaining = client.heartbeat.interval;
 
-	while (Websocket_IsConnected(websocket)) {
-		auto temp = BeginTemporaryMemory(client.arena);
-		Defer{ EndTemporaryMemory(&temp); };
+	ThreadContext.allocator = MemoryArenaAllocator(client.scratch);
 
+
+	while (Websocket_IsConnected(websocket)) {
 		Websocket_Event event;
-		Websocket_Result res = Websocket_Receive(websocket, &event, client.arena, (int)client.heartbeat.remaining);
+		Websocket_Result res = Websocket_Receive(websocket, &event, client.scratch, (int)client.heartbeat.remaining);
 
 		if (res == WEBSOCKET_E_CLOSED) break;
 
@@ -826,6 +967,8 @@ int main(int argc, char **argv) {
 			Discord::SendHearbeat(&client);
 			TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
 		}
+
+		MemoryArenaReset(client.scratch);
 	}
 
 	Websocket_Close(websocket, WEBSOCKET_CLOSE_GOING_AWAY);
