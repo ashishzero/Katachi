@@ -417,6 +417,249 @@ namespace Discord {
 		Channel(Memory_Allocator allocator): permission_overwrites(allocator), recipients(allocator) {}
 	};
 
+	enum class VerificationLevel {
+		NONE = 0, LOW = 1, MEDIUM = 2, HIGH = 3, VERY_HIGH = 4
+	};
+
+	enum class MessageNotificationLevel {
+		ALL_MESSAGES = 0, ONLY_MENTIONS = 1
+	};
+
+	enum class ExplicitContentFilterLevel {
+		DISABLED = 0, MEMBERS_WITHOUT_ROLES = 1, ALL_MEMBERS = 2
+	};
+
+	enum class MFALevel {
+		NONE = 0, ELEVATED = 1
+	};
+
+	typedef int32_t SystemChannelFlag;
+	struct SystemChannelFlagBit {
+		enum {
+			SUPPRESS_JOIN_NOTIFICATIONS           = 1 << 0,
+			SUPPRESS_PREMIUM_SUBSCRIPTIONS        = 1 << 1,
+			SUPPRESS_GUILD_REMINDER_NOTIFICATIONS = 1 << 2,
+			SUPPRESS_JOIN_NOTIFICATION_REPLIES    = 1 << 3
+		};
+	};
+
+	enum class PremiumTier {
+		NONE = 0, TIER_1 = 1, TIER_2 = 2, TIER_3 = 3
+	};
+
+	enum class GuildNSFWLevel {
+		DEFAULT = 0, EXPLICIT = 1, SAFE = 2, AGE_RESTRICTED = 3
+	};
+
+	struct RoleTag {
+		Snowflake bot_id;
+		Snowflake integration_id;
+		bool      premium_subscriber = false;
+	};
+
+	struct Role {
+		Snowflake  id;
+		String     name;
+		int32_t    color = 0;
+		bool       hoist = false;
+		String     icon;
+		String     unicode_emoji;
+		int32_t    position = 0;
+		Permission permissions = 0;
+		bool       managed;
+		bool       mentionable;
+		RoleTag *  tags = nullptr;
+	};
+
+	struct Emoji {
+		Snowflake   id;
+		String      name;
+		Array<Role> roles;
+		User *      user = nullptr;
+		bool        require_colons = false;
+		bool        managed = false;
+		bool        animated = false;
+		bool        available = false;
+
+		Emoji() = default;
+		Emoji(Memory_Allocator allocator): roles(allocator) {}
+	};
+
+	enum class GuildFeature {
+		ANIMATED_BANNER,
+		ANIMATED_ICON,
+		BANNER,
+		COMMERCE,
+		COMMUNITY,
+		DISCOVERABLE,
+		FEATURABLE,
+		INVITE_SPLASH,
+		MEMBER_VERIFICATION_GATE_ENABLED,
+		MONETIZATION_ENABLED,
+		MORE_STICKERS,
+		NEWS,
+		PARTNERED,
+		PREVIEW_ENABLED,
+		PRIVATE_THREADS,
+		ROLE_ICONS,
+		TICKETED_EVENTS_ENABLED,
+		VANITY_URL,
+		VERIFIED,
+		VIP_REGIONS,
+		WELCOME_SCREEN_ENABLED,
+
+		GUILD_FEATURE_COUNT
+	};
+
+	struct WelcomeScreenChannel {
+		Snowflake channel_id;
+		String    description;
+		Snowflake emoji_id;
+		String    emoji_name;
+	};
+
+	struct WelcomeScreen {
+		String                      description;
+		Array<WelcomeScreenChannel> welcome_channels;
+
+		WelcomeScreen() = default;
+		WelcomeScreen(Memory_Allocator allocator): welcome_channels(allocator) {}
+	};
+
+	enum class StickerType {
+		STANDARD = 1, GUILD = 2
+	};
+
+	enum class StickerFormatType {
+		PNG = 1, APNG = 2, LOTTIE = 3
+	};
+
+	struct Sticker {
+		Snowflake         id;
+		Snowflake         pack_id;
+		String            name;
+		String            description;
+		String            tags;
+		StickerType       type = StickerType::GUILD;
+		StickerFormatType format_type = StickerFormatType::PNG;
+		bool              available = false;
+		Snowflake         guild_id;
+		User *            user = nullptr;
+		int32_t           sort_value = 0;
+	};
+
+	struct Guild { //@todo: default initialize
+		Snowflake                  id;
+		String                     name;
+		String                     icon;
+		String                     icon_hash;
+		String                     splash;
+		String                     discovery_splash;
+		bool                       owner = false;
+		Snowflake                  owner_id;
+		Permission                 permissions;
+		Snowflake                  afk_channel_id;
+		int32_t                    afk_timeout = 0;
+		bool                       widget_enabled = false;
+		Snowflake                  widget_channel_id;
+		VerificationLevel          verification_level = VerificationLevel::NONE;
+		MessageNotificationLevel   default_message_notifications = MessageNotificationLevel::ALL_MESSAGES;
+		ExplicitContentFilterLevel explicit_content_filter = ExplicitContentFilterLevel::DISABLED;
+		Array<Role>                roles;
+		Array<Emoji>               emojis;
+		Array<GuildFeature>        features;
+		MFALevel                   mfa_level = MFALevel::NONE;
+		Snowflake                  application_id;
+		Snowflake                  system_channel_id;
+		SystemChannelFlag          system_channel_flags = 0;
+		Snowflake                  rules_channel_id;
+		int32_t                    max_presences = 0;
+		int32_t                    max_members = 0;
+		String                     vanity_url_code;
+		String                     description;
+		String                     banner;
+		PremiumTier                premium_tier = PremiumTier::NONE;
+		int32_t                    premium_subscription_count = 0;
+		String                     preferred_locale;
+		Snowflake                  public_updates_channel_id;
+		int32_t                    max_video_channel_users = 0;
+		int32_t                    approximate_member_count = 0;
+		int32_t                    approximate_presence_count = 0;
+		WelcomeScreen *            welcome_screen = nullptr;
+		GuildNSFWLevel             nsfw_level = GuildNSFWLevel::DEFAULT;
+		Array<Sticker>             stickers;
+		bool                       premium_progress_bar_enabled = false;
+
+		Guild() = default;
+		Guild(Memory_Allocator allocator):
+			roles(allocator), emojis(allocator), features(allocator), stickers(allocator) {}
+	};
+
+	enum class PrivacyLevel {
+		PUBLIC = 1, GUILD_ONLY = 2
+	};
+
+	struct StageInstance {
+		Snowflake    id;
+		Snowflake    guild_id;
+		Snowflake    channel_id;
+		String       topic;
+		PrivacyLevel privacy_level = PrivacyLevel::PUBLIC;
+		bool         discoverable_disabled = false;
+		Snowflake    guild_scheduled_event_id;
+	};
+
+	struct VoiceState {
+		Snowflake    guild_id;
+		Snowflake    channel_id;
+		Snowflake    user_id;
+		GuildMember *member = nullptr;
+		String       session_id;
+		bool         deaf = false;
+		bool         mute = false;
+		bool         self_deaf = false;
+		bool         self_mute = false;
+		bool         self_stream = false;
+		bool         self_video = false;
+		bool         suppress = false;
+		ptrdiff_t    request_to_speak_timestamp = 0;
+	};
+
+	enum class GuildScheduledEventPrivacyLevel {
+		GUILD_ONLY = 2
+	};
+
+	enum class GuildScheduledEventEntityType {
+		STAGE_INSTANCE = 1, VOICE = 2, EXTERNAL = 3
+	};
+
+	enum class GuildScheduledEventStatus {
+		SCHEDULED = 1, ACTIVE = 2, COMPLETED = 3, CANCELED = 4
+	};
+
+	struct GuildScheduledEventEntityMetadata {
+		String location;
+	};
+
+	struct GuildScheduledEvent {
+		Snowflake                          id;
+		Snowflake                          guild_id;
+		Snowflake                          channel_id;
+		Snowflake                          creator_id;
+		String                             name;
+		String                             description;
+		ptrdiff_t                          scheduled_start_time = 0;
+		ptrdiff_t                          scheduled_end_time = 0;
+		GuildScheduledEventPrivacyLevel    privacy_level = GuildScheduledEventPrivacyLevel::GUILD_ONLY;
+		GuildScheduledEventStatus          status = GuildScheduledEventStatus::SCHEDULED;
+		GuildScheduledEventEntityType      entity_type = GuildScheduledEventEntityType::STAGE_INSTANCE;
+		Snowflake                          entity_id;
+		GuildScheduledEventEntityMetadata *entity_metadata = nullptr;
+		User *                             creator = nullptr;
+		int32_t                            user_count = 0;
+		String                             image;
+	};
+
 	//
 	//
 	//
@@ -680,6 +923,27 @@ namespace Discord {
 		ThreadMembersUpdateEvent(): Event(EventType::THREAD_MEMBERS_UPDATE) {}
 		ThreadMembersUpdateEvent(Memory_Allocator allocator): 
 			Event(EventType::THREAD_MEMBERS_UPDATE), added_members(allocator), removed_member_ids(allocator) {}
+	};
+
+	struct GuildCreateEvent : public Event {
+		Guild                      guild;
+		ptrdiff_t                  joined_at = 0;
+		bool                       large = false;
+		bool                       unavailable = false;
+		int32_t                    member_count = 0;
+		Array<VoiceState>          voice_states;
+		Array<GuildMember>         members;
+		Array<Channel>             channels;
+		Array<Channel>             threads;
+		Array<Presence>            presences;
+		Array<StageInstance>       stage_instances;
+		Array<GuildScheduledEvent> guild_scheduled_events;
+
+		GuildCreateEvent(): Event(EventType::GUILD_CREATE) {}
+		GuildCreateEvent(Memory_Allocator allocator): 
+			Event(EventType::GUILD_CREATE), members(allocator),
+			channels(allocator), threads(allocator), presences(allocator),
+			stage_instances(allocator), guild_scheduled_events(allocator) {}
 	};
 
 	//
@@ -1256,6 +1520,261 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Channel *channe
 	}
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::RoleTag *role) {
+	role->bot_id         = Discord_ParseId(JsonGetString(obj, "bot_id"));
+	role->integration_id = Discord_ParseId(JsonGetString(obj, "integration_id"));
+	
+	const Json *premium_subscriber = obj.Find("premium_subscriber");
+	if (premium_subscriber) {
+		if (premium_subscriber->type == JSON_TYPE_NULL)
+			role->premium_subscriber = true;
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Role *role) {
+	role->id            = Discord_ParseId(JsonGetString(obj, "id"));
+	role->name          = JsonGetString(obj, "name");
+	role->color         = JsonGetInt(obj, "color");
+	role->hoist         = JsonGetBool(obj, "hoist");
+	role->icon          = JsonGetString(obj, "icon");
+	role->unicode_emoji = JsonGetString(obj, "unicode_emoji");
+	role->position      = JsonGetInt(obj, "position");
+	role->permissions   = Discord_ParseBigInt(JsonGetString(obj, "permissions"));
+	role->managed       = JsonGetBool(obj, "managed");
+	role->mentionable   = JsonGetBool(obj, "mentionable");
+	
+	const Json *tags = obj.Find("tags");
+	if (tags) {
+		role->tags = new Discord::RoleTag;
+		if (role->tags) {
+			Discord_Deserialize(JsonGetObject(*tags), role->tags);
+		}
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Emoji *emoji) {
+	emoji->id   = Discord_ParseId(JsonGetString(obj, "id"));
+	emoji->name = JsonGetString(obj, "name");
+
+	Json_Array roles = JsonGetArray(obj, "roles");
+	emoji->roles.Resize(roles.count);
+	for (ptrdiff_t index = 0; index < emoji->roles.count; ++index) {
+		Discord_Deserialize(JsonGetObject(roles[index]), &emoji->roles[index]);
+	}
+
+	const Json *user = obj.Find("user");
+	if (user) {
+		emoji->user = new Discord::User;
+		if (emoji->user) {
+			Discord_Deserialize(JsonGetObject(*user), emoji->user);
+		}
+	}
+
+	emoji->require_colons = JsonGetBool(obj, "require_colons");
+	emoji->managed        = JsonGetBool(obj, "managed");
+	emoji->animated       = JsonGetBool(obj, "animated");
+	emoji->available      = JsonGetBool(obj, "available");
+}
+
+static void Discord_Deserialize(String name, Discord::GuildFeature *feature) {
+	static const String GuildFeatureNames[] = {
+		"ANIMATED_BANNER", "ANIMATED_ICON", "BANNER", "COMMERCE", "COMMUNITY", "DISCOVERABLE",
+		"FEATURABLE", "INVITE_SPLASH", "MEMBER_VERIFICATION_GATE_ENABLED",
+		"MONETIZATION_ENABLED", "MORE_STICKERS", "NEWS", "PARTNERED", "PREVIEW_ENABLED",
+		"PRIVATE_THREADS", "ROLE_ICONS", "TICKETED_EVENTS_ENABLED", "VANITY_URL", 
+		"VERIFIED", "VIP_REGIONS", "WELCOME_SCREEN_ENABLED",
+	};
+	static_assert(ArrayCount(GuildFeatureNames) == (int)Discord::GuildFeature::GUILD_FEATURE_COUNT, "");
+
+	for (int32_t index = 0; index < ArrayCount(GuildFeatureNames); ++index) {
+		if (name == GuildFeatureNames[index]) {
+			*feature = (Discord::GuildFeature)index;
+		}
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::WelcomeScreenChannel *welcome) {
+	welcome->channel_id  = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	welcome->description = JsonGetString(obj, "description");
+	welcome->emoji_id    = Discord_ParseId(JsonGetString(obj, "emoji_id"));
+	welcome->emoji_name  = JsonGetString(obj, "emoji_name");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::WelcomeScreen *welcome) {
+	welcome->description = JsonGetString(obj, "description");
+
+	Json_Array channels = JsonGetArray(obj, "welcome_channels");
+	welcome->welcome_channels.Resize(channels.count);
+	for (ptrdiff_t index = 0; index < welcome->welcome_channels.count; ++index) {
+		Discord_Deserialize(JsonGetObject(channels[index]), &welcome->welcome_channels[index]);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Sticker *sticker) {
+	sticker->id          = Discord_ParseId(JsonGetString(obj, "id"));
+	sticker->pack_id     = Discord_ParseId(JsonGetString(obj, "pack_id"));
+	sticker->name        = JsonGetString(obj, "name");
+	sticker->description = JsonGetString(obj, "description");
+	sticker->tags        = JsonGetString(obj, "tags");
+	sticker->type        = (Discord::StickerType)JsonGetInt(obj, "type");
+	sticker->format_type = (Discord::StickerFormatType)JsonGetInt(obj, "format_type");
+	sticker->available   = JsonGetBool(obj, "available");
+	sticker->guild_id    = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	sticker->sort_value  = JsonGetInt(obj, "sort_value");
+	
+	const Json *user = obj.Find("user");
+	if (user) {
+		sticker->user = new Discord::User;
+		if (sticker->user) {
+			Discord_Deserialize(JsonGetObject(*user), sticker->user);
+		}
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Guild *guild) {
+	guild->id                            = Discord_ParseId(JsonGetString(obj, "id"));
+	guild->name                          = JsonGetString(obj, "name");
+	guild->icon                          = JsonGetString(obj, "icon");
+	guild->icon_hash                     = JsonGetString(obj, "icon_hash");
+	guild->splash                        = JsonGetString(obj, "splash");
+	guild->discovery_splash              = JsonGetString(obj, "discovery_splash");
+	guild->owner                         = JsonGetBool(obj, "owner");
+	guild->owner_id                      = Discord_ParseId(JsonGetString(obj, "owner_id"));
+	guild->permissions                   = Discord_ParseBigInt(JsonGetString(obj, "permissions"));
+	guild->afk_channel_id                = Discord_ParseId(JsonGetString(obj, "afk_channel_id"));
+	guild->afk_timeout                   = JsonGetInt(obj, "afk_timeout");
+	guild->widget_enabled                = JsonGetBool(obj, "widget_enabled");
+	guild->widget_channel_id             = Discord_ParseId(JsonGetString(obj, "widget_channel_id"));
+	guild->verification_level            = (Discord::VerificationLevel)JsonGetInt(obj, "verification_level");
+	guild->default_message_notifications = (Discord::MessageNotificationLevel)JsonGetInt(obj, "default_message_notifications");
+	guild->explicit_content_filter       = (Discord::ExplicitContentFilterLevel)JsonGetInt(obj, "explicit_content_filter");
+
+	Json_Array roles = JsonGetArray(obj, "roles");
+	guild->roles.Resize(roles.count);
+	for (ptrdiff_t index = 0; index < guild->roles.count; ++index) {
+		Discord_Deserialize(JsonGetObject(roles[index]), &guild->roles[index]);
+	}
+
+	Json_Array emojis = JsonGetArray(obj, "emojis");
+	guild->emojis.Resize(emojis.count);
+	for (ptrdiff_t index = 0; index < guild->emojis.count; ++index) {
+		Discord_Deserialize(JsonGetObject(emojis[index]), &guild->emojis[index]);
+	}
+	
+	Json_Array features = JsonGetArray(obj, "features");
+	guild->features.Resize(features.count);
+	for (ptrdiff_t index = 0; index < guild->features.count; ++index) {
+		Discord_Deserialize(JsonGetString(features[index]), &guild->features[index]);
+	}
+
+	guild->mfa_level                  = (Discord::MFALevel)JsonGetInt(obj, "mfa_level");
+	guild->application_id             = Discord_ParseId(JsonGetString(obj, "application_id"));
+	guild->system_channel_id          = Discord_ParseId(JsonGetString(obj, "system_channel_id"));
+	guild->system_channel_flags       = JsonGetInt(obj, "system_channel_flags");
+	guild->rules_channel_id           = Discord_ParseId(JsonGetString(obj, "rules_channel_id"));
+	guild->max_presences              = JsonGetInt(obj, "max_presences");
+	guild->max_members                = JsonGetInt(obj, "max_members");
+	guild->vanity_url_code            = JsonGetString(obj, "vanity_url_code");
+	guild->description                = JsonGetString(obj, "description");
+	guild->banner                     = JsonGetString(obj, "banner");
+	guild->premium_tier               = (Discord::PremiumTier)JsonGetInt(obj, "premium_tier");
+	guild->premium_subscription_count = JsonGetInt(obj, "premium_subscription_count");
+	guild->preferred_locale           = JsonGetString(obj, "preferred_locale");
+	guild->public_updates_channel_id  = Discord_ParseId(JsonGetString(obj, "public_updates_channel_id"));
+	guild->max_video_channel_users    = JsonGetInt(obj, "max_video_channel_users");
+	guild->approximate_member_count   = JsonGetInt(obj, "approximate_member_count");
+	guild->approximate_presence_count = JsonGetInt(obj, "approximate_presence_count");
+
+	const Json *welcome_screen = obj.Find("welcome_screen");
+	if (welcome_screen) {
+		guild->welcome_screen = new Discord::WelcomeScreen;
+		if (guild->welcome_screen) {
+			Discord_Deserialize(JsonGetObject(*welcome_screen), guild->welcome_screen);
+		}
+	}
+
+	guild->nsfw_level = (Discord::GuildNSFWLevel)JsonGetInt(obj, "nsfw_level");
+	guild->premium_progress_bar_enabled = JsonGetInt(obj, "premium_progress_bar_enabled");
+
+	Json_Array stickers = JsonGetArray(obj, "stickers");
+	guild->stickers.Resize(stickers.count);
+	for (ptrdiff_t index = 0; index < guild->stickers.count; ++index) {
+		Discord_Deserialize(JsonGetObject(stickers[index]), &guild->stickers[index]);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::VoiceState *voice) {
+	voice->guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	voice->channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	voice->user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		voice->member = new Discord::GuildMember;
+		if (voice->member) {
+			Discord_Deserialize(JsonGetObject(*member), voice->member);
+		}
+	}
+
+	voice->session_id                 = JsonGetString(obj, "session_id");
+	voice->deaf                       = JsonGetBool(obj, "deaf");
+	voice->mute                       = JsonGetBool(obj, "mute");
+	voice->self_deaf                  = JsonGetBool(obj, "self_deaf");
+	voice->self_mute                  = JsonGetBool(obj, "self_mute");
+	voice->self_stream                = JsonGetBool(obj, "self_stream");
+	voice->self_video                 = JsonGetBool(obj, "self_video");
+	voice->suppress                   = JsonGetBool(obj, "suppress");
+	voice->request_to_speak_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "request_to_speak_timestamp"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::StageInstance *stage) {
+	stage->id                       = Discord_ParseId(JsonGetString(obj, "id"));
+	stage->guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	stage->channel_id               = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	stage->topic                    = JsonGetString(obj, "topic");
+	stage->privacy_level            = (Discord::PrivacyLevel)JsonGetInt(obj, "privacy_level");
+	stage->discoverable_disabled    = JsonGetBool(obj, "discoverable_disabled");
+	stage->guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::GuildScheduledEventEntityMetadata *metadata) {
+	metadata->location = JsonGetString(obj, "location");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::GuildScheduledEvent *event) {
+	event->id                   = Discord_ParseId(JsonGetString(obj, "id"));
+	event->guild_id             = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	event->channel_id           = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	event->creator_id           = Discord_ParseId(JsonGetString(obj, "creator_id"));
+	event->name                 = JsonGetString(obj, "name");
+	event->description          = JsonGetString(obj, "description");
+	event->scheduled_start_time = Discord_ParseTimestamp(JsonGetString(obj, "scheduled_start_time"));
+	event->scheduled_end_time   = Discord_ParseTimestamp(JsonGetString(obj, "scheduled_end_time"));
+	event->privacy_level        = (Discord::GuildScheduledEventPrivacyLevel)JsonGetInt(obj, "privacy_level");
+	event->status               = (Discord::GuildScheduledEventStatus)JsonGetInt(obj, "status");
+	event->entity_type          = (Discord::GuildScheduledEventEntityType)JsonGetInt(obj, "entity_type");
+	event->entity_id            = Discord_ParseId(JsonGetString(obj, "entity_id"));
+	
+	const Json *metadata = obj.Find("entity_metadata");
+	if (metadata) {
+		event->entity_metadata = new Discord::GuildScheduledEventEntityMetadata;
+		if (event->entity_metadata) {
+			Discord_Deserialize(JsonGetObject(*metadata), event->entity_metadata);
+		}
+	}
+
+	const Json *creator = obj.Find("creator");
+	if (creator) {
+		event->creator = new Discord::User;
+		if (event->creator) {
+			Discord_Deserialize(JsonGetObject(*creator), event->creator);
+		}
+	}
+
+	event->user_count = JsonGetInt(obj, "user_count");
+	event->image      = JsonGetString(obj, "image");
+}
+
 //
 //
 //
@@ -1438,6 +1957,60 @@ static void Discord_EventHandlerThreadMembersUpdate(Discord::Client *client, con
 	client->onevent(client, &mems_update);
 }
 
+static void Discord_EventHandlerGuildCreate(Discord::Client *client, const Json &data) {
+	Discord::GuildCreateEvent guild;
+	Json_Object obj = JsonGetObject(data);
+	Discord_Deserialize(obj, &guild.guild);
+	guild.joined_at    = Discord_ParseTimestamp(JsonGetString(obj, "joined_at"));
+	guild.large        = JsonGetBool(obj, "large");
+	guild.unavailable  = JsonGetBool(obj, "unavailable");
+	guild.member_count = JsonGetInt(obj, "member_count");
+
+	Json_Array voice_states = JsonGetArray(obj, "voice_states");
+	guild.voice_states.Resize(voice_states.count);
+	for (ptrdiff_t index = 0; index < guild.voice_states.count; ++index) {
+		Discord_Deserialize(JsonGetObject(voice_states[index]), &guild.voice_states[index]);
+	}
+
+	Json_Array members = JsonGetArray(obj, "members");
+	guild.members.Resize(members.count);
+	for (ptrdiff_t index = 0; index < guild.members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(members[index]), &guild.members[index]);
+	}
+
+	Json_Array channels = JsonGetArray(obj, "channels");
+	guild.channels.Resize(channels.count);
+	for (ptrdiff_t index = 0; index < guild.channels.count; ++index) {
+		Discord_Deserialize(JsonGetObject(channels[index]), &guild.channels[index]);
+	}
+	
+	Json_Array threads = JsonGetArray(obj, "threads");
+	guild.threads.Resize(threads.count);
+	for (ptrdiff_t index = 0; index < guild.threads.count; ++index) {
+		Discord_Deserialize(JsonGetObject(threads[index]), &guild.threads[index]);
+	}
+
+	Json_Array presences = JsonGetArray(obj, "presences");
+	guild.presences.Resize(presences.count);
+	for (ptrdiff_t index = 0; index < guild.presences.count; ++index) {
+		Discord_Deserialize(JsonGetObject(presences[index]), &guild.presences[index]);
+	}
+
+	Json_Array stage_instances = JsonGetArray(obj, "stage_instances");
+	guild.stage_instances.Resize(stage_instances.count);
+	for (ptrdiff_t index = 0; index < guild.stage_instances.count; ++index) {
+		Discord_Deserialize(JsonGetObject(stage_instances[index]), &guild.stage_instances[index]);
+	}
+	
+	Json_Array guild_scheduled_events = JsonGetArray(obj, "guild_scheduled_events");
+	guild.guild_scheduled_events.Resize(guild_scheduled_events.count);
+	for (ptrdiff_t index = 0; index < guild.guild_scheduled_events.count; ++index) {
+		Discord_Deserialize(JsonGetObject(guild_scheduled_events[index]), &guild.guild_scheduled_events[index]);
+	}
+
+	client->onevent(client, &guild);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -1445,8 +2018,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerChannelUpdate, Discord_EventHandlerChannelDelete, Discord_EventHandlerChannelPinsUpdate,
 	Discord_EventHandlerThreadCreate, Discord_EventHandlerThreadUpdate, Discord_EventHandlerThreadDelete,
 	Discord_EventHandlerThreadListSync, Discord_EventHandlerThreadMemberUpdate, Discord_EventHandlerThreadMembersUpdate,
+	Discord_EventHandlerGuildCreate,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -1604,6 +2178,12 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		} else {
 			Trace("Thread Members updated: %d", thread->member_count);
 		}
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_CREATE) {
+		auto guild = (Discord::GuildCreateEvent *)event;
+		Trace("Joined guild: " StrFmt, StrArg(guild->guild.name));
 		return;
 	}
 }
