@@ -490,43 +490,9 @@ static Websocket_Queue::Node *Websocket_QueuePop(Websocket_Queue *q) {
 	return node;
 }
 
-static bool Websocket_HasWrite(Websocket_Context *websocket_context) {
-	if (websocket_context->connection != WEBSOCKET_SENT_CLOSE) {
-		if (!websocket_context->writer.control.length) {
-			if (websocket_context->writer.normal.curr_node)
-				return true;
-			websocket_context->writer.normal.curr_node = Websocket_QueuePop(&websocket_context->writeq);
-			return websocket_context->writer.normal.curr_node;
-		}
-	}
-	return false;
-}
-
-static void Websocket_InitCurrentNode(Websocket_Context *websocket_context) {
-	if (websocket_context->reader.curr_node)
-		websocket_context->reader.curr_node->header = 0;
-}
-
-static bool Websocket_HasRead(Websocket_Context *websocket_context) {
-	if (websocket_context->connection != WEBSOCKET_RECEIVED_CLOSE) {
-		if (!websocket_context->reader.curr_node) {
-			websocket_context->reader.curr_node = Websocket_QueueAlloc(&websocket_context->readq);
-			Websocket_InitCurrentNode(websocket_context);
-			return websocket_context->reader.curr_node;
-		}
-		return true;
-	}
-	return false;
-}
-
-static void Websocket_InspectForCloseFrame(Websocket_Context *ctx, int opcode) {
-	if (opcode & WEBSOCKET_OP_CONNECTION_CLOSE) {
-		if (ctx->connection == WEBSOCKET_CONNECTED)
-			ctx->connection = WEBSOCKET_SENT_CLOSE;
-		else
-			ctx->connection = WEBSOCKET_DISCONNECTING;
-	}
-}
+//
+//
+//
 
 static ptrdiff_t Websocket_StreamReadableSize(Websocket_Read_Stream *stream) {
 	ptrdiff_t size;
@@ -592,6 +558,10 @@ static ptrdiff_t Websocket_StreamRead(Websocket_Read_Stream *stream, uint8_t *bu
 	return read;
 }
 
+//
+//
+//
+
 static void Websocket_MaskPayload(uint8_t *dst, uint8_t *src, uint64_t length, uint8_t mask[4]) {
 	for (uint64_t i = 0; i < length; ++i)
 		dst[i] = src[i] ^ mask[i & 3];
@@ -654,14 +624,68 @@ static ptrdiff_t Websocket_CreateFrame(uint8_t *dst, ptrdiff_t dst_size, Buffer 
 	return frame_size;
 }
 
-static void Websocket_ImmSendControlMessage(Websocket_Context *ctx, String msg, Websocket_Opcode opcode) {
+//
+//
+//
+
+static void Websocket_InitReadNode(Websocket_Context *ctx) {
+	if (ctx->reader.curr_node)
+		ctx->reader.curr_node->header = 0;
+}
+
+static void Websocket_InspectWriteFrameForClose(Websocket_Context *ctx, int opcode) {
+	if (opcode & WEBSOCKET_OP_CONNECTION_CLOSE) {
+		if (ctx->connection == WEBSOCKET_CONNECTED)
+			ctx->connection = WEBSOCKET_SENT_CLOSE;
+		else
+			ctx->connection = WEBSOCKET_DISCONNECTING;
+	}
+}
+
+static bool Websocket_HasWrite(Websocket_Context *ctx) {
+	if (ctx->connection != WEBSOCKET_SENT_CLOSE) {
+		if (!ctx->writer.control.length) {
+			if (ctx->writer.normal.curr_node)
+				return true;
+			ctx->writer.normal.curr_node = Websocket_QueuePop(&ctx->writeq);
+			return ctx->writer.normal.curr_node;
+		}
+	}
+	return false;
+}
+
+static bool Websocket_HasRead(Websocket_Context *ctx) {
+	if (ctx->connection != WEBSOCKET_RECEIVED_CLOSE) {
+		if (!ctx->reader.curr_node) {
+			ctx->reader.curr_node = Websocket_QueueAlloc(&ctx->readq);
+			Websocket_InitReadNode(ctx);
+			return ctx->reader.curr_node;
+		}
+		return true;
+	}
+	return false;
+}
+
+//
+//
+//
+
+static void Websocket_SendImmediateControlMessage(Websocket_Context *ctx, String msg, Websocket_Opcode opcode) {
 	if (ctx->connection == WEBSOCKET_DISCONNECTING ||
 		ctx->connection == WEBSOCKET_DISCONNECTED || 
 		ctx->connection == WEBSOCKET_SENT_CLOSE)
 		return;
+
+	if (ctx->writer.control.length) {
+		int opcode = ctx->writer.control.buffer[0] & 0x0f;
+		if (opcode == WEBSOCKET_OP_CONNECTION_CLOSE)
+			return;
+	}
+
 	Assert(msg.length <= 125);
 	bool masked = ctx->role == WEBSOCKET_ROLE_CLIENT;
-	ctx->writer.control.length = Websocket_CreateFrame(ctx->writer.control.buffer, WEBSOCKET_WRITER_CONTROL_BUFFER_SIZE, msg, masked, opcode);
+	ctx->writer.control.length = Websocket_CreateFrame(ctx->writer.control.buffer, 
+		WEBSOCKET_WRITER_CONTROL_BUFFER_SIZE, msg, masked, opcode);
 }
 
 static String Websocket_CloseReasonMessage(Websocket_Close_Reason reason) {
@@ -682,7 +706,7 @@ static String Websocket_CloseReasonMessage(Websocket_Close_Reason reason) {
 	return "Closure Unknown reason";
 }
 
-static void Websocket_ImmClose(Websocket_Context *ctx, Websocket_Close_Reason reason) {
+static void Websocket_SendImmediateClose(Websocket_Context *ctx, Websocket_Close_Reason reason) {
 	uint8_t payload[125];
 
 	payload[0] = ((0xff00 & reason) >> 8);
@@ -692,15 +716,15 @@ static void Websocket_ImmClose(Websocket_Context *ctx, Websocket_Close_Reason re
 	Assert(message.length <= sizeof(payload) - 2);
 	memcpy(payload + 2, message.data, message.length);
 
-	Websocket_ImmSendControlMessage(ctx, String(payload, message.length + 2), WEBSOCKET_OP_CONNECTION_CLOSE);
+	Websocket_SendImmediateControlMessage(ctx, String(payload, message.length + 2), WEBSOCKET_OP_CONNECTION_CLOSE);
 }
 
-static void Websocket_ImmPing(Websocket_Context *ctx, String message) {
-	Websocket_ImmSendControlMessage(ctx, message, WEBSOCKET_OP_PING);
+static void Websocket_ImmediatePing(Websocket_Context *ctx, String message) {
+	Websocket_SendImmediateControlMessage(ctx, message, WEBSOCKET_OP_PING);
 }
 
-static void Websocket_ImmPong(Websocket_Context *ctx, String message) {
-	Websocket_ImmSendControlMessage(ctx, message, WEBSOCKET_OP_PONG);
+static void Websocket_ImmediatePong(Websocket_Context *ctx, String message) {
+	Websocket_SendImmediateControlMessage(ctx, message, WEBSOCKET_OP_PONG);
 }
 
 static inline void Websocket_ResetParser(Websocket_Context *ctx) {
@@ -781,7 +805,7 @@ static bool Websocket_ParseFrame(Websocket_Context *ctx) {
 		if (parser.frame.payload.length > remaining_cap) {
 			parser.state = PARSING_DROPPED;
 			LogWarningEx("Websocket", "Dropped %d bytes. Frame payload too big. Skipped frame", (int)parser.frame.payload.length);
-			Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
+			Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
 		} else {
 			parser.state = PARSING_PAYLOAD;
 		}
@@ -825,7 +849,7 @@ static void Websocket_PushEventAndReadNext(Websocket_Context *ctx, Buffer buffer
 	ctx->reader.curr_node = nullptr;
 	Semaphore_Signal(ctx->readsem);
 	ctx->reader.curr_node = Websocket_QueueAlloc(&ctx->readq);
-	Websocket_InitCurrentNode(ctx);
+	Websocket_InitReadNode(ctx);
 }
 
 static bool Websocket_HandleMessage(Websocket_Context *ctx) {
@@ -834,21 +858,21 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 
 	if (frame.rsv) {
 		Websocket_ResetParser(ctx);
-		Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+		Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 		return false;
 	}
 
 	if (ctx->role == WEBSOCKET_ROLE_CLIENT && frame.masked) {
 		LogErrorEx("Websocket", "Server sent masked payload. Closing...");
 		Websocket_ResetParser(ctx);
-		Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+		Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 		return false;
 	}
 
 	if (ctx->role == WEBSOCKET_ROLE_SERVER && !frame.masked) {
 		LogErrorEx("Websocket", "Client sent unmasked payload. Closing...");
 		Websocket_ResetParser(ctx);
-		Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+		Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 		return false;
 	}
 
@@ -861,21 +885,21 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 		if (!frame.fin) {
 			LogErrorEx("Websocket", "Server sent fragmented control frame. Closing...");
 			Websocket_ResetParser(ctx);
-			Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+			Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 			return false;
 		}
 
 		if (frame.payload.length > 125) {
 			LogErrorEx("Websocket", "Server sent control frame with %d bytes payload. Only upto 125 bytes is allowed. Closing...", (int)frame.payload.length);
 			Websocket_ResetParser(ctx);
-			Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+			Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 			return false;
 		}
 
 		switch (frame.opcode) {
 			case WEBSOCKET_OP_PING: {
 				Websocket_PushEventAndReadNext(ctx, msg, frame.header);
-				Websocket_ImmPong(ctx, msg);
+				Websocket_ImmediatePong(ctx, msg);
 			} break;
 
 			case WEBSOCKET_OP_PONG: {
@@ -886,7 +910,7 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 				Websocket_PushEventAndReadNext(ctx, msg, frame.header);
 
 				if (ctx->connection == WEBSOCKET_CONNECTED) {
-					Websocket_ImmSendControlMessage(ctx, msg, WEBSOCKET_OP_CONNECTION_CLOSE);
+					Websocket_SendImmediateControlMessage(ctx, msg, WEBSOCKET_OP_CONNECTION_CLOSE);
 					ctx->connection = WEBSOCKET_RECEIVED_CLOSE;
 				} else {
 					ctx->connection = WEBSOCKET_DISCONNECTING;
@@ -894,7 +918,7 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 			} break;
 
 			default: {
-				Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+				Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 				return false;
 			}
 		}
@@ -920,7 +944,7 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 			// continuation of fragmented frame
 			if (frame.opcode) {
 				LogErrorEx("Websocket", "Expected next fragment with 0x0 opcode, but got %d. Closing...", frame.opcode);
-				Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+				Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 				Websocket_ResetParser(ctx);
 				return false;
 			}
@@ -928,7 +952,7 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 			// first part of fragmented frame
 			if (!frame.opcode) {
 				LogErrorEx("Websocket", "Expected next fragment with 0x0 opcode, but got %d. Closing...", frame.opcode);
-				Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+				Websocket_SendImmediateClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 				Websocket_ResetParser(ctx);
 				return false;
 			}
@@ -979,7 +1003,7 @@ static int Websocket_ThreadProc(void *arg) {
 				}
 
 				int opcode = (ctx->writer.control.buffer[0] & 0x0f) >> 0;
-				Websocket_InspectForCloseFrame(ctx, opcode);
+				Websocket_InspectWriteFrameForClose(ctx, opcode);
 			} else if (ctx->writer.normal.curr_node) {
 				ptrdiff_t remaining = ctx->writer.normal.curr_node->len - ctx->writer.normal.written;
 				uint8_t *write_ptr  = ctx->writer.normal.curr_node->buff + ctx->writer.normal.written;
@@ -994,7 +1018,7 @@ static int Websocket_ThreadProc(void *arg) {
 				}
 
 				if (!remaining) {
-					Websocket_InspectForCloseFrame(ctx, ctx->writer.normal.curr_node->header & 0x0f);
+					Websocket_InspectWriteFrameForClose(ctx, ctx->writer.normal.curr_node->header & 0x0f);
 					ctx->writer.normal.written = 0;
 					Websocket_QueueFree(&ctx->writeq, ctx->writer.normal.curr_node);
 					ctx->writer.normal.curr_node = Websocket_QueuePop(&ctx->writeq);
