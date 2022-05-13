@@ -241,6 +241,7 @@ static uint8_t *Websocket_InitQueue(Websocket_Queue *queue, uint32_t p2buff_size
 	}
 
 	queue->free = next;
+
 	return mem;
 }
 
@@ -501,8 +502,7 @@ static bool Websocket_HasWrite(Websocket_Context *websocket_context) {
 	return false;
 }
 
-static void Websocket_ReadNextNode(Websocket_Context *websocket_context) {
-	websocket_context->reader.curr_node = Websocket_QueueAlloc(&websocket_context->readq);
+static void Websocket_InitCurrentNode(Websocket_Context *websocket_context) {
 	if (websocket_context->reader.curr_node)
 		websocket_context->reader.curr_node->header = 0;
 }
@@ -510,7 +510,8 @@ static void Websocket_ReadNextNode(Websocket_Context *websocket_context) {
 static bool Websocket_HasRead(Websocket_Context *websocket_context) {
 	if (websocket_context->connection != WEBSOCKET_RECEIVED_CLOSE) {
 		if (!websocket_context->reader.curr_node) {
-			Websocket_ReadNextNode(websocket_context);
+			websocket_context->reader.curr_node = Websocket_QueueAlloc(&websocket_context->readq);
+			Websocket_InitCurrentNode(websocket_context);
 			return websocket_context->reader.curr_node;
 		}
 		return true;
@@ -815,14 +816,16 @@ static bool Websocket_ParseFrame(Websocket_Context *ctx) {
 	return false;
 }
 
-static void Websocket_PushEvent(Websocket_Context *ctx, Buffer buffer, int32_t header) {
+static void Websocket_PushEventAndReadNext(Websocket_Context *ctx, Buffer buffer, int32_t header) {
 	Assert(buffer.length <= ctx->readq.buffp2cap);
 	memcpy(ctx->reader.curr_node->buff, buffer.data, buffer.length);
 	ctx->reader.curr_node->header = header;
 	ctx->reader.curr_node->len    = buffer.length;
 	Websocket_QueuePush(&ctx->readq, ctx->reader.curr_node);
-	ctx->reader.curr_node = Websocket_QueueAlloc(&ctx->readq);
+	ctx->reader.curr_node = nullptr;
 	Semaphore_Signal(ctx->readsem);
+	ctx->reader.curr_node = Websocket_QueueAlloc(&ctx->readq);
+	Websocket_InitCurrentNode(ctx);
 }
 
 static bool Websocket_HandleMessage(Websocket_Context *ctx) {
@@ -870,25 +873,30 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 		}
 
 		switch (frame.opcode) {
-		case WEBSOCKET_OP_PING: {
-			Websocket_PushEvent(ctx, msg, frame.header);
-			Websocket_ImmPong(ctx, msg);
-		} break;
+			case WEBSOCKET_OP_PING: {
+				Websocket_PushEventAndReadNext(ctx, msg, frame.header);
+				Websocket_ImmPong(ctx, msg);
+			} break;
 
-		case WEBSOCKET_OP_PONG: {
-			Websocket_PushEvent(ctx, msg, frame.header);
-		} break;
+			case WEBSOCKET_OP_PONG: {
+				Websocket_PushEventAndReadNext(ctx, msg, frame.header);
+			} break;
 
-		case WEBSOCKET_OP_CONNECTION_CLOSE: {
-			Websocket_PushEvent(ctx, msg, frame.header);
+			case WEBSOCKET_OP_CONNECTION_CLOSE: {
+				Websocket_PushEventAndReadNext(ctx, msg, frame.header);
 
-			if (ctx->connection == WEBSOCKET_CONNECTED) {
-				Websocket_ImmSendControlMessage(ctx, msg, WEBSOCKET_OP_CONNECTION_CLOSE);
-				ctx->connection = WEBSOCKET_RECEIVED_CLOSE;
-			} else {
-				ctx->connection = WEBSOCKET_DISCONNECTING;
+				if (ctx->connection == WEBSOCKET_CONNECTED) {
+					Websocket_ImmSendControlMessage(ctx, msg, WEBSOCKET_OP_CONNECTION_CLOSE);
+					ctx->connection = WEBSOCKET_RECEIVED_CLOSE;
+				} else {
+					ctx->connection = WEBSOCKET_DISCONNECTING;
+				}
+			} break;
+
+			default: {
+				Websocket_ImmClose(ctx, WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+				return false;
 			}
-		} break;
 		}
 
 		Websocket_ResetParser(ctx);
@@ -898,12 +906,10 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 	if (frame.fin) {
 		if (frame.opcode != WEBSOCKET_OP_CONTINUATION_FRAME) {
 			// single frame
-			Websocket_PushEvent(ctx, msg, frame.header);
-			Websocket_ReadNextNode(ctx);
+			Websocket_PushEventAndReadNext(ctx, msg, frame.header);
 		} else {
 			// final frame of fragmented frame
-			Websocket_PushEvent(ctx, msg, ctx->reader.curr_node->header);
-			Websocket_ReadNextNode(ctx);
+			Websocket_PushEventAndReadNext(ctx, msg, ctx->reader.curr_node->header);
 		}
 	} else {
 		int header      = ctx->reader.curr_node->header;
@@ -1009,8 +1015,8 @@ static int Websocket_ThreadProc(void *arg) {
 			}
 
 			while (Websocket_ParseFrame(ctx)) {
-				if (!Websocket_HandleMessage(ctx))
-					break;
+				if (Websocket_HandleMessage(ctx) && ctx->reader.curr_node)
+					continue;
 			}
 		}
 
