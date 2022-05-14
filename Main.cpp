@@ -548,7 +548,7 @@ namespace Discord {
 		int32_t           sort_value = 0;
 	};
 
-	struct Guild { //@todo: default initialize
+	struct Guild {
 		Snowflake                  id;
 		String                     name;
 		String                     icon;
@@ -593,6 +593,11 @@ namespace Discord {
 		Guild() = default;
 		Guild(Memory_Allocator allocator):
 			roles(allocator), emojis(allocator), features(allocator), stickers(allocator) {}
+	};
+
+	struct UnavailableGuild {
+		Snowflake id;
+		bool unavailable = false;
 	};
 
 	enum class PrivacyLevel {
@@ -761,7 +766,7 @@ namespace Discord {
 		CHANNEL_CREATE, CHANNEL_UPDATE, CHANNEL_DELETE, CHANNEL_PINS_UPDATE,
 		THREAD_CREATE, THREAD_UPDATE, THREAD_DELETE,
 		THREAD_LIST_SYNC, THREAD_MEMBER_UPDATE, THREAD_MEMBERS_UPDATE,
-		GUILD_CREATE, GUILD_DELETE, GUILD_BAN_ADD, GUILD_BAN_REMOVE,
+		GUILD_CREATE, GUILD_UPDATE, GUILD_DELETE, GUILD_BAN_ADD, GUILD_BAN_REMOVE,
 		GUILD_EMOJIS_UPDATE, GUILD_STICKERS_UPDATE, GUILD_INTEGRATIONS_UPDATE,
 		GUILD_MEMBER_ADD, GUILD_MEMBER_REMOVE, GUILD_MEMBER_UPDATE, GUILD_MEMBERS_CHUNK,
 		GUILD_ROLE_CREATE, GUILD_ROLE_UPDATE, GUILD_ROLE_DELETE,
@@ -784,7 +789,7 @@ namespace Discord {
 		"CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE", "CHANNEL_PINS_UPDATE",
 		"THREAD_CREATE", "THREAD_UPDATE", "THREAD_DELETE",
 		"THREAD_LIST_SYNC", "THREAD_MEMBER_UPDATE", "THREAD_MEMBERS_UPDATE",
-		"GUILD_CREATE", "GUILD_DELETE", "GUILD_BAN_ADD", "GUILD_BAN_REMOVE",
+		"GUILD_CREATE", "GUILD_UPDATE", "GUILD_DELETE", "GUILD_BAN_ADD", "GUILD_BAN_REMOVE",
 		"GUILD_EMOJIS_UPDATE", "GUILD_STICKERS_UPDATE", "GUILD_INTEGRATIONS_UPDATE",
 		"GUILD_MEMBER_ADD", "GUILD_MEMBER_REMOVE", "GUILD_MEMBER_UPDATE", "GUILD_MEMBERS_CHUNK",
 		"GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE", "GUILD_ROLE_DELETE",
@@ -814,12 +819,12 @@ namespace Discord {
 	};
 
 	struct ReadyEvent : public Event {
-		int32_t          v;
-		User             user;
-		Array<Snowflake> guilds;
-		String           session_id;
-		int32_t          shard[2] = {};
-		Application      application;
+		int32_t                 v;
+		User                    user;
+		Array<UnavailableGuild> guilds;
+		String                  session_id;
+		int32_t                 shard[2] = {};
+		Application             application;
 
 		ReadyEvent() : Event(EventType::READY) {}
 		ReadyEvent(Memory_Allocator allocator): Event(EventType::READY), guilds(allocator), application(allocator) {}
@@ -941,9 +946,36 @@ namespace Discord {
 
 		GuildCreateEvent(): Event(EventType::GUILD_CREATE) {}
 		GuildCreateEvent(Memory_Allocator allocator): 
-			Event(EventType::GUILD_CREATE), members(allocator),
+			Event(EventType::GUILD_CREATE), guild(allocator), members(allocator),
 			channels(allocator), threads(allocator), presences(allocator),
 			stage_instances(allocator), guild_scheduled_events(allocator) {}
+	};
+
+	struct GuildUpdateEvent : public Event {
+		Guild guild;
+
+		GuildUpdateEvent(): Event(EventType::GUILD_UPDATE) {}
+		GuildUpdateEvent(Memory_Allocator allocator):
+			Event(EventType::GUILD_UPDATE), guild(allocator) {}
+	};
+
+	struct GuildDeleteEvent : public Event {
+		UnavailableGuild unavailable_guild;
+		GuildDeleteEvent(): Event(EventType::GUILD_DELETE) {}
+	};
+
+	struct GuildBanAddEvent : public Event {
+		Snowflake guild_id;
+		User      user;
+
+		GuildBanAddEvent(): Event(EventType::GUILD_BAN_ADD) {}
+	};
+
+	struct GuildBanRemoveEvent : public Event {
+		Snowflake guild_id;
+		User      user;
+
+		GuildBanRemoveEvent(): Event(EventType::GUILD_BAN_REMOVE) {}
 	};
 
 	//
@@ -1631,6 +1663,11 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Sticker *sticke
 	}
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::UnavailableGuild *guild) {
+	guild->id          = Discord_ParseId(JsonGetString(obj, "id"));
+	guild->unavailable = JsonGetBool(obj, "unavailable");
+}
+
 static void Discord_Deserialize(const Json_Object &obj, Discord::Guild *guild) {
 	guild->id                            = Discord_ParseId(JsonGetString(obj, "id"));
 	guild->name                          = JsonGetString(obj, "name");
@@ -1802,8 +1839,7 @@ static void Discord_EventHandlerReady(Discord::Client *client, const Json &data)
 	ready.guilds.Resize(guilds.count);
 
 	for (ptrdiff_t index = 0; index < ready.guilds.count; ++index) {
-		Json_Object unavailable_guild = JsonGetObject(guilds[index]);
-		ready.guilds[index] = Discord_ParseId(JsonGetString(unavailable_guild, "id"));
+		Discord_Deserialize(JsonGetObject(guilds[index]), &ready.guilds[index]);
 	}
 
 	ready.session_id = JsonGetString(obj, "session_id");
@@ -2011,6 +2047,34 @@ static void Discord_EventHandlerGuildCreate(Discord::Client *client, const Json 
 	client->onevent(client, &guild);
 }
 
+static void Discord_EventHandlerGuildUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildUpdateEvent guild;
+	Discord_Deserialize(JsonGetObject(data), &guild.guild);
+	client->onevent(client, &guild);
+}
+
+static void Discord_EventHandlerGuildDelete(Discord::Client *client, const Json &data) {
+	Discord::GuildDeleteEvent guild;
+	Discord_Deserialize(JsonGetObject(data), &guild.unavailable_guild);
+	client->onevent(client, &guild);
+}
+
+static void Discord_EventHandlerGuildBanAdd(Discord::Client *client, const Json &data) {
+	Discord::GuildBanAddEvent ban;
+	Json_Object obj = JsonGetObject(data);
+	ban.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "user"), &ban.user);
+	client->onevent(client, &ban);
+}
+
+static void Discord_EventHandlerGuildBanRemove(Discord::Client *client, const Json &data) {
+	Discord::GuildBanRemoveEvent ban;
+	Json_Object obj = JsonGetObject(data);
+	ban.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "user"), &ban.user);
+	client->onevent(client, &ban);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2018,10 +2082,10 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerChannelUpdate, Discord_EventHandlerChannelDelete, Discord_EventHandlerChannelPinsUpdate,
 	Discord_EventHandlerThreadCreate, Discord_EventHandlerThreadUpdate, Discord_EventHandlerThreadDelete,
 	Discord_EventHandlerThreadListSync, Discord_EventHandlerThreadMemberUpdate, Discord_EventHandlerThreadMembersUpdate,
-	Discord_EventHandlerGuildCreate,
+	Discord_EventHandlerGuildCreate, Discord_EventHandlerGuildUpdate, Discord_EventHandlerGuildDelete,
+	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove,
 
-	Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2186,6 +2250,33 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Joined guild: " StrFmt, StrArg(guild->guild.name));
 		return;
 	}
+
+	if (event->type == Discord::EventType::GUILD_UPDATE) {
+		auto guild = (Discord::GuildUpdateEvent *)event;
+		Trace("Updated guild: " StrFmt, StrArg(guild->guild.name));
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_DELETE) {
+		auto guild = (Discord::GuildDeleteEvent *)event;
+		if (guild->unavailable_guild.unavailable)
+			Trace("Guild deleted: %zu", guild->unavailable_guild.id);
+		else
+			Trace("Removed from Guild: %zu", guild->unavailable_guild.id);
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_BAN_ADD) {
+		auto ban = (Discord::GuildBanAddEvent *)event;
+		Trace("User banned: " StrFmt, StrArg(ban->user.username));
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_BAN_REMOVE) {
+		auto ban = (Discord::GuildBanAddEvent *)event;
+		Trace("User unbanned: " StrFmt, StrArg(ban->user.username));
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -2267,6 +2358,7 @@ int main(int argc, char **argv) {
 
 	int intents = 0;
 	intents |= Discord::Intent::GUILDS;
+	intents |= Discord::Intent::GUILD_BANS;
 	intents |= Discord::Intent::GUILD_MEMBERS;
 	intents |= Discord::Intent::GUILD_MESSAGES;
 	intents |= Discord::Intent::GUILD_MESSAGE_REACTIONS;

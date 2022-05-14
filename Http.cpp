@@ -589,7 +589,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 			ptrdiff_t chunk_read  = body_read;
 
 			while (true) {
-				while (chunk_read < 2) {
+				while (chunk_read < 4) {
 					int bytes_read = Http_Receive(http, buffer + chunk_read, (HTTP_STREAM_CHUNK_SIZE - (int)chunk_read));
 					if (bytes_read < 0) return false;
 					chunk_read += bytes_read;
