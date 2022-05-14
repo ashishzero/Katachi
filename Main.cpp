@@ -1713,6 +1713,39 @@ namespace Discord {
 		StageInstanceUpdateEvent(): Event(EventType::STAGE_INSTANCE_UPDATE) {}
 	};
 
+	struct TypingStartEvent : public Event {
+		Snowflake    channel_id;
+		Snowflake    guild_id;
+		Snowflake    user_id;
+		Timestamp    timestamp;
+		GuildMember *member = nullptr;
+
+		TypingStartEvent(): Event(EventType::TYPING_START) {}
+	};
+
+	struct UserUpdateEvent : public Event {
+		User user;
+		UserUpdateEvent(): Event(EventType::USER_UPDATE) {}
+	};
+
+	struct VoiceStateUpdateEvent : public Event {
+		VoiceState voice_state;
+		VoiceStateUpdateEvent(): Event(EventType::VOICE_STATE_UPDATE) {}
+	};
+
+	struct VoiceServerUpdateEvent : public Event {
+		String    token;
+		Snowflake guild_id;
+		String    endpoint;
+		VoiceServerUpdateEvent(): Event(EventType::VOICE_SERVER_UPDATE) {}
+	};
+
+	struct WebhooksUpdateEvent : public Event {
+		Snowflake guild_id;
+		Snowflake channel_id;
+		WebhooksUpdateEvent(): Event(EventType::WEBHOOKS_UPDATE) {}
+	};
+
 	//
 	//
 	//
@@ -3336,13 +3369,13 @@ static void Discord_EventHandlerChannelCreate(Discord::Client *client, const Jso
 }
 
 static void Discord_EventHandlerChannelUpdate(Discord::Client *client, const Json &data) {
-	Discord::ChannelCreateEvent channel;
+	Discord::ChannelUpdateEvent channel;
 	Discord_Deserialize(JsonGetObject(data), &channel.channel);
 	client->onevent(client, &channel);
 }
 
 static void Discord_EventHandlerChannelDelete(Discord::Client *client, const Json &data) {
-	Discord::ChannelCreateEvent channel;
+	Discord::ChannelDeleteEvent channel;
 	Discord_Deserialize(JsonGetObject(data), &channel.channel);
 	client->onevent(client, &channel);
 }
@@ -3878,6 +3911,54 @@ static void Discord_EventHandlerStageInstanceUpdate(Discord::Client *client, con
 	client->onevent(client, &stage);
 }
 
+static void Discord_EventHandlerTypingStartEvent(Discord::Client *client, const Json &data) {
+	Discord::TypingStartEvent typing;
+	Json_Object obj   = JsonGetObject(data);
+	typing.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	typing.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	typing.user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
+	typing.timestamp  = JsonGetInt(obj, "timestamp");
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		typing.member = new Discord::GuildMember;
+		if (typing.member) {
+			Discord_Deserialize(JsonGetObject(*member), typing.member);
+		}
+	}
+
+	client->onevent(client, &typing);
+}
+
+static void Discord_EventHandlerUserUpdate(Discord::Client *client, const Json &data) {
+	Discord::UserUpdateEvent user;
+	Discord_Deserialize(JsonGetObject(data), &user.user);
+	client->onevent(client, &user);
+}
+
+static void Discord_EventHandlerVoiceStateUpdate(Discord::Client *client, const Json &data) {
+	Discord::VoiceStateUpdateEvent voice;
+	Discord_Deserialize(JsonGetObject(data), &voice.voice_state);
+	client->onevent(client, &voice);
+}
+
+static void Discord_EventHandlerVoiceServerUpdate(Discord::Client *client, const Json &data) {
+	Discord::VoiceServerUpdateEvent voice;
+	Json_Object obj = JsonGetObject(data);
+	voice.token     = JsonGetString(obj, "token");
+	voice.guild_id  = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	voice.endpoint  = JsonGetString(obj, "endpoint");
+	client->onevent(client, &voice);
+}
+
+static void Discord_EventHandlerWebhooksUpdate(Discord::Client *client, const Json &data) {
+	Discord::WebhooksUpdateEvent webhook;
+	Json_Object obj    = JsonGetObject(data);
+	webhook.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	webhook.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	client->onevent(client, &webhook);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -3898,9 +3979,8 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerMessageDeleteBulk, Discord_EventHandlerMessageReactionAdd, Discord_EventHandlerMessageReactionRemove,
 	Discord_EventHandlerMessageReactionRemoveAll, Discord_EventHandlerMessageReactionRemoveEmoji, Discord_EventHandlerPresenceUpdate,
 	Discord_EventHandlerStageInstanceCreate, Discord_EventHandlerStageInstanceDelete, Discord_EventHandlerStageInstanceUpdate,
-
-	Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerTypingStartEvent,Discord_EventHandlerUserUpdate, Discord_EventHandlerVoiceStateUpdate,
+	Discord_EventHandlerVoiceServerUpdate, Discord_EventHandlerWebhooksUpdate,
 };
 static_assert(ArrayCount(DiscordEventHandlers) == ArrayCount(Discord::EventNames), "");
 
@@ -4280,6 +4360,39 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Stage instance deleted: " StrFmt, StrArg(stage->stage.topic));
 		return;
 	}
+
+	if (event->type == Discord::EventType::TYPING_START) {
+		auto typing = (Discord::TypingStartEvent *)event;
+		if (typing->member)
+			Trace(StrFmt " has started typing something...", StrArg(typing->member->user->username));
+		else
+			Trace("%zu has started typing something...", typing->user_id.value);
+		return;
+	}
+
+	if (event->type == Discord::EventType::USER_UPDATE) {
+		auto user = (Discord::UserUpdateEvent *)event;
+		Trace(StrFmt " updated.", StrArg(user->user.username));
+		return;
+	}
+
+	if (event->type == Discord::EventType::VOICE_STATE_UPDATE) {
+		auto voice = (Discord::VoiceStateUpdateEvent *)event;
+		Trace("Voice state updated: %zu", voice->voice_state.channel_id.value);
+		return;
+	}
+	
+	if (event->type == Discord::EventType::VOICE_SERVER_UPDATE) {
+		auto voice = (Discord::VoiceServerUpdateEvent *)event;
+		Trace("Voice server updated: %zu", voice->guild_id.value);
+		return;
+	}
+	
+	if (event->type == Discord::EventType::WEBHOOKS_UPDATE) {
+		auto webhook = (Discord::WebhooksUpdateEvent *)event;
+		Trace("Webhooks updated: %zu", webhook->guild_id.value);
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -4365,13 +4478,17 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_MEMBERS;
 	intents |= Discord::Intent::GUILD_MESSAGES;
 	intents |= Discord::Intent::GUILD_MESSAGE_REACTIONS;
+	intents |= Discord::Intent::GUILD_MESSAGE_TYPING;
 	intents |= Discord::Intent::GUILD_EMOJIS_AND_STICKERS;
 	intents |= Discord::Intent::GUILD_INTEGRATIONS;
 	intents |= Discord::Intent::GUILD_SCHEDULED_EVENTS;
 	intents |= Discord::Intent::GUILD_INVITES;
 	intents |= Discord::Intent::GUILD_PRESENCES;
+	intents |= Discord::Intent::GUILD_VOICE_STATES;
+	intents |= Discord::Intent::GUILD_WEBHOOKS;
 	intents |= Discord::Intent::DIRECT_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
+	intents |= Discord::Intent::DIRECT_MESSAGE_TYPING;
 
 	Discord::PresenceUpdate presence(client.allocator);
 	presence.status = Discord::StatusType::DO_NOT_DISTURB;
