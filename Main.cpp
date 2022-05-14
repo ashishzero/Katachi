@@ -912,8 +912,8 @@ namespace Discord {
 	};
 
 	struct ThreadMemberUpdateEvent : public Event {
-		ThreadMember member;
 		Snowflake    guild_id;
+		ThreadMember member;
 
 		ThreadMemberUpdateEvent(): Event(EventType::THREAD_MEMBER_UPDATE) {}
 	};
@@ -999,6 +999,40 @@ namespace Discord {
 	struct GuildIntegrationsUpdateEvent : public Event {
 		Snowflake guild_id;
 		GuildIntegrationsUpdateEvent(): Event(EventType::GUILD_INTEGRATIONS_UPDATE) {}
+	};
+
+	struct GuildMemberAddEvent : public Event {
+		Snowflake  guild_id;
+		GuildMember member;
+
+		GuildMemberAddEvent(): Event(EventType::GUILD_MEMBER_ADD) {}
+		GuildMemberAddEvent(Memory_Allocator allocator):
+			Event(EventType::GUILD_MEMBER_ADD), member(allocator) {}
+	};
+
+	struct GuildMemberRemoveEvent : public Event {
+		Snowflake  guild_id;
+		User       user;
+
+		GuildMemberRemoveEvent(): Event(EventType::GUILD_MEMBER_REMOVE) {}
+	};
+
+	struct GuildMemberUpdateEvent : public Event {
+		Snowflake        guild_id;
+		Array<Snowflake> roles;
+		User             user;
+		String           nick;
+		String           avatar;
+		ptrdiff_t        joined_at = 0;
+		ptrdiff_t        premium_since = 0;
+		bool             deaf = false;
+		bool             mute = false;
+		bool             pending = false;
+		ptrdiff_t        communication_disabled_until = 0;
+
+		GuildMemberUpdateEvent(): Event(EventType::GUILD_MEMBER_UPDATE) {}
+		GuildMemberUpdateEvent(Memory_Allocator allocator):
+			Event(EventType::GUILD_MEMBER_UPDATE), roles(allocator) {}
 	};
 
 	//
@@ -2133,6 +2167,47 @@ static void Discord_EventHandlerGuildIntegrationsUpdate(Discord::Client *client,
 	client->onevent(client, &integrations);
 }
 
+static void Discord_EventHandlerGuildMemberAdd(Discord::Client *client, const Json &data) {
+	Discord::GuildMemberAddEvent member;
+	Json_Object obj = JsonGetObject(data);
+	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(obj, &member.member);
+	client->onevent(client, &member);
+}
+
+static void Discord_EventHandlerGuildMemberRemove(Discord::Client *client, const Json &data) {
+	Discord::GuildMemberRemoveEvent member;
+	Json_Object obj = JsonGetObject(data);
+	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "user"), &member.user);
+	client->onevent(client, &member);
+}
+
+static void Discord_EventHandlerGuildMemberUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildMemberUpdateEvent member;
+	Json_Object obj = JsonGetObject(data);
+	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	Json_Array roles = JsonGetArray(obj, "roles");
+	member.roles.Resize(roles.count);
+	for (ptrdiff_t index = 0; index < member.roles.count; ++index) {
+		member.roles[index] = Discord_ParseId(JsonGetString(roles[index]));
+	}
+
+	Discord_Deserialize(JsonGetObject(obj, "user"), &member.user);
+
+	member.nick                         = JsonGetString(obj, "nick");
+	member.avatar                       = JsonGetString(obj, "avatar");
+	member.joined_at                    = Discord_ParseTimestamp(JsonGetString(obj, "joined_at"));
+	member.premium_since                = Discord_ParseTimestamp(JsonGetString(obj, "premium_since"));
+	member.deaf                         = JsonGetBool(obj, "deaf");
+	member.mute                         = JsonGetBool(obj, "mute");
+	member.pending                      = JsonGetBool(obj, "pending");
+	member.communication_disabled_until = JsonGetBool(obj, "communication_disabled_until");
+
+	client->onevent(client, &member);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2143,8 +2218,8 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildCreate, Discord_EventHandlerGuildUpdate, Discord_EventHandlerGuildDelete,
 	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove,
 	Discord_EventHandlerGuildEmojisUpdate, Discord_EventHandlerGuildStickersUpdate, Discord_EventHandlerGuildIntegrationsUpdate,
+	Discord_EventHandlerGuildMemberAdd, Discord_EventHandlerGuildMemberRemove, Discord_EventHandlerGuildMemberUpdate,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2356,6 +2431,24 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 
 	if (event->type == Discord::EventType::GUILD_INTEGRATIONS_UPDATE) {
 		Trace("Guild integration update");
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_MEMBER_ADD) {
+		auto member = (Discord::GuildMemberAddEvent *)event;
+		Trace("Member joined: " StrFmt, StrArg(member->member.user->username));
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_MEMBER_REMOVE) {
+		auto member = (Discord::GuildMemberRemoveEvent *)event;
+		Trace("Member left: " StrFmt, StrArg(member->user.username));
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_MEMBER_UPDATE) {
+		auto member = (Discord::GuildMemberUpdateEvent *)event;
+		Trace("Member updated: " StrFmt, StrArg(member->user.username));
 		return;
 	}
 }
