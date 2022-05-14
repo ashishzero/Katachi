@@ -1698,6 +1698,21 @@ namespace Discord {
 			Event(EventType::PRESENCE_UPDATE), presence(allocator) {}
 	};
 
+	struct StageInstanceCreateEvent : public Event {
+		StageInstance stage;
+		StageInstanceCreateEvent(): Event(EventType::STAGE_INSTANCE_CREATE) {}
+	};
+
+	struct StageInstanceDeleteEvent : public Event {
+		StageInstance stage;
+		StageInstanceDeleteEvent(): Event(EventType::STAGE_INSTANCE_DELETE) {}
+	};
+	
+	struct StageInstanceUpdateEvent : public Event {
+		StageInstance stage;
+		StageInstanceUpdateEvent(): Event(EventType::STAGE_INSTANCE_UPDATE) {}
+	};
+
 	//
 	//
 	//
@@ -3845,6 +3860,24 @@ static void Discord_EventHandlerPresenceUpdate(Discord::Client *client, const Js
 	client->onevent(client, &presence);
 }
 
+static void Discord_EventHandlerStageInstanceCreate(Discord::Client *client, const Json &data) {
+	Discord::StageInstanceCreateEvent stage;
+	Discord_Deserialize(JsonGetObject(data), &stage.stage);
+	client->onevent(client, &stage);
+}
+
+static void Discord_EventHandlerStageInstanceDelete(Discord::Client *client, const Json &data) {
+	Discord::StageInstanceDeleteEvent stage;
+	Discord_Deserialize(JsonGetObject(data), &stage.stage);
+	client->onevent(client, &stage);
+}
+
+static void Discord_EventHandlerStageInstanceUpdate(Discord::Client *client, const Json &data) {
+	Discord::StageInstanceUpdateEvent stage;
+	Discord_Deserialize(JsonGetObject(data), &stage.stage);
+	client->onevent(client, &stage);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -3864,8 +3897,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerMessageCreate, Discord_EventHandlerMessageUpdate, Discord_EventHandlerMessageDelete,
 	Discord_EventHandlerMessageDeleteBulk, Discord_EventHandlerMessageReactionAdd, Discord_EventHandlerMessageReactionRemove,
 	Discord_EventHandlerMessageReactionRemoveAll, Discord_EventHandlerMessageReactionRemoveEmoji, Discord_EventHandlerPresenceUpdate,
+	Discord_EventHandlerStageInstanceCreate, Discord_EventHandlerStageInstanceDelete, Discord_EventHandlerStageInstanceUpdate,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 };
 static_assert(ArrayCount(DiscordEventHandlers) == ArrayCount(Discord::EventNames), "");
@@ -4226,6 +4260,24 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	if (event->type == Discord::EventType::PRESENCE_UPDATE) {
 		auto presence = (Discord::PresenceUpdateEvent *)event;
 		Trace("Presence updated: %d", presence->presence.status);
+		return;
+	}
+
+	if (event->type == Discord::EventType::STAGE_INSTANCE_CREATE) {
+		auto stage = (Discord::StageInstanceCreateEvent *)event;
+		Trace("Stage instance created: " StrFmt, StrArg(stage->stage.topic));
+		return;
+	}
+
+	if (event->type == Discord::EventType::STAGE_INSTANCE_DELETE) {
+		auto stage = (Discord::StageInstanceDeleteEvent *)event;
+		Trace("Stage instance updated: " StrFmt, StrArg(stage->stage.topic));
+		return;
+	}
+
+	if (event->type == Discord::EventType::STAGE_INSTANCE_UPDATE) {
+		auto stage = (Discord::StageInstanceUpdateEvent *)event;
+		Trace("Stage instance deleted: " StrFmt, StrArg(stage->stage.topic));
 		return;
 	}
 }
