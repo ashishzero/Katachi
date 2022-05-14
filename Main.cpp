@@ -1691,6 +1691,13 @@ namespace Discord {
 			Event(EventType::MESSAGE_REACTION_REMOVE_EMOJI), emoji(allocator) {}
 	};
 
+	struct PresenceUpdateEvent : public Event {
+		Presence presence;
+		PresenceUpdateEvent(): Event(EventType::PRESENCE_UPDATE) {}
+		PresenceUpdateEvent(Memory_Allocator allocator): 
+			Event(EventType::PRESENCE_UPDATE), presence(allocator) {}
+	};
+
 	//
 	//
 	//
@@ -3832,6 +3839,12 @@ static void Discord_EventHandlerMessageReactionRemoveEmoji(Discord::Client *clie
 	client->onevent(client, &reaction);
 }
 
+static void Discord_EventHandlerPresenceUpdate(Discord::Client *client, const Json &data) {
+	Discord::PresenceUpdateEvent presence;
+	Discord_Deserialize(JsonGetObject(data), &presence.presence);
+	client->onevent(client, &presence);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -3850,9 +3863,8 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerInteractionCreate,Discord_EventHandlerInviteCreate, Discord_EventHandlerInviteDelete,
 	Discord_EventHandlerMessageCreate, Discord_EventHandlerMessageUpdate, Discord_EventHandlerMessageDelete,
 	Discord_EventHandlerMessageDeleteBulk, Discord_EventHandlerMessageReactionAdd, Discord_EventHandlerMessageReactionRemove,
-	Discord_EventHandlerMessageReactionRemoveAll, Discord_EventHandlerMessageReactionRemoveEmoji,
+	Discord_EventHandlerMessageReactionRemoveAll, Discord_EventHandlerMessageReactionRemoveEmoji, Discord_EventHandlerPresenceUpdate,
 
-	Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 };
@@ -4210,6 +4222,12 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("All emoji reaction removed: " StrFmt, StrArg(reaction->emoji.name));
 		return;
 	}
+
+	if (event->type == Discord::EventType::PRESENCE_UPDATE) {
+		auto presence = (Discord::PresenceUpdateEvent *)event;
+		Trace("Presence updated: %d", presence->presence.status);
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -4278,9 +4296,9 @@ int main(int argc, char **argv) {
 	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
 	Websocket_Spec spec;
-	spec.queue_size = 16;
-	spec.read_size  = MegaBytes(16);
-	spec.write_size = KiloBytes(12);
+	spec.queue_size = 64;
+	spec.read_size  = MegaBytes(2);
+	spec.write_size = KiloBytes(8);
 
 	Websocket *websocket = Websocket_Connect(url, &res, &headers, spec);
 	if (!websocket) {
@@ -4299,6 +4317,7 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_INTEGRATIONS;
 	intents |= Discord::Intent::GUILD_SCHEDULED_EVENTS;
 	intents |= Discord::Intent::GUILD_INVITES;
+	intents |= Discord::Intent::GUILD_PRESENCES;
 	intents |= Discord::Intent::DIRECT_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 
