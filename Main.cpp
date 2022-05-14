@@ -704,7 +704,8 @@ namespace Discord {
 			DIRECT_MESSAGES           = 1 << 12,
 			DIRECT_MESSAGE_REACTIONS  = 1 << 13,
 			DIRECT_MESSAGE_TYPING     = 1 << 14,
-			GUILD_SCHEDULED_EVENTS    = 1 << 15,
+			MESSAGE_CONTENT           = 1 << 15,
+			GUILD_SCHEDULED_EVENTS    = 1 << 16,
 		};
 	};
 
@@ -1048,6 +1049,54 @@ namespace Discord {
 		GuildMembersChunkEvent(Memory_Allocator allocator):
 			Event(EventType::GUILD_MEMBERS_CHUNK), members(allocator), not_found(allocator), presences(allocator) {}
 	};
+
+	struct GuildRoleCreateEvent : public Event {
+		Snowflake guild_id;
+		Role      role;
+		GuildRoleCreateEvent(): Event(EventType::GUILD_ROLE_CREATE) {}
+	};
+	
+	struct GuildRoleUpdateEvent : public Event {
+		Snowflake guild_id;
+		Role      role;
+		GuildRoleUpdateEvent(): Event(EventType::GUILD_ROLE_UPDATE) {}
+	};
+
+	struct GuildRoleDeleteEvent : public Event {
+		Snowflake guild_id;
+		Snowflake role_id;
+		GuildRoleDeleteEvent(): Event(EventType::GUILD_ROLE_DELETE) {}
+	};
+
+	struct GuildScheduledEventCreateEvent : public Event {
+		GuildScheduledEvent scheduled_event;
+		GuildScheduledEventCreateEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_CREATE) {}
+	};
+	
+	struct GuildScheduledEventUpdateEvent : public Event {
+		GuildScheduledEvent scheduled_event;
+		GuildScheduledEventUpdateEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_UPDATE) {}
+	};
+	
+	struct GuildScheduledEventDeleteEvent : public Event {
+		GuildScheduledEvent scheduled_event;
+		GuildScheduledEventDeleteEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_DELETE) {}
+	};
+
+	struct GuildScheduledEventUserAddEvent : public Event {
+		Snowflake guild_scheduled_event_id;
+		Snowflake user_id;
+		Snowflake guild_id;
+		GuildScheduledEventUserAddEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_USER_ADD) {}
+	};
+
+	struct GuildScheduledEventUserRemoveEvent : public Event {
+		Snowflake guild_scheduled_event_id;
+		Snowflake user_id;
+		Snowflake guild_id;
+		GuildScheduledEventUserRemoveEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {}
+	};
+
 
 	//
 	//
@@ -2253,6 +2302,66 @@ static void Discord_EventHandlerGuildMembersChunk(Discord::Client *client, const
 	client->onevent(client, &chunk);
 }
 
+static void Discord_EventHandlerGuildRoleCreate(Discord::Client *client, const Json &data) {
+	Discord::GuildRoleCreateEvent role;
+	Json_Object obj = JsonGetObject(data);
+	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "role"), &role.role);
+	client->onevent(client, &role);
+}
+
+static void Discord_EventHandlerGuildRoleUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildRoleUpdateEvent role;
+	Json_Object obj = JsonGetObject(data);
+	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "role"), &role.role);
+	client->onevent(client, &role);
+}
+
+static void Discord_EventHandlerGuildRoleDelete(Discord::Client *client, const Json &data) {
+	Discord::GuildRoleDeleteEvent role;
+	Json_Object obj = JsonGetObject(data);
+	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	role.role_id    = Discord_ParseId(JsonGetString(obj, "role_id"));
+	client->onevent(client, &role);
+}
+
+static void Discord_EventHandlerGuildScheduledEventCreate(Discord::Client *client, const Json &data) {
+	Discord::GuildScheduledEventCreateEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
+	client->onevent(client, &scheduled_event);
+}
+
+static void Discord_EventHandlerGuildScheduledEventUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildScheduledEventUpdateEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
+	client->onevent(client, &scheduled_event);
+}
+
+static void Discord_EventHandlerGuildScheduledEventDelete(Discord::Client *client, const Json &data) {
+	Discord::GuildScheduledEventDeleteEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
+	client->onevent(client, &scheduled_event);
+}
+
+static void Discord_EventHandlerGuildScheduledEventUserAdd(Discord::Client *client, const Json &data) {
+	Discord::GuildScheduledEventUserAddEvent scheduled_event;
+	Json_Object obj                          = JsonGetObject(data);
+	scheduled_event.guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
+	scheduled_event.user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
+	scheduled_event.guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &scheduled_event);
+}
+
+static void Discord_EventHandlerGuildScheduledEventUserRemove(Discord::Client *client, const Json &data) {
+	Discord::GuildScheduledEventUserRemoveEvent scheduled_event;
+	Json_Object obj                          = JsonGetObject(data);
+	scheduled_event.guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
+	scheduled_event.user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
+	scheduled_event.guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &scheduled_event);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2261,14 +2370,14 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerThreadCreate, Discord_EventHandlerThreadUpdate, Discord_EventHandlerThreadDelete,
 	Discord_EventHandlerThreadListSync, Discord_EventHandlerThreadMemberUpdate, Discord_EventHandlerThreadMembersUpdate,
 	Discord_EventHandlerGuildCreate, Discord_EventHandlerGuildUpdate, Discord_EventHandlerGuildDelete,
-	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove,
-	Discord_EventHandlerGuildEmojisUpdate, Discord_EventHandlerGuildStickersUpdate, Discord_EventHandlerGuildIntegrationsUpdate,
-	Discord_EventHandlerGuildMemberAdd, Discord_EventHandlerGuildMemberRemove, Discord_EventHandlerGuildMemberUpdate,
-	Discord_EventHandlerGuildMembersChunk, 
+	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove, Discord_EventHandlerGuildEmojisUpdate,
+	Discord_EventHandlerGuildStickersUpdate, Discord_EventHandlerGuildIntegrationsUpdate, Discord_EventHandlerGuildMemberAdd,
+	Discord_EventHandlerGuildMemberRemove, Discord_EventHandlerGuildMemberUpdate, Discord_EventHandlerGuildMembersChunk,
+	Discord_EventHandlerGuildRoleCreate, Discord_EventHandlerGuildRoleUpdate, Discord_EventHandlerGuildRoleDelete,
+	Discord_EventHandlerGuildScheduledEventCreate, Discord_EventHandlerGuildScheduledEventUpdate, Discord_EventHandlerGuildScheduledEventDelete,
+	Discord_EventHandlerGuildScheduledEventUserAdd, Discord_EventHandlerGuildScheduledEventUserRemove,
 
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2497,6 +2606,54 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Member updated: " StrFmt, StrArg(member->user.username));
 		return;
 	}
+
+	if (event->type == Discord::EventType::GUILD_ROLE_CREATE) {
+		auto role = (Discord::GuildRoleCreateEvent *)event;
+		Trace("Role created: " StrFmt, StrArg(role->role.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::GUILD_ROLE_UPDATE) {
+		auto role = (Discord::GuildRoleUpdateEvent *)event;
+		Trace("Role updated: " StrFmt, StrArg(role->role.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::GUILD_ROLE_DELETE) {
+		auto role = (Discord::GuildRoleDeleteEvent *)event;
+		Trace("Role deleted: %zu", role->role_id.value);
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_CREATE) {
+		auto scheduled_event = (Discord::GuildScheduledEventCreateEvent *)event;
+		Trace("Scheduled event created: " StrFmt, StrArg(scheduled_event->scheduled_event.name));
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_UPDATE) {
+		auto scheduled_event = (Discord::GuildScheduledEventUpdateEvent *)event;
+		Trace("Scheduled event updated: " StrFmt, StrArg(scheduled_event->scheduled_event.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_DELETE) {
+		auto scheduled_event = (Discord::GuildScheduledEventDeleteEvent *)event;
+		Trace("Scheduled event deleted: " StrFmt, StrArg(scheduled_event->scheduled_event.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_USER_ADD) {
+		auto scheduled_event = (Discord::GuildScheduledEventUserAddEvent *)event;
+		Trace("Scheduled event user added: %zu ", scheduled_event->user_id.value);
+		return;
+	}
+	
+	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {
+		auto scheduled_event = (Discord::GuildScheduledEventUserRemoveEvent *)event;
+		Trace("Scheduled event user removed: %zu ", scheduled_event->user_id.value);
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -2584,6 +2741,7 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_MESSAGE_REACTIONS;
 	intents |= Discord::Intent::GUILD_EMOJIS_AND_STICKERS;
 	intents |= Discord::Intent::GUILD_INTEGRATIONS;
+	intents |= Discord::Intent::GUILD_SCHEDULED_EVENTS;
 	intents |= Discord::Intent::DIRECT_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 
