@@ -39,7 +39,11 @@ namespace Discord {
 		uint64_t value = 0;
 		Snowflake() = default;
 		Snowflake(uint64_t _val): value(_val) {}
+		operator bool() { return value != 0; }
 	};
+
+	static inline bool operator==(Snowflake a, Snowflake b) { return a.value == b.value; }
+	static inline bool operator!=(Snowflake a, Snowflake b) { return a.value != b.value; }
 
 	typedef uint64_t Permission;
 	struct PermissionBit {
@@ -760,6 +764,45 @@ namespace Discord {
 	//
 	//
 
+	enum class IntegrationExpireBehavior {
+		REMOVE_ROLE = 0, KICK = 1
+	};
+
+	struct IntegrationAccount {
+		String id;
+		String name;
+	};
+
+	struct IntegrationApplication {
+		Snowflake id;
+		String    name;
+		String    icon;
+		String    description;
+		User *    bot = nullptr;
+	};
+
+	struct Integration {
+		Snowflake                 id;
+		String                    name;
+		String                    type;
+		bool                      enabled = false;
+		bool                      syncing = false;
+		Snowflake                 role_id;
+		bool                      enable_emoticons;
+		IntegrationExpireBehavior expire_behavior = IntegrationExpireBehavior::REMOVE_ROLE;
+		int32_t                   expire_grace_period = 0;
+		User *                    user = nullptr;
+		IntegrationAccount        account;
+		ptrdiff_t                 synced_at = 0;
+		int32_t                   subscriber_count = 0;
+		bool                      revoked = false;
+		IntegrationApplication *  application = nullptr;
+	};
+
+	//
+	//
+	//
+
 	enum class EventType {
 		NONE,
 		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION,
@@ -1097,6 +1140,24 @@ namespace Discord {
 		GuildScheduledEventUserRemoveEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {}
 	};
 
+	struct IntegrationCreateEvent : public Event {
+		Snowflake   guild_id;
+		Integration integration;
+		IntegrationCreateEvent(): Event(EventType::INTEGRATION_CREATE) {}
+	};
+
+	struct IntegrationUpdateEvent : public Event {
+		Snowflake   guild_id;
+		Integration integration;
+		IntegrationUpdateEvent(): Event(EventType::INTEGRATION_UPDATE) {}
+	};
+
+	struct IntegrationDeleteEvent : public Event {
+		Snowflake id;
+		Snowflake guild_id;
+		Snowflake application_id;
+		IntegrationDeleteEvent(): Event(EventType::INTEGRATION_DELETE) {}
+	};
 
 	//
 	//
@@ -1932,6 +1993,60 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::GuildScheduledE
 	event->image      = JsonGetString(obj, "image");
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::IntegrationAccount *account) {
+	account->id   = JsonGetString(obj, "id");
+	account->name = JsonGetString(obj, "name");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::IntegrationApplication *application) {
+	application->id          = Discord_ParseId(JsonGetString(obj, "id"));
+	application->name        = JsonGetString(obj, "name");
+	application->icon        = JsonGetString(obj, "icon");
+	application->description = JsonGetString(obj, "description");
+
+	const Json *bot = obj.Find("bot");
+	if (bot) {
+		application->bot = new Discord::User;
+		if (application->bot) {
+			Discord_Deserialize(JsonGetObject(*bot), application->bot);
+		}
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Integration *integration) {
+	integration->id                  = Discord_ParseId(JsonGetString(obj, "id"));
+	integration->name                = JsonGetString(obj, "name");
+	integration->type                = JsonGetString(obj, "type");
+	integration->enabled             = JsonGetBool(obj, "enabled");
+	integration->syncing             = JsonGetBool(obj, "syncing");
+	integration->role_id             = Discord_ParseId(JsonGetString(obj, "role_id"));
+	integration->enable_emoticons    = JsonGetBool(obj, "enable_emoticons");
+	integration->expire_behavior     = (Discord::IntegrationExpireBehavior)JsonGetInt(obj, "expire_behavior");
+	integration->expire_grace_period = JsonGetInt(obj, "expire_grace_period");
+
+	const Json *user = obj.Find("user");
+	if (user) {
+		integration->user = new Discord::User;
+		if (integration->user) {
+			Discord_Deserialize(JsonGetObject(*user), integration->user);
+		}
+	}
+
+	Discord_Deserialize(JsonGetObject(obj, "account"), &integration->account);
+
+	integration->synced_at        = Discord_ParseTimestamp(JsonGetString(obj, "synced_at"));
+	integration->subscriber_count = JsonGetInt(obj, "subscriber_count");
+	integration->revoked          = JsonGetBool(obj, "revoked");
+
+	const Json *application = obj.Find("application");
+	if (application) {
+		integration->application = new Discord::IntegrationApplication;
+		if (integration->application) {
+			Discord_Deserialize(JsonGetObject(*application), integration->application);
+		}
+	}
+}
+
 //
 //
 //
@@ -2362,6 +2477,31 @@ static void Discord_EventHandlerGuildScheduledEventUserRemove(Discord::Client *c
 	client->onevent(client, &scheduled_event);
 }
 
+static void Discord_EventHandlerIntegrationCreate(Discord::Client *client, const Json &data) {
+	Discord::IntegrationCreateEvent integration;
+	Json_Object obj = JsonGetObject(data);
+	integration.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(obj, &integration.integration);
+	client->onevent(client, &integration);
+}
+
+static void Discord_EventHandlerIntegrationUpdate(Discord::Client *client, const Json &data) {
+	Discord::IntegrationUpdateEvent integration;
+	Json_Object obj = JsonGetObject(data);
+	integration.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(obj, &integration.integration);
+	client->onevent(client, &integration);
+}
+
+static void Discord_EventHandlerIntegrationDelete(Discord::Client *client, const Json &data) {
+	Discord::IntegrationDeleteEvent integration;
+	Json_Object obj            = JsonGetObject(data);
+	integration.id             = Discord_ParseId(JsonGetString(obj, "id"));
+	integration.guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	integration.application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
+	client->onevent(client, &integration);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2376,8 +2516,8 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildRoleCreate, Discord_EventHandlerGuildRoleUpdate, Discord_EventHandlerGuildRoleDelete,
 	Discord_EventHandlerGuildScheduledEventCreate, Discord_EventHandlerGuildScheduledEventUpdate, Discord_EventHandlerGuildScheduledEventDelete,
 	Discord_EventHandlerGuildScheduledEventUserAdd, Discord_EventHandlerGuildScheduledEventUserRemove,
+	Discord_EventHandlerIntegrationCreate, Discord_EventHandlerIntegrationUpdate, Discord_EventHandlerIntegrationDelete,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2652,6 +2792,24 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {
 		auto scheduled_event = (Discord::GuildScheduledEventUserRemoveEvent *)event;
 		Trace("Scheduled event user removed: %zu ", scheduled_event->user_id.value);
+		return;
+	}
+
+	if (event->type == Discord::EventType::INTEGRATION_CREATE) {
+		auto integration = (Discord::IntegrationCreateEvent *)event;
+		Trace("Integration created: " StrFmt, StrArg(integration->integration.name));
+		return;
+	}
+
+	if (event->type == Discord::EventType::INTEGRATION_UPDATE) {
+		auto integration = (Discord::IntegrationUpdateEvent *)event;
+		Trace("Integration updated: " StrFmt, StrArg(integration->integration.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::INTEGRATION_DELETE) {
+		auto integration = (Discord::IntegrationDeleteEvent *)event;
+		Trace("Integration updated: %zu", integration->id.value);
 		return;
 	}
 }
