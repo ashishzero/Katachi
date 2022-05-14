@@ -1617,6 +1617,80 @@ namespace Discord {
 		InviteDeleteEvent(): Event(EventType::INVITE_DELETE) {}
 	};
 
+	struct MessageCreateEvent : public Event {
+		Message message;
+		MessageCreateEvent(): Event(EventType::MESSAGE_CREATE) {}
+		MessageCreateEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_CREATE), message(allocator) {}
+	};
+
+	struct MessageUpdateEvent : public Event {
+		Message message;
+		MessageUpdateEvent() : Event(EventType::MESSAGE_UPDATE) {}
+		MessageUpdateEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_UPDATE), message(allocator) {}
+	};
+
+	struct MessageDeleteEvent : public Event {
+		Snowflake id;
+		Snowflake channel_id;
+		Snowflake guild_id;
+		MessageDeleteEvent(): Event(EventType::MESSAGE_DELETE) {}
+	};
+	
+	struct MessageDeleteBulkEvent : public Event {
+		Array<Snowflake> ids;
+		Snowflake        channel_id;
+		Snowflake        guild_id;
+		MessageDeleteBulkEvent(): Event(EventType::MESSAGE_DELETE_BULK) {}
+		MessageDeleteBulkEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_DELETE_BULK), ids(allocator) {}
+	};
+
+	struct MessageReactionAddEvent : public Event {
+		Snowflake    user_id;
+		Snowflake    channel_id;
+		Snowflake    message_id;
+		Snowflake    guild_id;
+		GuildMember *member = nullptr;
+		Emoji        emoji;
+
+		MessageReactionAddEvent(): Event(EventType::MESSAGE_REACTION_ADD) {}
+		MessageReactionAddEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_REACTION_ADD), emoji(allocator) {}
+	};
+
+	struct MessageReactionRemoveEvent : public Event {
+		Snowflake user_id;
+		Snowflake channel_id;
+		Snowflake message_id;
+		Snowflake guild_id;
+		Emoji     emoji;
+
+		MessageReactionRemoveEvent(): Event(EventType::MESSAGE_REACTION_REMOVE) {}
+		MessageReactionRemoveEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_REACTION_REMOVE), emoji(allocator) {}
+	};
+
+	struct MessageReactionRemoveAllEvent : public Event {
+		Snowflake channel_id;
+		Snowflake message_id;
+		Snowflake guild_id;
+
+		MessageReactionRemoveAllEvent(): Event(EventType::MESSAGE_REACTION_REMOVE_ALL) {}
+	};
+
+	struct MessageReactionRemoveEmojiEvent : public Event {
+		Snowflake channel_id;
+		Snowflake guild_id;
+		Snowflake message_id;
+		Emoji     emoji;
+
+		MessageReactionRemoveEmojiEvent(): Event(EventType::MESSAGE_REACTION_REMOVE_EMOJI) {}
+		MessageReactionRemoveEmojiEvent(Memory_Allocator allocator):
+			Event(EventType::MESSAGE_REACTION_REMOVE_EMOJI), emoji(allocator) {}
+	};
+
 	//
 	//
 	//
@@ -3672,6 +3746,92 @@ static void Discord_EventHandlerInviteDelete(Discord::Client *client, const Json
 	client->onevent(client, &invite);
 }
 
+static void Discord_EventHandlerMessageCreate(Discord::Client *client, const Json &data) {
+	Discord::MessageCreateEvent message;
+	Discord_Deserialize(JsonGetObject(data), &message.message);
+	client->onevent(client, &message);
+}
+
+static void Discord_EventHandlerMessageUpdate(Discord::Client *client, const Json &data) {
+	Discord::MessageUpdateEvent message;
+	Discord_Deserialize(JsonGetObject(data), &message.message);
+	client->onevent(client, &message);
+}
+
+static void Discord_EventHandlerMessageDelete(Discord::Client *client, const Json &data) {
+	Discord::MessageDeleteEvent message;
+	Json_Object obj    = JsonGetObject(data);
+	message.id         = Discord_ParseId(JsonGetString(obj, "id"));
+	message.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	message.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &message);
+}
+
+static void Discord_EventHandlerMessageDeleteBulk(Discord::Client *client, const Json &data) {
+	Discord::MessageDeleteBulkEvent message;
+	Json_Object obj    = JsonGetObject(data);
+
+	Json_Array ids = JsonGetArray(obj, "ids");
+	message.ids.Resize(ids.count);
+	for (ptrdiff_t index = 0; index < message.ids.count; ++index) {
+		message.ids[index] = Discord_ParseId(JsonGetString(ids[index]));
+	}
+	
+	message.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	message.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &message);
+}
+
+static void Discord_EventHandlerMessageReactionAdd(Discord::Client *client, const Json &data) {
+	Discord::MessageReactionAddEvent reaction;
+	Json_Object obj     = JsonGetObject(data);
+	reaction.user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
+	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		reaction.member = new Discord::GuildMember;
+		if (reaction.member) {
+			Discord_Deserialize(JsonGetObject(*member), reaction.member);
+		}
+	}
+
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
+	client->onevent(client, &reaction);
+}
+
+static void Discord_EventHandlerMessageReactionRemove(Discord::Client *client, const Json &data) {
+	Discord::MessageReactionRemoveEvent reaction;
+	Json_Object obj     = JsonGetObject(data);
+	reaction.user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
+	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
+	client->onevent(client, &reaction);
+}
+
+static void Discord_EventHandlerMessageReactionRemoveAll(Discord::Client *client, const Json &data) {
+	Discord::MessageReactionRemoveAllEvent reaction;
+	Json_Object obj     = JsonGetObject(data);
+	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &reaction);
+}
+
+static void Discord_EventHandlerMessageReactionRemoveEmoji(Discord::Client *client, const Json &data) {
+	Discord::MessageReactionRemoveEmojiEvent reaction;
+	Json_Object obj     = JsonGetObject(data);
+	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
+	client->onevent(client, &reaction);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -3688,10 +3848,11 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildScheduledEventUserAdd, Discord_EventHandlerGuildScheduledEventUserRemove,
 	Discord_EventHandlerIntegrationCreate, Discord_EventHandlerIntegrationUpdate, Discord_EventHandlerIntegrationDelete,
 	Discord_EventHandlerInteractionCreate,Discord_EventHandlerInviteCreate, Discord_EventHandlerInviteDelete,
+	Discord_EventHandlerMessageCreate, Discord_EventHandlerMessageUpdate, Discord_EventHandlerMessageDelete,
+	Discord_EventHandlerMessageDeleteBulk, Discord_EventHandlerMessageReactionAdd, Discord_EventHandlerMessageReactionRemove,
+	Discord_EventHandlerMessageReactionRemoveAll, Discord_EventHandlerMessageReactionRemoveEmoji,
 
 	Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 };
@@ -3999,6 +4160,54 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	if (event->type == Discord::EventType::INVITE_DELETE) {
 		auto invite = (Discord::InviteDeleteEvent *)event;
 		Trace("Invite deleted: " StrFmt, StrArg(invite->code));
+		return;
+	}
+
+	if (event->type == Discord::EventType::MESSAGE_CREATE) {
+		auto msg = (Discord::MessageCreateEvent *)event;
+		Trace("Message sent: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::MESSAGE_UPDATE) {
+		auto msg = (Discord::MessageUpdateEvent *)event;
+		Trace("Message updated: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::MESSAGE_DELETE) {
+		auto msg = (Discord::MessageDeleteEvent *)event;
+		Trace("Message deleted: %zu", msg->id.value);
+		return;
+	}
+	
+	if (event->type == Discord::EventType::MESSAGE_DELETE_BULK) {
+		auto msg = (Discord::MessageDeleteBulkEvent *)event;
+		Trace("Message bulk deleted from channel: %zu", msg->channel_id.value);
+		return;
+	}
+
+	if (event->type == Discord::EventType::MESSAGE_REACTION_ADD) {
+		auto reaction = (Discord::MessageReactionAddEvent *)event;
+		Trace("Reaction added: " StrFmt, StrArg(reaction->emoji.name));
+		return;
+	}
+	
+	if (event->type == Discord::EventType::MESSAGE_REACTION_REMOVE) {
+		auto reaction = (Discord::MessageReactionRemoveEvent *)event;
+		Trace("Reaction removed: " StrFmt, StrArg(reaction->emoji.name));
+		return;
+	}
+
+	if (event->type == Discord::EventType::MESSAGE_REACTION_REMOVE_ALL) {
+		auto reaction = (Discord::MessageReactionRemoveAllEvent *)event;
+		Trace("All reactions removed: %zu", reaction->message_id);
+		return;
+	}
+
+	if (event->type == Discord::EventType::MESSAGE_REACTION_REMOVE_EMOJI) {
+		auto reaction = (Discord::MessageReactionRemoveEmojiEvent *)event;
+		Trace("All emoji reaction removed: " StrFmt, StrArg(reaction->emoji.name));
 		return;
 	}
 }
