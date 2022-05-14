@@ -978,6 +978,29 @@ namespace Discord {
 		GuildBanRemoveEvent(): Event(EventType::GUILD_BAN_REMOVE) {}
 	};
 
+	struct GuildEmojisUpdateEvent : public Event {
+		Snowflake    guild_id;
+		Array<Emoji> emojis;
+
+		GuildEmojisUpdateEvent(): Event(EventType::GUILD_EMOJIS_UPDATE) {}
+		GuildEmojisUpdateEvent(Memory_Allocator allocator):
+			Event(EventType::GUILD_EMOJIS_UPDATE), emojis(allocator) {}
+	};
+
+	struct GuildStickersUpdateEvent : public Event {
+		Snowflake      guild_id;
+		Array<Sticker> stickers;
+
+		GuildStickersUpdateEvent() : Event(EventType::GUILD_STICKERS_UPDATE) {}
+		GuildStickersUpdateEvent(Memory_Allocator allocator) :
+			Event(EventType::GUILD_STICKERS_UPDATE), stickers(allocator) {}
+	};
+
+	struct GuildIntegrationsUpdateEvent : public Event {
+		Snowflake guild_id;
+		GuildIntegrationsUpdateEvent(): Event(EventType::GUILD_INTEGRATIONS_UPDATE) {}
+	};
+
 	//
 	//
 	//
@@ -2075,6 +2098,41 @@ static void Discord_EventHandlerGuildBanRemove(Discord::Client *client, const Js
 	client->onevent(client, &ban);
 }
 
+static void Discord_EventHandlerGuildEmojisUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildEmojisUpdateEvent emojis_update;
+	Json_Object obj        = JsonGetObject(data);
+	emojis_update.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	
+	Json_Array emojis = JsonGetArray(obj, "emojis");
+	emojis_update.emojis.Resize(emojis.count);
+	for (ptrdiff_t index = 0; index < emojis_update.emojis.count; ++index) {
+		Discord_Deserialize(JsonGetObject(emojis[index]), &emojis_update.emojis[index]);
+	}
+
+	client->onevent(client, &emojis_update);
+}
+
+static void Discord_EventHandlerGuildStickersUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildStickersUpdateEvent stickers_update;
+	Json_Object obj          = JsonGetObject(data);
+	stickers_update.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	Json_Array stickers = JsonGetArray(obj, "stickers");
+	stickers_update.stickers.Resize(stickers.count);
+	for (ptrdiff_t index = 0; index < stickers_update.stickers.count; ++index) {
+		Discord_Deserialize(JsonGetObject(stickers[index]), &stickers_update.stickers[index]);
+	}
+
+	client->onevent(client, &stickers_update);
+}
+
+static void Discord_EventHandlerGuildIntegrationsUpdate(Discord::Client *client, const Json &data) {
+	Discord::GuildIntegrationsUpdateEvent integrations;
+	Json_Object obj       = JsonGetObject(data);
+	integrations.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent(client, &integrations);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2084,9 +2142,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerThreadListSync, Discord_EventHandlerThreadMemberUpdate, Discord_EventHandlerThreadMembersUpdate,
 	Discord_EventHandlerGuildCreate, Discord_EventHandlerGuildUpdate, Discord_EventHandlerGuildDelete,
 	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove,
+	Discord_EventHandlerGuildEmojisUpdate, Discord_EventHandlerGuildStickersUpdate, Discord_EventHandlerGuildIntegrationsUpdate,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone,
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2277,6 +2335,29 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("User unbanned: " StrFmt, StrArg(ban->user.username));
 		return;
 	}
+
+	if (event->type == Discord::EventType::GUILD_EMOJIS_UPDATE) {
+		auto emojis = (Discord::GuildEmojisUpdateEvent *)event;
+		if (emojis->emojis.count)
+			Trace("Emoji updated: " StrFmt, StrArg(emojis->emojis[0].name));
+		else
+			Trace("Emoji updated");
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_STICKERS_UPDATE) {
+		auto stickers = (Discord::GuildStickersUpdateEvent *)event;
+		if (stickers->stickers.count)
+			Trace("Sticker updated: " StrFmt, StrArg(stickers->stickers[0].name));
+		else
+			Trace("Sticker updated");
+		return;
+	}
+
+	if (event->type == Discord::EventType::GUILD_INTEGRATIONS_UPDATE) {
+		Trace("Guild integration update");
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -2362,9 +2443,10 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_MEMBERS;
 	intents |= Discord::Intent::GUILD_MESSAGES;
 	intents |= Discord::Intent::GUILD_MESSAGE_REACTIONS;
+	intents |= Discord::Intent::GUILD_EMOJIS_AND_STICKERS;
+	intents |= Discord::Intent::GUILD_INTEGRATIONS;
 	intents |= Discord::Intent::DIRECT_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
-	intents |= Discord::Intent::GUILD_INTEGRATIONS;
 
 	Discord::PresenceUpdate presence(client.allocator);
 	presence.status = Discord::StatusType::DO_NOT_DISTURB;
