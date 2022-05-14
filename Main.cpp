@@ -1035,6 +1035,20 @@ namespace Discord {
 			Event(EventType::GUILD_MEMBER_UPDATE), roles(allocator) {}
 	};
 
+	struct GuildMembersChunkEvent : public Event {
+		Snowflake          guild_id;
+		Array<GuildMember> members;
+		int32_t            chunk_index = 0;
+		int32_t            chunk_count = 0;
+		Array<Snowflake>   not_found;
+		Array<Presence>    presences;
+		String             nonce;
+
+		GuildMembersChunkEvent(): Event(EventType::GUILD_MEMBERS_CHUNK) {}
+		GuildMembersChunkEvent(Memory_Allocator allocator):
+			Event(EventType::GUILD_MEMBERS_CHUNK), members(allocator), not_found(allocator), presences(allocator) {}
+	};
+
 	//
 	//
 	//
@@ -2208,6 +2222,37 @@ static void Discord_EventHandlerGuildMemberUpdate(Discord::Client *client, const
 	client->onevent(client, &member);
 }
 
+static void Discord_EventHandlerGuildMembersChunk(Discord::Client *client, const Json &data) {
+	Discord::GuildMembersChunkEvent chunk;
+	Json_Object obj = JsonGetObject(data);
+	chunk.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	Json_Array members = JsonGetArray(obj, "members");
+	chunk.members.Resize(members.count);
+	for (ptrdiff_t index = 0; index < chunk.members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(members[index]), &chunk.members[index]);
+	}
+
+	chunk.chunk_index = JsonGetInt(obj, "chunk_index");
+	chunk.chunk_count = JsonGetInt(obj, "chunk_count");
+
+	Json_Array not_found = JsonGetArray(obj, "not_found");
+	chunk.not_found.Resize(not_found.count);
+	for (ptrdiff_t index = 0; index < chunk.not_found.count; ++index) {
+		chunk.not_found[index] = Discord_ParseId(JsonGetString(not_found[index]));
+	}
+
+	Json_Array presences = JsonGetArray(obj, "presences");
+	chunk.presences.Resize(presences.count);
+	for (ptrdiff_t index = 0; index < chunk.presences.count; ++index) {
+		Discord_Deserialize(JsonGetObject(presences[index]), &chunk.presences[index]);
+	}
+
+	chunk.nonce = JsonGetString(obj, "nonce");
+
+	client->onevent(client, &chunk);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2219,8 +2264,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildBanAdd, Discord_EventHandlerGuildBanRemove,
 	Discord_EventHandlerGuildEmojisUpdate, Discord_EventHandlerGuildStickersUpdate, Discord_EventHandlerGuildIntegrationsUpdate,
 	Discord_EventHandlerGuildMemberAdd, Discord_EventHandlerGuildMemberRemove, Discord_EventHandlerGuildMemberUpdate,
+	Discord_EventHandlerGuildMembersChunk, 
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
