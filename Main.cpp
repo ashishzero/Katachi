@@ -45,6 +45,15 @@ namespace Discord {
 	static inline bool operator==(Snowflake a, Snowflake b) { return a.value == b.value; }
 	static inline bool operator!=(Snowflake a, Snowflake b) { return a.value != b.value; }
 
+	struct Timestamp {
+		ptrdiff_t value = 0;
+		Timestamp() = default;
+		Timestamp(ptrdiff_t val): value(val) {}
+	};
+
+	static inline bool operator==(Timestamp a, Timestamp b) { return a.value == b.value; }
+	static inline bool operator!=(Timestamp a, Timestamp b) { return a.value != b.value; }
+
 	typedef uint64_t Permission;
 	struct PermissionBit {
 		enum : uint64_t {
@@ -103,17 +112,22 @@ namespace Discord {
 		Permission    deny  = 0;
 	};
 
+
+	enum class InviteTargetType {
+		NONE = 0, STREAM = 1, EMBEDDED_APPLICATION = 2
+	};
+
 	//
 	//
 	//
 
 	enum class ApplicationCommandPermissionType {
-		ROLE = 1, USER = 2, CHANNEL = 3
+		NONE = 0, ROLE = 1, USER = 2, CHANNEL = 3
 	};
 
 	struct ApplicationCommandPermission {
 		Snowflake                        id;
-		ApplicationCommandPermissionType type;
+		ApplicationCommandPermissionType type = ApplicationCommandPermissionType::NONE;
 		bool                             permission = false;
 	};
 
@@ -180,11 +194,11 @@ namespace Discord {
 	//
 
 	enum class MembershipState {
-		INVITED = 1, ACCEPTED = 2
+		NONE = 0, INVITED = 1, ACCEPTED = 2
 	};
 
 	struct TeamMember {
-		MembershipState membership_state = MembershipState::INVITED;
+		MembershipState membership_state = MembershipState::NONE;
 		Array<String>   permissions;
 		Snowflake       team_id;
 		User            user;
@@ -227,10 +241,11 @@ namespace Discord {
 	};
 
 	enum class ApplicationCommandType {
-		CHAT_INPUT = 1, USER = 2, MESSAGE = 3
+		NONE = 0, CHAT_INPUT = 1, USER = 2, MESSAGE = 3
 	};
 
 	enum class ApplicationCommandOptionType {
+		NONE              = 0,
 		SUB_COMMAND       = 1,
 		SUB_COMMAND_GROUP = 2,
 		STRING            = 3,
@@ -253,7 +268,7 @@ namespace Discord {
 		};
 
 		String                                         name;
-		ApplicationCommandOptionType                   type = ApplicationCommandOptionType::SUB_COMMAND;
+		ApplicationCommandOptionType                   type = ApplicationCommandOptionType::NONE;
 		Value                                          value;
 		Array<ApplicationCommandInteractionDataOption> options;
 		bool                                           focused = false;
@@ -313,8 +328,8 @@ namespace Discord {
 	};
 
 	struct ActivityTimestamps {
-		int32_t start = 0;
-		int32_t end   = 0;
+		Timestamp start = 0;
+		Timestamp end   = 0;
 	};
 
 	struct ActivityEmoji {
@@ -350,7 +365,7 @@ namespace Discord {
 		String                name;
 		ActivityType          type = ActivityType::GAME;
 		String                url;
-		ptrdiff_t             created_at = 0;
+		Timestamp             created_at = 0;
 		ActivityTimestamps    timestamps;
 		Snowflake             application_id;
 		String                details;
@@ -376,13 +391,13 @@ namespace Discord {
 		String           nick;
 		String           avatar;
 		Array<Snowflake> roles;
-		ptrdiff_t        joined_at = 0;
-		ptrdiff_t        premium_since = 0;
+		Timestamp        joined_at;
+		Timestamp        premium_since;
 		bool             deaf = false;
 		bool             mute = false;
 		bool             pending = false;
 		Permission       permissions = 0;
-		ptrdiff_t        communication_disabled_until = 0;
+		Timestamp        communication_disabled_until = 0;
 
 		GuildMember() = default;
 		GuildMember(Memory_Allocator allocator): roles(allocator) {}
@@ -435,16 +450,16 @@ namespace Discord {
 	struct ThreadMetadata {
 		bool      archived = false;
 		int32_t   auto_archive_duration = 0;
-		ptrdiff_t archive_timestamp = 0;
+		Timestamp archive_timestamp;
 		bool      locked = false;
 		bool      invitable = false;
-		ptrdiff_t create_timestamp = 0;
+		Timestamp create_timestamp = 0;
 	};
 
 	struct ThreadMember {
 		Snowflake      id;
 		Snowflake      user_id;
-		ptrdiff_t      join_timestamp = 0;
+		Timestamp      join_timestamp = 0;
 		int32_t        flags          = 0;
 		GuildMember *  member        = nullptr;
 		Presence *     presence      = nullptr;
@@ -468,7 +483,7 @@ namespace Discord {
 		Snowflake        owner_id;
 		Snowflake        application_id;
 		Snowflake        parent_id;
-		ptrdiff_t        last_pin_timestamp = 0;
+		Timestamp        last_pin_timestamp = 0;
 		String           rtc_region;
 		int32_t          video_quality_mode = 0;
 		int32_t          message_count = 0;
@@ -593,11 +608,11 @@ namespace Discord {
 	};
 
 	enum class StickerType {
-		STANDARD = 1, GUILD = 2
+		NONE = 0, STANDARD = 1, GUILD = 2
 	};
 
 	enum class StickerFormatType {
-		PNG = 1, APNG = 2, LOTTIE = 3
+		NONE = 0, PNG = 1, APNG = 2, LOTTIE = 3
 	};
 
 	struct Sticker {
@@ -606,8 +621,8 @@ namespace Discord {
 		String            name;
 		String            description;
 		String            tags;
-		StickerType       type = StickerType::GUILD;
-		StickerFormatType format_type = StickerFormatType::PNG;
+		StickerType       type = StickerType::NONE;
+		StickerFormatType format_type = StickerFormatType::NONE;
 		bool              available = false;
 		Snowflake         guild_id;
 		User *            user = nullptr;
@@ -667,7 +682,7 @@ namespace Discord {
 	};
 
 	enum class PrivacyLevel {
-		PUBLIC = 1, GUILD_ONLY = 2
+		NONE = 0, PUBLIC = 1, GUILD_ONLY = 2
 	};
 
 	struct StageInstance {
@@ -675,7 +690,7 @@ namespace Discord {
 		Snowflake    guild_id;
 		Snowflake    channel_id;
 		String       topic;
-		PrivacyLevel privacy_level = PrivacyLevel::PUBLIC;
+		PrivacyLevel privacy_level = PrivacyLevel::NONE;
 		bool         discoverable_disabled = false;
 		Snowflake    guild_scheduled_event_id;
 	};
@@ -693,19 +708,19 @@ namespace Discord {
 		bool         self_stream = false;
 		bool         self_video = false;
 		bool         suppress = false;
-		ptrdiff_t    request_to_speak_timestamp = 0;
+		Timestamp    request_to_speak_timestamp = 0;
 	};
 
 	enum class GuildScheduledEventPrivacyLevel {
-		GUILD_ONLY = 2
+		NONE = 0, GUILD_ONLY = 2
 	};
 
 	enum class GuildScheduledEventEntityType {
-		STAGE_INSTANCE = 1, VOICE = 2, EXTERNAL = 3
+		NONE = 0, STAGE_INSTANCE = 1, VOICE = 2, EXTERNAL = 3
 	};
 
 	enum class GuildScheduledEventStatus {
-		SCHEDULED = 1, ACTIVE = 2, COMPLETED = 3, CANCELED = 4
+		NONE = 0, SCHEDULED = 1, ACTIVE = 2, COMPLETED = 3, CANCELED = 4
 	};
 
 	struct GuildScheduledEventEntityMetadata {
@@ -719,11 +734,11 @@ namespace Discord {
 		Snowflake                          creator_id;
 		String                             name;
 		String                             description;
-		ptrdiff_t                          scheduled_start_time = 0;
-		ptrdiff_t                          scheduled_end_time = 0;
-		GuildScheduledEventPrivacyLevel    privacy_level = GuildScheduledEventPrivacyLevel::GUILD_ONLY;
-		GuildScheduledEventStatus          status = GuildScheduledEventStatus::SCHEDULED;
-		GuildScheduledEventEntityType      entity_type = GuildScheduledEventEntityType::STAGE_INSTANCE;
+		Timestamp                          scheduled_start_time = 0;
+		Timestamp                          scheduled_end_time = 0;
+		GuildScheduledEventPrivacyLevel    privacy_level = GuildScheduledEventPrivacyLevel::NONE;
+		GuildScheduledEventStatus          status = GuildScheduledEventStatus::NONE;
+		GuildScheduledEventEntityType      entity_type = GuildScheduledEventEntityType::NONE;
 		Snowflake                          entity_id;
 		GuildScheduledEventEntityMetadata *entity_metadata = nullptr;
 		User *                             creator = nullptr;
@@ -855,7 +870,7 @@ namespace Discord {
 		int32_t                   expire_grace_period = 0;
 		User *                    user = nullptr;
 		IntegrationAccount        account;
-		ptrdiff_t                 synced_at = 0;
+		Timestamp                 synced_at = 0;
 		int32_t                   subscriber_count = 0;
 		bool                      revoked = false;
 		IntegrationApplication *  application = nullptr;
@@ -878,11 +893,11 @@ namespace Discord {
 	};
 
 	enum class ButtonStyle {
-		PRIMARY = 1, SECONDARY = 2, SUCCESS = 3, DANGER = 4, LINK = 5
+		NONE = 0, PRIMARY = 1, SECONDARY = 2, SUCCESS = 3, DANGER = 4, LINK = 5
 	};
 
 	enum class TextInputStyle {
-		SHORT = 1, PARAGRAPH = 2
+		NONE = 0, SHORT = 1, PARAGRAPH = 2
 	};
 
 	struct Component {
@@ -894,7 +909,7 @@ namespace Discord {
 		};
 
 		struct Button {
-			ButtonStyle style = ButtonStyle::PRIMARY;
+			ButtonStyle style = ButtonStyle::NONE;
 			String      label;
 			Emoji *     emoji = nullptr;
 			String      custom_id;
@@ -916,7 +931,7 @@ namespace Discord {
 
 		struct TextInput {
 			String         custom_id;
-			TextInputStyle style = TextInputStyle::SHORT;
+			TextInputStyle style = TextInputStyle::NONE;
 			String         label;
 			int32_t        min_length = 0;
 			int32_t        max_length = 0;
@@ -993,7 +1008,7 @@ namespace Discord {
 		String            type;
 		String            description;
 		String            url;
-		ptrdiff_t         timestamp = 0;
+		Timestamp         timestamp = 0;
 		int32_t           color = 0;
 		EmbedFooter *     footer = nullptr;
 		EmbedImage *      image = nullptr;
@@ -1042,11 +1057,11 @@ namespace Discord {
 	};
 
 	enum class MessageActivityType {
-		JOIN = 1, SPECTATE = 2, LISTEN = 3, JOIN_REQUEST = 5,
+		NONE = 0, JOIN = 1, SPECTATE = 2, LISTEN = 3, JOIN_REQUEST = 5,
 	};
 
 	struct MessageActivity {
-		MessageActivityType type = MessageActivityType::JOIN;
+		MessageActivityType type = MessageActivityType::NONE;
 		String              party_id;
 	};
 
@@ -1099,6 +1114,7 @@ namespace Discord {
 	};
 
 	enum class InteractionType {
+		NONE                             = 0,
 		PING                             = 1,
 		APPLICATION_COMMAND              = 2,
 		MESSAGE_COMPONENT                = 3,
@@ -1108,7 +1124,7 @@ namespace Discord {
 
 	struct MessageInteraction {
 		Snowflake       id;
-		InteractionType type = InteractionType::PING;
+		InteractionType type = InteractionType::NONE;
 		String          name;
 		User            user;
 		GuildMember *   member = nullptr;
@@ -1117,7 +1133,7 @@ namespace Discord {
 	struct StickerItem {
 		Snowflake         id;
 		String            name;
-		StickerFormatType format_type = StickerFormatType::PNG;
+		StickerFormatType format_type = StickerFormatType::NONE;
 	};
 
 	struct Message {
@@ -1127,8 +1143,8 @@ namespace Discord {
 		User                  author;
 		GuildMember *         member = nullptr;
 		String                content;
-		ptrdiff_t             timestamp = 0;
-		ptrdiff_t             edited_timestamp = 0;
+		Timestamp             timestamp = 0;
+		Timestamp             edited_timestamp = 0;
 		bool                  tts = false;
 		bool                  mention_everyone = false;
 		Array<Mentions>       mentions;
@@ -1180,7 +1196,7 @@ namespace Discord {
 
 		Snowflake                                      id;
 		String                                         name;
-		ApplicationCommandType                         type = ApplicationCommandType::CHAT_INPUT;
+		ApplicationCommandType                         type = ApplicationCommandType::NONE;
 		ResolvedData *                                 resolved = nullptr;
 		Array<ApplicationCommandInteractionDataOption> options;
 		Snowflake                                      guild_id;
@@ -1198,7 +1214,7 @@ namespace Discord {
 	struct Interaction {
 		Snowflake        id;
 		Snowflake        application_id;
-		InteractionType  type = InteractionType::PING;
+		InteractionType  type = InteractionType::NONE;
 		InteractionData *data = nullptr;
 		Snowflake        guild_id;
 		Snowflake        channel_id;
@@ -1328,7 +1344,7 @@ namespace Discord {
 	struct ChannelPinsUpdateEvent : public Event {
 		Snowflake guild_id;
 		Snowflake channel_id;
-		ptrdiff_t last_pin_timestamp;
+		Timestamp last_pin_timestamp;
 
 		ChannelPinsUpdateEvent(): Event(EventType::CHANNEL_PINS_UPDATE) {}
 	};
@@ -1388,7 +1404,7 @@ namespace Discord {
 
 	struct GuildCreateEvent : public Event {
 		Guild                      guild;
-		ptrdiff_t                  joined_at = 0;
+		Timestamp                  joined_at;
 		bool                       large = false;
 		bool                       unavailable = false;
 		int32_t                    member_count = 0;
@@ -1479,12 +1495,12 @@ namespace Discord {
 		User             user;
 		String           nick;
 		String           avatar;
-		ptrdiff_t        joined_at = 0;
-		ptrdiff_t        premium_since = 0;
+		Timestamp        joined_at = 0;
+		Timestamp        premium_since = 0;
 		bool             deaf = false;
 		bool             mute = false;
 		bool             pending = false;
-		ptrdiff_t        communication_disabled_until = 0;
+		Timestamp        communication_disabled_until = 0;
 
 		GuildMemberUpdateEvent(): Event(EventType::GUILD_MEMBER_UPDATE) {}
 		GuildMemberUpdateEvent(Memory_Allocator allocator):
@@ -1574,6 +1590,31 @@ namespace Discord {
 	struct InteractionCreateEvent : public Event {
 		Interaction interation;
 		InteractionCreateEvent(): Event(EventType::INTERACTION_CREATE) {}
+	};
+
+	struct InviteCreateEvent : public Event {
+		Snowflake        channel_id;
+		String           code;
+		Timestamp        created_at;
+		Snowflake        guild_id;
+		User *           inviter = nullptr;
+		int32_t          max_age;
+		int32_t          max_uses;
+		InviteTargetType target_type = InviteTargetType::NONE;
+		User *           target_user = nullptr;
+		Application *    target_application = nullptr;
+		bool             temporary = false;
+		int32_t          uses = 0;
+
+		InviteCreateEvent(): Event(EventType::INVITE_CREATE) {}
+	};
+
+	struct InviteDeleteEvent : public Event {
+		Snowflake channel_id;
+		Snowflake guild_id;
+		String    code;
+
+		InviteDeleteEvent(): Event(EventType::INVITE_DELETE) {}
 	};
 
 	//
@@ -1808,7 +1849,7 @@ static Discord::Snowflake Discord_ParseId(String id) {
 	return Discord::Snowflake(value);
 }
 
-static ptrdiff_t Discord_ParseTimestamp(String timestamp) {
+static Discord::Timestamp Discord_ParseTimestamp(String timestamp) {
 	// 1990-12-31T23:59:60Z
 	// 1996-12-19T16:39:57-08:00
 	// 1937-01-01T12:00:27.87+00:20
@@ -1946,7 +1987,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::GuildMember *me
 	member->mute                         = JsonGetBool(obj, "mute");
 	member->pending                      = JsonGetBool(obj, "pending");
 	member->permissions                  = Discord_ParseBigInt(JsonGetString(obj, "permissions"));
-	member->communication_disabled_until = JsonGetBool(obj, "communication_disabled_until");
+	member->communication_disabled_until = Discord_ParseTimestamp(JsonGetString(obj, "communication_disabled_until"));
 }
 
 static void Discord_Deserialize(const Json_Object &obj, Discord::ActivityTimestamps *timestamps) {
@@ -2713,6 +2754,114 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::StickerItem *st
 	sticker->format_type = (Discord::StickerFormatType)JsonGetInt(obj, "format_type");
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedFooter *embed) {
+	embed->text           = JsonGetString(obj, "text");
+	embed->icon_url       = JsonGetString(obj, "icon_url");
+	embed->proxy_icon_url = JsonGetString(obj, "proxy_icon_url");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedImage *embed) {
+	embed->url       = JsonGetString(obj, "url");
+	embed->proxy_url = JsonGetString(obj, "proxy_url");
+	embed->height    = JsonGetInt(obj, "height");
+	embed->width     = JsonGetInt(obj, "width");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedThumbnail *embed) {
+	embed->url       = JsonGetString(obj, "url");
+	embed->proxy_url = JsonGetString(obj, "proxy_url");
+	embed->height    = JsonGetInt(obj, "height");
+	embed->width     = JsonGetInt(obj, "width");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedVideo *embed) {
+	embed->url       = JsonGetString(obj, "url");
+	embed->proxy_url = JsonGetString(obj, "proxy_url");
+	embed->height    = JsonGetInt(obj, "height");
+	embed->width     = JsonGetInt(obj, "width");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedProvider *embed) {
+	embed->name = JsonGetString(obj, "name");
+	embed->url  = JsonGetString(obj, "url");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedAuthor *embed) {
+	embed->name           = JsonGetString(obj, "name");
+	embed->url            = JsonGetString(obj, "url");
+	embed->icon_url       = JsonGetString(obj, "icon_url");
+	embed->proxy_icon_url = JsonGetString(obj, "proxy_icon_url");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::EmbedField *embed) {
+	embed->name     = JsonGetString(obj, "name");
+	embed->value    = JsonGetString(obj, "value");
+	embed->isinline = JsonGetBool(obj, "inline");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Embed *embed) {
+	embed->title       = JsonGetString(obj, "title");
+	embed->type        = JsonGetString(obj, "type");
+	embed->description = JsonGetString(obj, "description");
+	embed->url         = JsonGetString(obj, "url");
+	embed->timestamp   = Discord_ParseTimestamp(JsonGetString(obj, "timestamp"));
+	embed->color       = JsonGetInt(obj, "color");
+
+	const Json *footer = obj.Find("footer");
+	if (footer) {
+		embed->footer = new Discord::EmbedFooter;
+		if (embed->footer) {
+			Discord_Deserialize(JsonGetObject(*footer), embed->footer);
+		}
+	}
+	
+	const Json *image = obj.Find("image");
+	if (image) {
+		embed->image = new Discord::EmbedImage;
+		if (embed->image) {
+			Discord_Deserialize(JsonGetObject(*image), embed->image);
+		}
+	}
+
+	const Json *thumbnail = obj.Find("thumbnail");
+	if (thumbnail) {
+		embed->thumbnail = new Discord::EmbedThumbnail;
+		if (embed->thumbnail) {
+			Discord_Deserialize(JsonGetObject(*thumbnail), embed->thumbnail);
+		}
+	}
+
+	const Json *video = obj.Find("video");
+	if (video) {
+		embed->video = new Discord::EmbedVideo;
+		if (embed->video) {
+			Discord_Deserialize(JsonGetObject(*video), embed->video);
+		}
+	}
+	
+	const Json *provider = obj.Find("provider");
+	if (provider) {
+		embed->provider = new Discord::EmbedProvider;
+		if (embed->provider) {
+			Discord_Deserialize(JsonGetObject(*provider), embed->provider);
+		}
+	}
+
+	const Json *author = obj.Find("author");
+	if (author) {
+		embed->author = new Discord::EmbedAuthor;
+		if (embed->author) {
+			Discord_Deserialize(JsonGetObject(*author), embed->author);
+		}
+	}
+
+	Json_Array fields = JsonGetArray(obj, "fields");
+	embed->fields.Resize(fields.count);
+	for (ptrdiff_t index = 0; index < embed->fields.count; ++index) {
+		Discord_Deserialize(JsonGetObject(fields[index]), &embed->fields[index]);
+	}
+}
+
 static void Discord_Deserialize(const Json_Object &obj, Discord::Message *message) {
 	message->id         = Discord_ParseId(JsonGetString(obj, "id"));
 	message->channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
@@ -2756,6 +2905,12 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Message *messag
 	message->attachments.Resize(attachments.count);
 	for (ptrdiff_t index = 0; index < message->attachments.count; ++index) {
 		Discord_Deserialize(JsonGetObject(attachments[0]), &message->attachments[index]);
+	}
+
+	Json_Array embeds = JsonGetArray(obj, "embeds");
+	message->embeds.Resize(embeds.count);
+	for (ptrdiff_t index = 0; index < message->embeds.count; ++index) {
+		Discord_Deserialize(JsonGetObject(embeds[0]), &message->embeds[index]);
 	}
 
 	Json_Array reactions = JsonGetArray(obj, "reactions");
@@ -3339,7 +3494,7 @@ static void Discord_EventHandlerGuildMemberUpdate(Discord::Client *client, const
 	member.deaf                         = JsonGetBool(obj, "deaf");
 	member.mute                         = JsonGetBool(obj, "mute");
 	member.pending                      = JsonGetBool(obj, "pending");
-	member.communication_disabled_until = JsonGetBool(obj, "communication_disabled_until");
+	member.communication_disabled_until = Discord_ParseTimestamp(JsonGetString(obj, "communication_disabled_until"));
 
 	client->onevent(client, &member);
 }
@@ -3466,6 +3621,57 @@ static void Discord_EventHandlerInteractionCreate(Discord::Client *client, const
 	client->onevent(client, &interation);
 }
 
+static void Discord_EventHandlerInviteCreate(Discord::Client *client, const Json &data) {
+	Discord::InviteCreateEvent invite;
+	Json_Object obj   = JsonGetObject(data);
+	invite.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	invite.code       = JsonGetString(obj, "code");
+	invite.created_at = Discord_ParseTimestamp(JsonGetString(obj, "created_at"));
+	invite.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	const Json *inviter = obj.Find("inviter");
+	if (inviter) {
+		invite.inviter = new Discord::User;
+		if (invite.inviter) {
+			Discord_Deserialize(JsonGetObject(*inviter), invite.inviter);
+		}
+	}
+
+	invite.max_age     = JsonGetInt(obj, "max_age");
+	invite.max_uses    = JsonGetInt(obj, "max_uses");
+	invite.target_type = (Discord::InviteTargetType)JsonGetInt(obj, "target_type");
+
+	const Json *target_user = obj.Find("target_user");
+	if (target_user) {
+		invite.target_user = new Discord::User;
+		if (invite.target_user) {
+			Discord_Deserialize(JsonGetObject(*target_user), invite.target_user);
+		}
+	}
+
+	const Json *target_application = obj.Find("target_application");
+	if (target_application) {
+		invite.target_application = new Discord::Application;
+		if (invite.target_application) {
+			Discord_Deserialize(JsonGetObject(*target_application), invite.target_application);
+		}
+	}
+
+	invite.temporary = JsonGetBool(obj, "temporary");
+	invite.uses      = JsonGetInt(obj, "uses");
+
+	client->onevent(client, &invite);
+}
+
+static void Discord_EventHandlerInviteDelete(Discord::Client *client, const Json &data) {
+	Discord::InviteDeleteEvent invite;
+	Json_Object obj   = JsonGetObject(data);
+	invite.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	invite.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	invite.code       = JsonGetString(obj, "code");
+	client->onevent(client, &invite);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -3481,9 +3687,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildScheduledEventCreate, Discord_EventHandlerGuildScheduledEventUpdate, Discord_EventHandlerGuildScheduledEventDelete,
 	Discord_EventHandlerGuildScheduledEventUserAdd, Discord_EventHandlerGuildScheduledEventUserRemove,
 	Discord_EventHandlerIntegrationCreate, Discord_EventHandlerIntegrationUpdate, Discord_EventHandlerIntegrationDelete,
-	Discord_EventHandlerInteractionCreate,
+	Discord_EventHandlerInteractionCreate,Discord_EventHandlerInviteCreate, Discord_EventHandlerInviteDelete,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -3783,6 +3989,18 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Interaction created: %zu", interaction->interation.id);
 		return;
 	}
+
+	if (event->type == Discord::EventType::INVITE_CREATE) {
+		auto invite = (Discord::InviteCreateEvent *)event;
+		Trace("Invite created: " StrFmt, StrArg(invite->code));
+		return;
+	}
+
+	if (event->type == Discord::EventType::INVITE_DELETE) {
+		auto invite = (Discord::InviteDeleteEvent *)event;
+		Trace("Invite deleted: " StrFmt, StrArg(invite->code));
+		return;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -3871,6 +4089,7 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::GUILD_EMOJIS_AND_STICKERS;
 	intents |= Discord::Intent::GUILD_INTEGRATIONS;
 	intents |= Discord::Intent::GUILD_SCHEDULED_EVENTS;
+	intents |= Discord::Intent::GUILD_INVITES;
 	intents |= Discord::Intent::DIRECT_MESSAGES;
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 
