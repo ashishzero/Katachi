@@ -179,6 +179,31 @@ namespace Discord {
 	//
 	//
 
+	enum class MembershipState {
+		INVITED = 1, ACCEPTED = 2
+	};
+
+	struct TeamMember {
+		MembershipState membership_state = MembershipState::INVITED;
+		Array<String>   permissions;
+		Snowflake       team_id;
+		User            user;
+
+		TeamMember() = default;
+		TeamMember(Memory_Allocator allocator): permissions(allocator) {}
+	};
+
+	struct Team {
+		String            icon;
+		Snowflake         id;
+		Array<TeamMember> members;
+		String            name;
+		Snowflake         owner_user_id;
+
+		Team() = default;
+		Team(Memory_Allocator allocator): members(allocator) {}
+	};
+
 	typedef int32_t ApplicationFlag;
 	struct ApplicationFlagBit {
 		enum : int32_t {
@@ -201,6 +226,43 @@ namespace Discord {
 		InstallParams(Memory_Allocator allocator): scopes(allocator) {}
 	};
 
+	enum class ApplicationCommandType {
+		CHAT_INPUT = 1, USER = 2, MESSAGE = 3
+	};
+
+	enum class ApplicationCommandOptionType {
+		SUB_COMMAND       = 1,
+		SUB_COMMAND_GROUP = 2,
+		STRING            = 3,
+		INTEGER           = 4,
+		BOOLEAN           = 5,
+		USER              = 6,
+		CHANNEL           = 7,
+		ROLE              = 8,
+		MENTIONABLE       = 9,
+		NUMBER            = 10,
+		ATTACHMENT        = 11
+	};
+
+	struct ApplicationCommandInteractionDataOption {
+		union Value {
+			String  string;
+			int32_t integer;
+			float   number;
+			Value() {}
+		};
+
+		String                                         name;
+		ApplicationCommandOptionType                   type = ApplicationCommandOptionType::SUB_COMMAND;
+		Value                                          value;
+		Array<ApplicationCommandInteractionDataOption> options;
+		bool                                           focused = false;
+
+		ApplicationCommandInteractionDataOption() = default;
+		ApplicationCommandInteractionDataOption(Memory_Allocator allocator):
+			options(allocator) {}
+	};
+
 	struct Application {
 		Snowflake       id;
 		String          name;
@@ -213,7 +275,7 @@ namespace Discord {
 		String          privacy_policy_url;
 		User *          owner = nullptr;
 		String          verify_key;
-		struct Team *   team = nullptr;
+		Team *          team = nullptr;
 		Snowflake       guild_id;
 		Snowflake       primary_sku_id;
 		String          slug;
@@ -231,7 +293,7 @@ namespace Discord {
 	//
 	//
 
-		enum class StatusType { ONLINE, DO_NOT_DISTURB, AFK, INVISIBLE, OFFLINE };
+	enum class StatusType { ONLINE, DO_NOT_DISTURB, AFK, INVISIBLE, OFFLINE };
 
 	enum class ActivityType { GAME, STREAMING, LISTENING, WATCHING, CUSTOM, COMPETING };
 
@@ -803,6 +865,356 @@ namespace Discord {
 	//
 	//
 
+	struct SelectOption {
+		String  label;
+		String  value;
+		String  description;
+		Emoji * emoji = nullptr;
+		bool    isdefault = false;
+	};
+
+	enum class ComponentType {
+		NONE = 0, ACTION_ROW = 1, BUTTON = 2, SELECT_MENU = 3, TEXT_INPUT = 4
+	};
+
+	enum class ButtonStyle {
+		PRIMARY = 1, SECONDARY = 2, SUCCESS = 3, DANGER = 4, LINK = 5
+	};
+
+	enum class TextInputStyle {
+		SHORT = 1, PARAGRAPH = 2
+	};
+
+	struct Component {
+		struct ActionRow {
+			Array<Component *> components;
+
+			ActionRow() = default;
+			ActionRow(Memory_Allocator allocator): components(allocator) {}
+		};
+
+		struct Button {
+			ButtonStyle style = ButtonStyle::PRIMARY;
+			String      label;
+			Emoji *     emoji = nullptr;
+			String      custom_id;
+			String      url;
+			bool        disabled = false;
+		};
+
+		struct SelectMenu {
+			String              custom_id;
+			Array<SelectOption> options;
+			String              placeholder;
+			int32_t             min_values = 0;
+			int32_t             max_values = 0;
+			bool                disabled = false;
+
+			SelectMenu() = default;
+			SelectMenu(Memory_Allocator allocator): options(allocator) {}
+		};
+
+		struct TextInput {
+			String         custom_id;
+			TextInputStyle style = TextInputStyle::SHORT;
+			String         label;
+			int32_t        min_length = 0;
+			int32_t        max_length = 0;
+			bool           required = false;
+			String         value;
+			String         placeholder;
+		};
+
+		union Data {
+			ActionRow  action_row;
+			Button     button;
+			SelectMenu select_menu;
+			TextInput  text_input;
+			Data(){}
+		};
+
+		ComponentType type = ComponentType::NONE;
+		Data          data;
+
+		Component() { memset(&data, 0, sizeof(data)); }
+	};
+
+	//
+	//
+	//
+
+	struct EmbedFooter {
+		String text;
+		String icon_url;
+		String proxy_icon_url;
+	};
+
+	struct EmbedImage {
+		String  url;
+		String  proxy_url;
+		int32_t height = 0;
+		int32_t width = 0;
+	};
+
+	struct EmbedThumbnail {
+		String  url;
+		String  proxy_url;
+		int32_t height = 0;
+		int32_t width = 0;
+	};
+
+	struct EmbedVideo {
+		String  url;
+		String  proxy_url;
+		int32_t height = 0;
+		int32_t width = 0;
+	};
+
+	struct EmbedProvider {
+		String name;
+		String url;
+	};
+
+	struct EmbedAuthor {
+		String name;
+		String url;
+		String icon_url;
+		String proxy_icon_url;
+	};
+
+	struct EmbedField {
+		String name;
+		String value;
+		bool   isinline = false;
+	};
+
+	struct Embed {
+		String            title;
+		String            type;
+		String            description;
+		String            url;
+		ptrdiff_t         timestamp = 0;
+		int32_t           color = 0;
+		EmbedFooter *     footer = nullptr;
+		EmbedImage *      image = nullptr;
+		EmbedThumbnail *  thumbnail = nullptr;
+		EmbedVideo *      video = nullptr;
+		EmbedProvider *   provider = nullptr;
+		EmbedAuthor *     author = nullptr;
+		Array<EmbedField> fields;
+
+		Embed() = default;
+		Embed(Memory_Allocator allocator): fields(allocator) {}
+	};
+
+	struct Attachment {
+		Snowflake id;
+		String    filename;
+		String    description;
+		String    content_type;
+		int32_t   size = 0;
+		String    url;
+		String    proxy_url;
+		int32_t   height = 0;
+		int32_t   width = 0;
+		bool      ephemeral = false;
+	};
+
+	struct Mentions {
+		User        user;
+		GuildMember member;
+	};
+
+	struct ChannelMention {
+		Snowflake   id;
+		Snowflake   guild_id;
+		ChannelType type = ChannelType::GUILD_TEXT;
+		String      name;
+	};
+
+	struct Reaction {
+		int32_t count = 0;
+		bool    me = false;
+		Emoji   emoji;
+
+		Reaction() = default;
+		Reaction(Memory_Allocator allocator): emoji(allocator) {}
+	};
+
+	enum class MessageActivityType {
+		JOIN = 1, SPECTATE = 2, LISTEN = 3, JOIN_REQUEST = 5,
+	};
+
+	struct MessageActivity {
+		MessageActivityType type = MessageActivityType::JOIN;
+		String              party_id;
+	};
+
+	enum class MessageType {
+		DEFAULT                                      = 0,
+		RECIPIENT_ADD                                = 1,
+		RECIPIENT_REMOVE                             = 2,
+		CALL                                         = 3,
+		CHANNEL_NAME_CHANGE                          = 4,
+		CHANNEL_ICON_CHANGE                          = 5,
+		CHANNEL_PINNED_MESSAGE                       = 6,
+		GUILD_MEMBER_JOIN                            = 7,
+		USER_PREMIUM_GUILD_SUBSCRIPTION              = 8,
+		USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_1       = 9,
+		USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_2       = 10,
+		USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_3       = 11,
+		CHANNEL_FOLLOW_ADD                           = 12,
+		GUILD_DISCOVERY_DISQUALIFIED                 = 14,
+		GUILD_DISCOVERY_REQUALIFIED                  = 15,
+		GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING = 16,
+		GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING   = 17,
+		THREAD_CREATED                               = 18,
+		REPLY                                        = 19,
+		CHAT_INPUT_COMMAND                           = 20,
+		THREAD_STARTER_MESSAGE                       = 21,
+		GUILD_INVITE_REMINDER                        = 22,
+		CONTEXT_MENU_COMMAND                         = 23,
+	};
+
+	struct MessageReference {
+		Snowflake message_id;
+		Snowflake channel_id;
+		Snowflake guild_id;
+		bool      fail_if_not_exists = false;
+	};
+
+	typedef int32_t MessageFlag;
+	struct MessageFlagBit {
+		enum {
+			CROSSPOSTED                            = 1 << 0,
+			IS_CROSSPOST                           = 1 << 1,
+			SUPPRESS_EMBEDS                        = 1 << 2,
+			SOURCE_MESSAGE_DELETED                 = 1 << 3,
+			URGENT                                 = 1 << 4,
+			HAS_THREAD                             = 1 << 5,
+			EPHEMERAL                              = 1 << 6,
+			LOADING                                = 1 << 7,
+			FAILED_TO_MENTION_SOME_ROLES_IN_THREAD = 1 << 8
+		};
+	};
+
+	enum class InteractionType {
+		PING                             = 1,
+		APPLICATION_COMMAND              = 2,
+		MESSAGE_COMPONENT                = 3,
+		APPLICATION_COMMAND_AUTOCOMPLETE = 4,
+		MODAL_SUBMIT                     = 5
+	};
+
+	struct MessageInteraction {
+		Snowflake       id;
+		InteractionType type = InteractionType::PING;
+		String          name;
+		User            user;
+		GuildMember *   member = nullptr;
+	};
+
+	struct StickerItem {
+		Snowflake         id;
+		String            name;
+		StickerFormatType format_type = StickerFormatType::PNG;
+	};
+
+	struct Message {
+		Snowflake             id;
+		Snowflake             channel_id;
+		Snowflake             guild_id;
+		User                  author;
+		GuildMember *         member = nullptr;
+		String                content;
+		ptrdiff_t             timestamp = 0;
+		ptrdiff_t             edited_timestamp = 0;
+		bool                  tts = false;
+		bool                  mention_everyone = false;
+		Array<Mentions>       mentions;
+		Array<Snowflake>      mention_roles;
+		Array<ChannelMention> mention_channels;
+		Array<Attachment>     attachments;
+		Array<Embed>          embeds;
+		Array<Reaction>       reactions;
+		String                nonce;
+		bool                  pinned = false;
+		Snowflake             webhook_id;
+		MessageType           type = MessageType::DEFAULT;
+		MessageActivity *     activity = nullptr;
+		Application *         application = nullptr;
+		Snowflake             application_id;
+		MessageReference *    message_reference = nullptr;
+		MessageFlag           flags = 0;
+		Message *             referenced_message = nullptr;
+		MessageInteraction *  interaction = nullptr;
+		Channel *             thread = nullptr;
+		Array<Component>      components;
+		Array<StickerItem>    sticker_items;
+
+		Message() = default;
+		Message(Memory_Allocator allocator) :
+			mentions(allocator), mention_roles(allocator), mention_channels(allocator),
+			attachments(allocator), embeds(allocator), reactions(allocator),
+			components(allocator), sticker_items(allocator) {}
+	};
+
+	//
+	//
+	//
+
+	struct InteractionData {
+		struct ResolvedData {
+			Hash_Table<Snowflake, User>        users;
+			Hash_Table<Snowflake, GuildMember> members;
+			Hash_Table<Snowflake, Role>        roles;
+			Hash_Table<Snowflake, Channel>     channels;
+			Hash_Table<Snowflake, Message>     messages;
+			Hash_Table<Snowflake, Attachment>  attachments;
+
+			ResolvedData() = default;
+			ResolvedData(Memory_Allocator allocator):
+				users(allocator), members(allocator), roles(allocator),
+				channels(allocator), messages(allocator), attachments(allocator) {}
+		};
+
+		Snowflake                                      id;
+		String                                         name;
+		ApplicationCommandType                         type = ApplicationCommandType::CHAT_INPUT;
+		ResolvedData *                                 resolved = nullptr;
+		Array<ApplicationCommandInteractionDataOption> options;
+		Snowflake                                      guild_id;
+		String                                         custom_id;
+		ComponentType                                  component_type = ComponentType::ACTION_ROW;
+		Array<SelectOption>                            values;
+		Snowflake                                      target_id;
+		Array<Component>                               components;
+
+		InteractionData() = default;
+		InteractionData(Memory_Allocator allocator):
+			options(allocator), values(allocator), components(allocator) {}
+	};
+
+	struct Interaction {
+		Snowflake        id;
+		Snowflake        application_id;
+		InteractionType  type = InteractionType::PING;
+		InteractionData *data = nullptr;
+		Snowflake        guild_id;
+		Snowflake        channel_id;
+		GuildMember *    member = nullptr;
+		User *           user = nullptr;
+		String           token;
+		int32_t          version = 0;
+		Message *        message = nullptr;
+		String           locale;
+		String           guild_locale;
+	};
+
+	//
+	//
+	//
+
 	enum class EventType {
 		NONE,
 		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION,
@@ -1157,6 +1569,11 @@ namespace Discord {
 		Snowflake guild_id;
 		Snowflake application_id;
 		IntegrationDeleteEvent(): Event(EventType::INTEGRATION_DELETE) {}
+	};
+
+	struct InteractionCreateEvent : public Event {
+		Interaction interation;
+		InteractionCreateEvent(): Event(EventType::INTERACTION_CREATE) {}
 	};
 
 	//
@@ -2047,6 +2464,547 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Integration *in
 	}
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::Mentions *mentions) {
+	Discord_Deserialize(obj, &mentions->user);
+	Discord_Deserialize(JsonGetObject(obj, "member"), &mentions->member);
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ChannelMention *mention) {
+	mention->id       = Discord_ParseId(JsonGetString(obj, "id"));
+	mention->guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	mention->type     = (Discord::ChannelType)JsonGetInt(obj, "type");
+	mention->name     = JsonGetString(obj, "name");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Attachment *attachment) {
+	attachment->id           = Discord_ParseId(JsonGetString(obj, "id"));
+	attachment->filename     = JsonGetString(obj, "filename");
+	attachment->description  = JsonGetString(obj, "description");
+	attachment->content_type = JsonGetString(obj, "content_type");
+	attachment->size         = JsonGetInt(obj, "size");
+	attachment->url          = JsonGetString(obj, "url");
+	attachment->proxy_url    = JsonGetString(obj, "proxy_url");
+	attachment->height       = JsonGetInt(obj, "height");
+	attachment->width        = JsonGetInt(obj, "width");
+	attachment->ephemeral    = JsonGetBool(obj, "ephemeral");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Reaction *reaction) {
+	reaction->count = JsonGetInt(obj, "count");
+	reaction->me    = JsonGetBool(obj, "me");
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction->emoji);
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::MessageActivity *activity) {
+	activity->type     = (Discord::MessageActivityType)JsonGetInt(obj, "type");
+	activity->party_id = JsonGetString(obj, "party_id");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::TeamMember *member) {
+	member->membership_state = (Discord::MembershipState)JsonGetInt(obj, "membership_state");
+	member->team_id          = Discord_ParseId(JsonGetString(obj, "team_id"));
+
+	Json_Array permissions = JsonGetArray(obj, "permissions");
+	member->permissions.Resize(permissions.count);
+	for (ptrdiff_t index = 0; index < member->permissions.count; ++index) {
+		member->permissions[index] = JsonGetString(permissions[index]);
+	}
+
+	Discord_Deserialize(JsonGetObject(obj, "user"), &member->user);
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Team *team) {
+	team->icon = JsonGetString(obj, "icon");
+	team->id   = Discord_ParseId(JsonGetString(obj, "id"));
+
+	Json_Array members = JsonGetArray(obj, "members");
+	team->members.Resize(members.count);
+	for (ptrdiff_t index = 0; team->members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(members[index]), &team->members[index]);
+	}
+
+	team->name          = JsonGetString(obj, "name");
+	team->owner_user_id = Discord_ParseId(JsonGetString(obj, "owner_user_id"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::InstallParams *params) {
+	Json_Array scopes = JsonGetArray(obj, "scopes");
+	params->scopes.Resize(scopes.count);
+	for (ptrdiff_t index = 0; index < params->scopes.count; ++index) {
+		params->scopes[index] = JsonGetString(scopes[index]);
+	}
+	params->permissions = Discord_ParseBigInt(JsonGetString(obj, "permissions"));
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Application *application) {
+	application->id          = Discord_ParseId(JsonGetString(obj, "id"));
+	application->name        = JsonGetString(obj, "name");
+	application->icon        = JsonGetString(obj, "icon");
+	application->description = JsonGetString(obj, "description");
+
+	Json_Array rpc_origins = JsonGetArray(obj, "rpc_origins");
+	application->rpc_origins.Resize(rpc_origins.count);
+	for (ptrdiff_t index = 0; index < application->rpc_origins.count; ++index) {
+		application->rpc_origins[index] = JsonGetString(rpc_origins[index]);
+	}
+
+	application->bot_public             = JsonGetBool(obj, "bot_public");
+	application->bot_require_code_grant = JsonGetBool(obj, "bot_require_code_grant");
+	application->terms_of_service_url   = JsonGetString(obj, "terms_of_service_url");
+	application->privacy_policy_url     = JsonGetString(obj, "privacy_policy_url");
+
+	const Json *owner = obj.Find("owner");
+	if (owner) {
+		application->owner = new Discord::User;
+		if (application->owner) {
+			Discord_Deserialize(JsonGetObject(*owner), application->owner);
+		}
+	}
+
+	application->verify_key = JsonGetString(obj, "verify_key");
+
+	const Json *team = obj.Find("team");
+	if (team) {
+		application->team = new Discord::Team;
+		if (application->team) {
+			Discord_Deserialize(JsonGetObject(*team), application->team);
+		}
+	}
+
+	application->guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	application->primary_sku_id = Discord_ParseId(JsonGetString(obj, "primary_sku_id"));
+	application->slug           = JsonGetString(obj, "slug");
+	application->cover_image    = JsonGetString(obj, "cover_image");
+	application->flags          = JsonGetInt(obj, "flags");
+
+	Json_Array tags      = JsonGetArray(obj, "tags");
+	ptrdiff_t tags_count = Minimum(tags.count, ArrayCount(application->tags));
+	for (ptrdiff_t index = 0; index < tags_count; ++index) {
+		application->tags[index] = JsonGetString(tags[index]);
+	}
+
+	const Json *install_params = obj.Find("install_params");
+	if (install_params) {
+		application->install_params = new Discord::InstallParams;
+		if (application->install_params) {
+			Discord_Deserialize(JsonGetObject(*install_params), application->install_params);
+		}
+	}
+
+	application->custom_install_url = JsonGetString(obj, "custom_install_url");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::MessageReference *reference) {
+	reference->message_id         = Discord_ParseId(JsonGetString(obj, "message_id"));
+	reference->channel_id         = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	reference->guild_id           = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	reference->fail_if_not_exists = JsonGetBool(obj, "fail_if_not_exists");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::MessageInteraction *interaction) {
+	interaction->id   = Discord_ParseId(JsonGetString(obj, "id"));
+	interaction->type = (Discord::InteractionType)JsonGetInt(obj, "type");
+	interaction->name = JsonGetString(obj, "name");
+
+	Discord_Deserialize(JsonGetObject(obj, "user"), &interaction->user);
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		interaction->member = new Discord::GuildMember;
+		if (interaction->member) {
+			Discord_Deserialize(JsonGetObject(*member), interaction->member);
+		}
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component *component);
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component::ActionRow *action_row) {
+	Json_Array components = JsonGetArray(obj, "components");
+	action_row->components.Resize(components.count);
+	ptrdiff_t index = 0;
+	for (; index < action_row->components.count; ++index) {
+		action_row->components[index] = new Discord::Component;
+		if (!action_row->components[index]) break;
+		Discord_Deserialize(JsonGetObject(components[index]), action_row->components[index]);
+	}
+	action_row->components.count = index;
+	action_row->components.Pack();
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component::Button *button) {
+	button->style = (Discord::ButtonStyle)JsonGetInt(obj, "style");
+	button->label = JsonGetString(obj, "label");
+
+	const Json *emoji = obj.Find("emoji");
+	if (emoji) {
+		button->emoji = new Discord::Emoji;
+		if (button->emoji) {
+			Discord_Deserialize(JsonGetObject(obj, "emoji"), button->emoji);
+		}
+	}
+
+	button->custom_id = JsonGetString(obj, "custom_id");
+	button->url       = JsonGetString(obj, "url");
+	button->disabled  = JsonGetBool(obj, "disabled");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::SelectOption *option) {
+	option->label       = JsonGetString(obj, "label");
+	option->value       = JsonGetString(obj, "value");
+	option->description = JsonGetString(obj, "description");
+
+	const Json *emoji = obj.Find("emoji");
+	if (emoji) {
+		option->emoji = new Discord::Emoji;
+		Discord_Deserialize(JsonGetObject(*emoji), option->emoji);
+	}
+
+	option->isdefault = JsonGetBool(obj, "default");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component::SelectMenu *menu) {
+	menu->custom_id = JsonGetString(obj, "custom_id");
+
+	Json_Array options = JsonGetArray(obj, "options");
+	menu->options.Resize(options.count);
+	for (ptrdiff_t index = 0; index < menu->options.count; ++index) {
+		Discord_Deserialize(JsonGetObject(options[index]), &menu->options[index]);
+	}
+
+	menu->placeholder = JsonGetString(obj, "placeholder");
+	menu->min_values  = JsonGetInt(obj, "min_values");
+	menu->max_values  = JsonGetInt(obj, "max_values");
+	menu->disabled    = JsonGetBool(obj, "disabled");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component::TextInput *text_input) {
+	text_input->custom_id   = JsonGetString(obj, "custom_id");
+	text_input->style       = (Discord::TextInputStyle)JsonGetInt(obj, "style");
+	text_input->label       = JsonGetString(obj, "label");
+	text_input->min_length  = JsonGetInt(obj, "min_length");
+	text_input->max_length  = JsonGetInt(obj, "max_length");
+	text_input->required    = JsonGetBool(obj, "required");
+	text_input->value       = JsonGetString(obj, "value");
+	text_input->placeholder = JsonGetString(obj, "placeholder");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Component *component) {
+	component->type = (Discord::ComponentType)JsonGetInt(obj, "type");
+
+	if (component->type == Discord::ComponentType::ACTION_ROW) {
+		component->data.action_row = Discord::Component::ActionRow();
+		Discord_Deserialize(obj, &component->data.action_row);
+	} else if (component->type == Discord::ComponentType::BUTTON) {
+		component->data.button = Discord::Component::Button();
+		Discord_Deserialize(obj, &component->data.button);
+	} else if (component->type == Discord::ComponentType::SELECT_MENU) {
+		component->data.select_menu = Discord::Component::SelectMenu();
+		Discord_Deserialize(obj, &component->data.select_menu);
+	} else if (component->type == Discord::ComponentType::TEXT_INPUT) {
+		component->data.text_input = Discord::Component::TextInput();
+		Discord_Deserialize(obj, &component->data.text_input);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::StickerItem *sticker) {
+	sticker->id          = Discord_ParseId(JsonGetString(obj, "id"));
+	sticker->name        = JsonGetString(obj, "name");
+	sticker->format_type = (Discord::StickerFormatType)JsonGetInt(obj, "format_type");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Message *message) {
+	message->id         = Discord_ParseId(JsonGetString(obj, "id"));
+	message->channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	message->guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+
+	Discord_Deserialize(JsonGetObject(obj, "author"), &message->author);
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		message->member = new Discord::GuildMember;
+		if (message->member) {
+			Discord_Deserialize(JsonGetObject(*member), message->member);
+		}
+	}
+
+	message->content = JsonGetString(obj, "content");
+	message->timestamp = Discord_ParseTimestamp(JsonGetString(obj, "timestamp"));
+	message->edited_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "edited_timestamp"));
+	message->tts = JsonGetBool(obj, "tts");
+	message->mention_everyone = JsonGetBool(obj, "mention_everyone");
+
+	Json_Array mentions = JsonGetArray(obj, "mentions");
+	message->mentions.Resize(mentions.count);
+	for (ptrdiff_t index = 0; index < message->mentions.count; ++index) {
+		Discord_Deserialize(JsonGetObject(mentions[0]), &message->mentions[index]);
+	}
+
+	Json_Array mention_roles = JsonGetArray(obj, "mention_roles");
+	message->mention_roles.Resize(mention_roles.count);
+	for (ptrdiff_t index = 0; index < message->mention_roles.count; ++index) {
+		message->mention_roles[index] = Discord_ParseId(JsonGetString(mention_roles[index]));
+	}
+
+	Json_Array mention_channels = JsonGetArray(obj, "mention_channels");
+	message->mention_channels.Resize(mention_channels.count);
+	for (ptrdiff_t index = 0; index < message->mention_channels.count; ++index) {
+		Discord_Deserialize(JsonGetObject(mention_channels[0]), &message->mention_channels[index]);
+	}
+
+	Json_Array attachments = JsonGetArray(obj, "attachments");
+	message->attachments.Resize(attachments.count);
+	for (ptrdiff_t index = 0; index < message->attachments.count; ++index) {
+		Discord_Deserialize(JsonGetObject(attachments[0]), &message->attachments[index]);
+	}
+
+	Json_Array reactions = JsonGetArray(obj, "reactions");
+	message->reactions.Resize(reactions.count);
+	for (ptrdiff_t index = 0; index < message->reactions.count; ++index) {
+		Discord_Deserialize(JsonGetObject(reactions[0]), &message->reactions[index]);
+	}
+
+	message->nonce = JsonGetString(obj, "nonce");
+	message->pinned = JsonGetBool(obj, "pinned");
+	message->webhook_id = Discord_ParseId(JsonGetString(obj, "webhook_id"));
+	message->type = (Discord::MessageType)JsonGetInt(obj, "type");
+
+	const Json *activity = obj.Find("activity");
+	if (activity) {
+		message->activity = new Discord::MessageActivity;
+		if (message->activity) {
+			Discord_Deserialize(JsonGetObject(*activity), message->activity);
+		}
+	}
+
+	const Json *application = obj.Find("application");
+	if (application) {
+		message->application = new Discord::Application;
+		if (message->application) {
+			Discord_Deserialize(JsonGetObject(*application), message->application);
+		}
+	}
+
+	message->application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
+
+	const Json *message_reference = obj.Find("message_reference");
+	if (message_reference) {
+		message->message_reference = new Discord::MessageReference;
+		if (message->message_reference) {
+			Discord_Deserialize(JsonGetObject(*message_reference), message->message_reference);
+		}
+	}
+
+	message->flags = JsonGetInt(obj, "flags");
+
+	const Json *referenced_message = obj.Find("referenced_message");
+	if (referenced_message && referenced_message->type == JSON_TYPE_OBJECT) {
+		message->referenced_message = new Discord::Message;
+		if (message->referenced_message) {
+			Discord_Deserialize(referenced_message->value.object, message->referenced_message);
+		}
+	}
+
+	const Json *interaction = obj.Find("interaction");
+	if (interaction) {
+		message->interaction = new Discord::MessageInteraction;
+		if (message->interaction) {
+			Discord_Deserialize(JsonGetObject(*interaction), message->interaction);
+		}
+	}
+
+	const Json *thread = obj.Find("thread");
+	if (thread) {
+		message->thread = new Discord::Channel;
+		if (message->thread) {
+			Discord_Deserialize(JsonGetObject(*thread), message->thread);
+		}
+	}
+
+	Json_Array components = JsonGetArray(obj, "components");
+	message->components.Resize(components.count);
+	for (ptrdiff_t index = 0; index < message->components.count; ++index) {
+		Discord_Deserialize(JsonGetObject(components[index]), &message->components[index]);
+	}
+
+	Json_Array sticker_items = JsonGetArray(obj, "sticker_items");
+	message->sticker_items.Resize(sticker_items.count);
+	for (ptrdiff_t index = 0; index < message->sticker_items.count; ++index) {
+		Discord_Deserialize(JsonGetObject(sticker_items[index]), &message->sticker_items[index]);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::InteractionData::ResolvedData *data) {
+	Json_Object users = JsonGetObject(obj, "users");
+	data->users.Resize(users.p2allocated);
+	data->users.storage.Reserve(users.storage.count);
+	for (auto &user_map : users) {
+		Discord::Snowflake id = Discord_ParseId(user_map.key);
+		Discord::User user;
+		Discord_Deserialize(JsonGetObject(user_map.value), &user);
+		data->users.Put(id, user);
+	}
+
+	Json_Object members = JsonGetObject(obj, "members");
+	data->members.Resize(members.p2allocated);
+	data->members.storage.Reserve(members.storage.count);
+	for (auto &member_map : members) {
+		Discord::Snowflake id = Discord_ParseId(member_map.key);
+		Discord::GuildMember member;
+		Discord_Deserialize(JsonGetObject(member_map.value), &member);
+		data->members.Put(id, member);
+	}
+
+	Json_Object roles = JsonGetObject(obj, "roles");
+	data->roles.Resize(roles.p2allocated);
+	data->roles.storage.Reserve(roles.storage.count);
+	for (auto &role_map : roles) {
+		Discord::Snowflake id = Discord_ParseId(role_map.key);
+		Discord::Role role;
+		Discord_Deserialize(JsonGetObject(role_map.value), &role);
+		data->roles.Put(id, role);
+	}
+
+	Json_Object channels = JsonGetObject(obj, "channels");
+	data->channels.Resize(channels.p2allocated);
+	data->channels.storage.Reserve(channels.storage.count);
+	for (auto &channel_map : channels) {
+		Discord::Snowflake id = Discord_ParseId(channel_map.key);
+		Discord::Channel channel;
+		Discord_Deserialize(JsonGetObject(channel_map.value), &channel);
+		data->channels.Put(id, channel);
+	}
+
+	Json_Object messages = JsonGetObject(obj, "messages");
+	data->messages.Resize(messages.p2allocated);
+	data->messages.storage.Reserve(messages.storage.count);
+	for (auto &message_map : messages) {
+		Discord::Snowflake id = Discord_ParseId(message_map.key);
+		Discord::Message message;
+		Discord_Deserialize(JsonGetObject(message_map.value), &message);
+		data->messages.Put(id, message);
+	}
+
+	Json_Object attachments = JsonGetObject(obj, "attachments");
+	data->attachments.Resize(attachments.p2allocated);
+	data->attachments.storage.Reserve(attachments.storage.count);
+	for (auto &attachment_map : attachments) {
+		Discord::Snowflake id = Discord_ParseId(attachment_map.key);
+		Discord::Attachment attachment;
+		Discord_Deserialize(JsonGetObject(attachment_map.value), &attachment);
+		data->attachments.Put(id, attachment);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationCommandInteractionDataOption *option) {
+	option->name = JsonGetString(obj, "name");
+	option->type = (Discord::ApplicationCommandOptionType)JsonGetInt(obj, "type");
+
+	const Json *value = obj.Find("value");
+	if (value) {
+		if (value->type == JSON_TYPE_STRING) {
+			option->value.string = value->value.string;
+		} else if (value->type == JSON_TYPE_NUMBER) {
+			option->value.number = value->value.number;
+		} else if (value->type == JSON_TYPE_BOOL) {
+			option->value.integer = value->value.boolean;
+		}
+	}
+
+	Json_Array options = JsonGetArray(obj, "options");
+	option->options.Resize(options.count);
+	for (ptrdiff_t index = 0; index < option->options.count; ++index) {
+		Discord_Deserialize(JsonGetObject(options[index]), &option->options[index]);
+	}
+
+	option->focused = JsonGetBool(obj, "focused");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::InteractionData *data) {
+	data->id   = Discord_ParseId(JsonGetString(obj, "id"));
+	data->name = JsonGetString(obj, "name");
+	data->type = (Discord::ApplicationCommandType)JsonGetInt(obj, "type");
+
+	const Json *resolved = obj.Find("resolved");
+	if (resolved) {
+		data->resolved = new Discord::InteractionData::ResolvedData;
+		if (data->resolved) {
+			Discord_Deserialize(JsonGetObject(obj, "resolved"), data->resolved);
+		}
+	}
+
+	Json_Array options = JsonGetArray(obj, "options");
+	data->options.Resize(options.count);
+	for (ptrdiff_t index = 0; index < data->options.count; ++index) {
+		Discord_Deserialize(JsonGetObject(options[index]), &data->options[index]);
+	}
+
+	data->guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	data->custom_id      = JsonGetString(obj, "custom_id");
+	data->component_type = (Discord::ComponentType)JsonGetInt(obj, "component_type");
+
+	Json_Array values = JsonGetArray(obj, "values");
+	data->values.Resize(values.count);
+	for (ptrdiff_t index = 0; index < data->values.count; ++index) {
+		Discord_Deserialize(JsonGetObject(values[index]), &data->values[index]);
+	}
+
+	data->target_id = Discord_ParseId(JsonGetString(obj, "target_id"));
+
+	Json_Array components = JsonGetArray(obj, "components");
+	data->components.Resize(components.count);
+	for (ptrdiff_t index = 0; index < data->components.count; ++index) {
+		Discord_Deserialize(JsonGetObject(components[index]), &data->components[index]);
+	}
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Interaction *interaction) {
+	interaction->id             = Discord_ParseId(JsonGetString(obj, "id"));
+	interaction->application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
+	interaction->type           = (Discord::InteractionType)JsonGetInt(obj, "type");
+	
+	const Json *data = obj.Find("data");
+	if (data) {
+		interaction->data = new Discord::InteractionData;
+		if (interaction->data) {
+			Discord_Deserialize(JsonGetObject(*data), interaction->data);
+		}
+	}
+
+	interaction->guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	interaction->channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+
+	const Json *member = obj.Find("member");
+	if (member) {
+		interaction->member = new Discord::GuildMember;
+		if (interaction->member) {
+			Discord_Deserialize(JsonGetObject(*member), interaction->member);
+		}
+	}
+
+	const Json *user = obj.Find("user");
+	if (user) {
+		interaction->user = new Discord::User;
+		if (interaction->user) {
+			Discord_Deserialize(JsonGetObject(*user), interaction->user);
+		}
+	}
+
+	interaction->token   = JsonGetString(obj, "token");
+	interaction->version = JsonGetInt(obj, "version");
+
+	const Json *message = obj.Find("message");
+	if (message) {
+		interaction->message = new Discord::Message;
+		if (interaction->message) {
+			Discord_Deserialize(JsonGetObject(*message), interaction->message);
+		}
+	}
+
+	interaction->locale       = JsonGetString(obj, "locale");
+	interaction->guild_locale = JsonGetString(obj, "guild_locale");
+}
+
 //
 //
 //
@@ -2502,6 +3460,12 @@ static void Discord_EventHandlerIntegrationDelete(Discord::Client *client, const
 	client->onevent(client, &integration);
 }
 
+static void Discord_EventHandlerInteractionCreate(Discord::Client *client, const Json &data) {
+	Discord::InteractionCreateEvent interation;
+	Discord_Deserialize(JsonGetObject(data), &interation.interation);
+	client->onevent(client, &interation);
+}
+
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerNone, Discord_EventHandlerHello, Discord_EventHandlerReady,
 	Discord_EventHandlerResumed, Discord_EventHandlerReconnect, Discord_EventHandlerInvalidSession,
@@ -2517,8 +3481,9 @@ static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
 	Discord_EventHandlerGuildScheduledEventCreate, Discord_EventHandlerGuildScheduledEventUpdate, Discord_EventHandlerGuildScheduledEventDelete,
 	Discord_EventHandlerGuildScheduledEventUserAdd, Discord_EventHandlerGuildScheduledEventUserRemove,
 	Discord_EventHandlerIntegrationCreate, Discord_EventHandlerIntegrationUpdate, Discord_EventHandlerIntegrationDelete,
+	Discord_EventHandlerInteractionCreate,
 
-	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
+	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
 	Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone, Discord_EventHandlerNone,
@@ -2810,6 +3775,12 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	if (event->type == Discord::EventType::INTEGRATION_DELETE) {
 		auto integration = (Discord::IntegrationDeleteEvent *)event;
 		Trace("Integration updated: %zu", integration->id.value);
+		return;
+	}
+
+	if (event->type == Discord::EventType::INTERACTION_CREATE) {
+		auto interaction = (Discord::InteractionCreateEvent *)event;
+		Trace("Interaction created: %zu", interaction->interation.id);
 		return;
 	}
 }

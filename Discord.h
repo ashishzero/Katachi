@@ -999,6 +999,7 @@ namespace Discord {
 		ROLE = 8,
 		MENTIONABLE = 9,
 		NUMBER = 10,
+		ATTACHMENT=11
 	};
 
 	struct ApplicationCommandOptionChoice {
@@ -1087,17 +1088,18 @@ namespace Discord {
 		};
 
 		struct ResolvedData {
-			Array<Map<User>> users;
-			Array<Map<GuildMember>> members;
-			Array<Map<Role>> roles;
-			Array<Map<Channel>> channels;
-			Array<Map<Message>> messages;
+			Hash_Table<Snowflake, User> users;
+			Hash_Table<Snowflake, GuildMember> members;
+			Hash_Table<Snowflake, Role> roles;
+			Hash_Table<Snowflake, Channel> channels;
+			Hash_Table<Snowflake, Message> messages;
+			Hash_Table<Snowflake, Attachment> attachments;
 		};
 
-		Snowflake id;
-		String name;
+		Snowflake              id;
+		String                 name;
 		ApplicationCommandType type;
-		ResolvedData resolved;
+		ResolvedData           resolved;
 		Array<ApplicationCommandInteractionDataOption> options;
 		String custom_id;
 		ComponentType component_type;
