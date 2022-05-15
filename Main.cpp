@@ -1233,7 +1233,7 @@ namespace Discord {
 	//
 
 	enum class EventType {
-		NONE,
+		TICK,
 		HELLO, READY, RESUMED, RECONNECT, INVALID_SESSION,
 		APPLICATION_COMMAND_PERMISSIONS_UPDATE,
 		CHANNEL_CREATE, CHANNEL_UPDATE, CHANNEL_DELETE, CHANNEL_PINS_UPDATE,
@@ -1256,7 +1256,7 @@ namespace Discord {
 	};
 
 	static const String EventNames[] = {
-		"NONE",
+		"",
 		"HELLO", "READY", "RESUMED", "RECONNECT", "INVALID_SESSION",
 		"APPLICATION_COMMAND_PERMISSIONS_UPDATE",
 		"CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE", "CHANNEL_PINS_UPDATE",
@@ -1279,8 +1279,8 @@ namespace Discord {
 	static_assert(ArrayCount(EventNames) == (int)EventType::EVENT_COUNT, "");
 
 	struct Event {
-		EventType type = EventType::NONE;
-		String    name = "NONE";
+		EventType type = EventType::TICK;
+		String    name = "TICK";
 
 		Event() = default;
 		Event(EventType _type): type(_type), name(EventNames[(int)_type]) {}
@@ -4287,7 +4287,7 @@ namespace Discord {
 static volatile bool Logout = false;
 
 void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
-	if (event->type == Discord::EventType::NONE) {
+	if (event->type == Discord::EventType::TICK) {
 		if (Logout) {
 			Discord::Logout(client);
 		}
