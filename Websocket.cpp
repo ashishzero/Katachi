@@ -1117,7 +1117,7 @@ int Websocket_EventCloseCode(const Websocket_Event &event) {
 		int code = ((a << 8) | b);
 		return code;
 	}
-	return -1;
+	return 0;
 }
 
 String Websocket_EventCloseMessage(const Websocket_Event &event) {

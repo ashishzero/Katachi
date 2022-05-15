@@ -4038,8 +4038,8 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 			}
 
 			if (opcode == (int)Discord::Opcode::HEARTBEAT) {
-				TraceEx("Discord", "Heartbeat (%d)", client->heartbeat.count);
 				Discord::SendHearbeat(client);
+				TraceEx("Discord", "Heartbeat (%d)", client->heartbeat.count);
 				return;
 			}
 
@@ -4076,16 +4076,19 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		}
 
 		LogErrorEx("Discord", "Invalid Frame received: " StrFmt, StrArg(event.message));
+		return;
 	}
 
 	if (event.type == WEBSOCKET_EVENT_CLOSE) {
 		int code       = Websocket_EventCloseCode(event);
 		String message = Websocket_EventCloseMessage(event);
 
-		if (code == WEBSOCKET_CLOSE_GOING_AWAY && code == WEBSOCKET_CLOSE_GOING_AWAY)
-			LogInfoEx("Discord", StrFmt, message);
+		if (code == WEBSOCKET_CLOSE_GOING_AWAY || code == WEBSOCKET_CLOSE_NORMAL)
+			LogInfoEx("Discord", "Shutting down...");
+		else if (message.length)
+			LogErrorEx("Discord", "Shutting down (%d): " StrFmt, code, message);
 		else
-			LogErrorEx("Discord", StrFmt, message);
+			LogErrorEx("Discord", "Abnormal shut down (%d)", code);
 
 		client->online = Discord_GatewayCloseReconnect(code);
 	}
@@ -4215,11 +4218,13 @@ namespace Discord {
 		ThreadContext.allocator = MemoryArenaAllocator(arena);
 
 		while (client.online) {
+			client.heartbeat = Discord::Heartbeat();
+
 			for (int reconnect = 0; !client.websocket; ++reconnect) {
 				Discord_GatewayResponse response;
 				client.websocket = Discord_ConnectToGateway(token, arena, websocket_spec, spec.allocator, &response);
 				if (!client.websocket) {
-					int maximum_backoff = 40; // secs
+					int maximum_backoff = 32; // secs
 					int wait_time = Minimum((int)powf(2.0f, (float)reconnect), maximum_backoff);
 					LogInfoEx("Discord", "Reconnect after %d secs...", wait_time);
 					wait_time = wait_time * 1000 + rand() % 1000; // to ms
@@ -4229,7 +4234,6 @@ namespace Discord {
 			}
 
 			clock_t counter            = clock();
-			client.heartbeat           = Discord::Heartbeat();
 			client.heartbeat.remaining = client.heartbeat.interval;
 
 			while (Websocket_IsConnected(client.websocket)) {

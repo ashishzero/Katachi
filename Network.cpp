@@ -62,11 +62,15 @@ static void PL_Net_UnicodeToWideChar(wchar_t *dst, int dst_len, const char *msg,
 }
 
 static void PL_Net_ReportError(int error) {
-	DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
-	wchar_t *msg = NULL;
-	FormatMessageW(flags, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&msg, 0, NULL);
-	LogErrorEx("Net:Windows", "%S", msg);
-	LocalFree(msg);
+	DWORD flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+	wchar_t msg[1024];
+	int len = FormatMessageW(flags, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&msg, sizeof(msg), NULL);
+	if (len >= 2) {
+		// don't print the newline since Log function prints it already
+		msg[len - 2] = 0; // \r
+		msg[len - 1] = 0; // \n
+	}
+	LogErrorEx("Net:Windows", "Code: %d, Message: %S", error, msg);
 }
 #define PL_Net_ReportLastPlatformError() PL_Net_ReportError(GetLastError())
 #define PL_Net_ReportLastSocketError() PL_Net_ReportError(WSAGetLastError())
@@ -169,7 +173,7 @@ static void PL_Net_ReportError(int error) {
 		msg = strerror(errno);
 	else
 		msg = gai_strerror(error);
-	LogErrorEx(source, "%s", msg);
+	LogErrorEx(source, "Code: %d, Message: %s", error, msg);
 }
 #define PL_Net_ReportLastPlatformError(EAI_SYSTEM)
 #define PL_Net_ReportLastSocketError(EAI_SYSTEM)
@@ -680,8 +684,16 @@ int Net_Send(Net_Socket *net, void *buffer, int length) {
 			return 0;
 		}
 #endif
-		net->error = NET_E_CONNECTION_LOST;
+
+#ifdef NETWORK_OPENSSL_ENABLE
+		if (net->ssl)
+			PL_Net_ReportOpenSSLError();
+		else
+			PL_Net_ReportLastSocketError();
+#else
 		PL_Net_ReportLastSocketError();
+#endif
+		net->error = NET_E_CONNECTION_LOST;
 		return -1;
 	}
 	net->error = NET_E_NONE;
@@ -703,8 +715,16 @@ int Net_Receive(Net_Socket *net, void *buffer, int length) {
 		}
 #endif
 		if (read == 0) LogErrorEx("Net", "Lost connection unexpectedly");
-		net->error = NET_E_CONNECTION_LOST;
+
+#ifdef NETWORK_OPENSSL_ENABLE
+		if (net->ssl)
+			PL_Net_ReportOpenSSLError();
+		else
+			PL_Net_ReportLastSocketError();
+#else
 		PL_Net_ReportLastSocketError();
+#endif
+		net->error = NET_E_CONNECTION_LOST;
 		return -1;
 	}
 	return read;
