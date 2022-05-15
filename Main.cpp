@@ -1780,7 +1780,7 @@ namespace Discord {
 		Identify         identify;
 		uint8_t          session_id[1024] = {0};
 		int              sequence = -1;
-		bool             online = false;
+		bool             login = false;
 	};
 }
 
@@ -1967,7 +1967,11 @@ namespace Discord {
 	}
 
 	void Logout(Client *client) {
-		Websocket_Close(client->websocket, WEBSOCKET_CLOSE_NORMAL);
+		if (client->login) {
+			LogInfoEx("Discord", "Logging out...");
+			Websocket_Close(client->websocket, WEBSOCKET_CLOSE_NORMAL);
+			client->login = false;
+		}
 	}
 }
 
@@ -4017,7 +4021,7 @@ static void Discord_HandleEvent(Discord::Client *client, String event, const Jso
 }
 
 static bool Discord_GatewayCloseReconnect(int code) {
-	if (code >= 400 && code <= 4009 && code != 406)
+	if (code >= 4000 && code <= 4009 && code != 4006)
 		return true;
 	return false;
 }
@@ -4090,12 +4094,13 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		else
 			LogErrorEx("Discord", "Abnormal shut down (%d)", code);
 
-		client->online = Discord_GatewayCloseReconnect(code);
+		client->login = Discord_GatewayCloseReconnect(code);
 	}
 }
 
 namespace Discord {
 	struct ClientMemorySpec {
+		int32_t          tick_ms;
 		uint32_t         scratch_size;
 		uint32_t         read_size;
 		uint32_t         write_size;
@@ -4104,7 +4109,7 @@ namespace Discord {
 	};
 
 	static constexpr ClientMemorySpec MinClientMemorySpec = {
-		MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
+		WEBSOCKET_MAX_WAIT_MS, MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
 	};
 
 	// @todo: move this outside of Discord::
@@ -4186,6 +4191,9 @@ namespace Discord {
 
 		srand((unsigned int)time(0));
 
+		Assert(spec.tick_ms >= 0);
+		
+		int tick          = spec.tick_ms;
 		spec.scratch_size = Maximum(spec.scratch_size, MinClientMemorySpec.scratch_size);
 		spec.read_size    = Maximum(spec.read_size, MinClientMemorySpec.read_size);
 		spec.write_size   = Maximum(spec.write_size, MinClientMemorySpec.write_size);
@@ -4209,7 +4217,7 @@ namespace Discord {
 		client.allocator  = spec.allocator;
 		client.identify   = Discord::Identify(token, intents, presence);
 		client.onevent    = onevent;
-		client.online     = true;
+		client.login      = true;
 
 		// @todo: handle sharding
 		client.identify.properties.browser = "Katachi";
@@ -4217,7 +4225,7 @@ namespace Discord {
 
 		ThreadContext.allocator = MemoryArenaAllocator(arena);
 
-		while (client.online) {
+		while (client.login) {
 			client.heartbeat = Discord::Heartbeat();
 
 			for (int reconnect = 0; !client.websocket; ++reconnect) {
@@ -4238,7 +4246,7 @@ namespace Discord {
 
 			while (Websocket_IsConnected(client.websocket)) {
 				Websocket_Event event;
-				Websocket_Result res = Websocket_Receive(client.websocket, &event, client.scratch, (int)client.heartbeat.remaining);
+				Websocket_Result res = Websocket_Receive(client.websocket, &event, client.scratch, tick);
 
 				if (res == WEBSOCKET_E_CLOSED) break;
 
@@ -4255,12 +4263,13 @@ namespace Discord {
 
 				if (client.heartbeat.remaining <= 0) {
 					client.heartbeat.remaining = client.heartbeat.interval;
-					res = WEBSOCKET_E_WAIT;
+					Discord::SendHearbeat(&client);
+					TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
 				}
 
 				if (res == WEBSOCKET_E_WAIT) {
-					Discord::SendHearbeat(&client);
-					TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
+					Discord::Event none;
+					client.onevent(&client, &none);
 				}
 
 				MemoryArenaReset(client.scratch);
@@ -4273,11 +4282,18 @@ namespace Discord {
 }
 
 // @todo
-// Resume: https://discord.com/developers/docs/topics/gateway#resuming
-// Disconnect: https://discord.com/developers/docs/topics/gateway#disconnections
 // Sharding: https://discord.com/developers/docs/topics/gateway#sharding
 
+static volatile bool Logout = false;
+
 void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
+	if (event->type == Discord::EventType::NONE) {
+		if (Logout) {
+			Discord::Logout(client);
+		}
+		return;
+	}
+
 	if (event->type == Discord::EventType::READY) {
 		auto ready = (Discord::ReadyEvent *)event;
 		Trace("Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
@@ -4619,6 +4635,12 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	}
 }
 
+static void InterruptHandler(int signo) {
+	Logout = true;
+}
+
+#include <signal.h>
+
 int main(int argc, char **argv) {
 	InitThreadContext(0);
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -4627,6 +4649,8 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
 	}
+
+	signal(SIGINT, InterruptHandler);
 
 	String token = String(argv[1], strlen(argv[1]));
 

@@ -668,7 +668,7 @@ static void Websocket_InspectWriteFrameForClose(Websocket_Context *ctx, int opco
 }
 
 static bool Websocket_HasWrite(Websocket_Context *ctx) {
-	if (ctx->connection != WEBSOCKET_SENT_CLOSE) {
+	if (ctx->connection != WEBSOCKET_SENT_CLOSE && ctx->connection != WEBSOCKET_DISCONNECTING) {
 		if (!ctx->writer.control.length) {
 			if (ctx->writer.normal.curr_node)
 				return true;
