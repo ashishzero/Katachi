@@ -3378,6 +3378,8 @@ static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Js
 			int wait_time = rand() % 4 + 1;
 			Thread_Sleep(wait_time * 1000);
 		}
+	} else {
+		Websocket_Close(client->websocket, WEBSOCKET_CLOSE_ABNORMAL_CLOSURE);
 	}
 }
 
@@ -4099,18 +4101,14 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 }
 
 namespace Discord {
-	struct ClientMemorySpec {
-		int32_t          shards[2];
-		int32_t          tick_ms;
-		uint32_t         scratch_size;
-		uint32_t         read_size;
-		uint32_t         write_size;
-		uint32_t         queue_size;
-		Memory_Allocator allocator;
-	};
-
-	static constexpr ClientMemorySpec MinClientMemorySpec = {
-		{0, 1}, WEBSOCKET_MAX_WAIT_MS, MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
+	struct ClientSpec {
+		int32_t          shards[2]    = { 0, 1 };
+		int32_t          tick_ms      = WEBSOCKET_MAX_WAIT_MS;
+		uint32_t         scratch_size = MegaBytes(64);
+		uint32_t         read_size    = MegaBytes(2);
+		uint32_t         write_size   = KiloBytes(8);
+		uint32_t         queue_size   = 16;
+		Memory_Allocator allocator    = ThreadContextDefaultParams.allocator;
 	};
 	
 	// @todo: move this outside of Discord::
@@ -4124,14 +4122,13 @@ namespace Discord {
 		} session_start_limit;
 	};
 
-	// @todo: move this outside of Discord::
-	static Websocket *Discord_ConnectToGateway(const String token, Memory_Arena *scratch, Websocket_Spec spec, Memory_Allocator allocator, Discord_GatewayResponse *response) {
-		auto temp = BeginTemporaryMemory(scratch);
+	static bool Discord_ConnectToGatewayBot(String token, Memory_Arena *arena, Discord_GatewayResponse *response) {
+		auto temp = BeginTemporaryMemory(arena);
 		Defer{ EndTemporaryMemory(&temp); };
 
-		String authorization = FmtStr(scratch, "Bot " StrFmt, StrArg(token));
+		String authorization = FmtStr(arena, "Bot " StrFmt, StrArg(token));
 
-		Http *http = Http_Connect("https://discord.com");
+		Http *http = Http_Connect("https://discord.com", HTTPS_CONNECTION, MemoryArenaAllocator(arena));
 		if (!http)
 			return nullptr;
 
@@ -4142,7 +4139,56 @@ namespace Discord {
 		Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
 		Http_Response res;
-		if (!Http_Get(http, "/api/v10/gateway/bot", req, &res, scratch)) {
+		if (!Http_Get(http, "/api/v10/gateway/bot", req, &res, arena)) {
+			Http_Disconnect(http);
+			return nullptr;
+		}
+
+		Json json;
+		if (!JsonParse(res.body, &json, MemoryArenaAllocator(arena))) {
+			LogErrorEx("Discord", "Failed to parse JSON response: \n" StrFmt, StrArg(res.body));
+			Http_Disconnect(http);
+			return false;
+		}
+
+		const Json_Object obj = JsonGetObject(json);
+
+		if (res.status.code != 200) {
+			String msg = JsonGetString(obj, "message");
+			LogErrorEx("Discord", "Connection Error; Code: %u, Message: " StrFmt, res.status.code, StrArg(msg));
+			Http_Disconnect(http);
+			return false;
+		}
+
+		Http_Disconnect(http);
+
+		response->shards = JsonGetInt(obj, "shards");
+
+		Json_Object session_start_limit               = JsonGetObject(obj, "session_start_limit");
+		response->session_start_limit.total           = JsonGetInt(session_start_limit, "total");
+		response->session_start_limit.remaining       = JsonGetInt(session_start_limit, "remaining");
+		response->session_start_limit.reset_after     = JsonGetInt(session_start_limit, "reset_after");
+		response->session_start_limit.max_concurrency = JsonGetInt(session_start_limit, "max_concurrency");
+
+		return true;
+	}
+
+	// @todo: move this outside of Discord::
+	static Websocket *Discord_ConnectToGateway(String token, Memory_Arena *scratch, Memory_Allocator allocator, Websocket_Spec spec) {
+		auto temp = BeginTemporaryMemory(scratch);
+		Defer{ EndTemporaryMemory(&temp); };
+
+		Http *http = Http_Connect("https://discord.com", HTTPS_CONNECTION, MemoryArenaAllocator(scratch));
+		if (!http)
+			return nullptr;
+
+		Http_Request req;
+		Http_InitRequest(&req);
+		Http_SetHost(&req, http);
+		Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+
+		Http_Response res;
+		if (!Http_Get(http, "/api/v10/gateway", req, &res, scratch)) {
 			Http_Disconnect(http);
 			return nullptr;
 		}
@@ -4168,15 +4214,7 @@ namespace Discord {
 		String url = JsonGetString(obj, "url");
 		url = StrContat(url, "/?v=9&encoding=json", scratch);
 
-		response->shards = JsonGetInt(obj, "shards");
-
-		Json_Object session_start_limit               = JsonGetObject(obj, "session_start_limit");
-		response->session_start_limit.total           = JsonGetInt(session_start_limit, "total");
-		response->session_start_limit.remaining       = JsonGetInt(session_start_limit, "remaining");
-		response->session_start_limit.reset_after     = JsonGetInt(session_start_limit, "reset_after");
-		response->session_start_limit.max_concurrency = JsonGetInt(session_start_limit, "max_concurrency");
-
-		TraceEx("Discord", "Getway Response: " StrFmt ", Shards: %d", StrArg(url), response->shards);
+		String authorization = FmtStr(scratch, "Bot " StrFmt, StrArg(token));
 
 		Websocket_Header headers;
 		Websocket_InitHeader(&headers);
@@ -4187,18 +4225,25 @@ namespace Discord {
 		return websocket;
 	}
 
-	int32_t GetShardId(Client *client) {
-		return client->identify.shard[0];
+	struct Shard {
+		int32_t id;
+		int32_t count;
+	};
+
+	Shard GetShard(Client *client) {
+		return { client->identify.shard[0], client->identify.shard[1] };
 	}
 
-	void Login(const String token, int32_t intents = 0, EventHandler onevent = DefOnEvent, PresenceUpdate *presence = nullptr, ClientMemorySpec spec = MinClientMemorySpec) {
+	void Login(const String token, int32_t intents = 0, EventHandler onevent = DefOnEvent, PresenceUpdate *presence = nullptr, ClientSpec spec = ClientSpec()) {
 		Assert(spec.tick_ms >= 0);
+
+		constexpr ClientSpec DefaultClientSpec = ClientSpec();
 		
 		int tick          = spec.tick_ms;
-		spec.scratch_size = Maximum(spec.scratch_size, MinClientMemorySpec.scratch_size);
-		spec.read_size    = Maximum(spec.read_size, MinClientMemorySpec.read_size);
-		spec.write_size   = Maximum(spec.write_size, MinClientMemorySpec.write_size);
-		spec.queue_size   = Maximum(spec.queue_size, MinClientMemorySpec.queue_size);
+		spec.scratch_size = Maximum(spec.scratch_size, DefaultClientSpec.scratch_size);
+		spec.read_size    = Maximum(spec.read_size,    DefaultClientSpec.read_size);
+		spec.write_size   = Maximum(spec.write_size,   DefaultClientSpec.write_size);
+		spec.queue_size   = Maximum(spec.queue_size,   DefaultClientSpec.queue_size);
 
 		Websocket_Spec websocket_spec;
 		websocket_spec.read_size  = spec.read_size;
@@ -4232,8 +4277,7 @@ namespace Discord {
 			client.heartbeat = Discord::Heartbeat();
 
 			for (int reconnect = 0; !client.websocket; ++reconnect) {
-				Discord_GatewayResponse response;
-				client.websocket = Discord_ConnectToGateway(token, arena, websocket_spec, spec.allocator, &response);
+				client.websocket = Discord_ConnectToGateway(token, arena, spec.allocator, websocket_spec);
 				if (!client.websocket) {
 					int maximum_backoff = 32; // secs
 					int wait_time = Minimum((int)powf(2.0f, (float)reconnect), maximum_backoff);
@@ -4283,14 +4327,116 @@ namespace Discord {
 		}
 	}
 
+	struct Discord_ShardThread {
+		Thread *                 handle;
+		String                   token;
+		int                      intents;
+		Discord::EventHandler    onevent;
+		Discord::PresenceUpdate *presence;
+		Discord::ClientSpec      spec;
+	};
+
+	static int Discord_ShardThreadProc(void *arg) {
+		Discord_ShardThread *shard = (Discord_ShardThread *)arg;
+		Discord::Login(shard->token, shard->intents, shard->onevent, shard->presence, shard->spec);
+		return 0;
+	}
+
+	struct ShardSpec {
+		Array_View<ClientSpec> specs;
+		ClientSpec             default_spec;
+	};
+
+	void LoginSharded(const String token, int32_t intents = 0, EventHandler onevent = DefOnEvent, PresenceUpdate *presence = nullptr, int32_t shard_count = 0, const ShardSpec &specs = ShardSpec{}) {
+		Memory_Arena *arena = MemoryArenaAllocate(KiloBytes(128));
+
+		Discord_GatewayResponse response;
+
+		for (int reconnect = 0; ; ++reconnect) {
+			if (Discord_ConnectToGatewayBot(token, arena, &response))
+				break;
+
+			int maximum_backoff = 32; // secs
+			int wait_time = Minimum((int)powf(2.0f, (float)reconnect), maximum_backoff);
+			LogInfoEx("Discord", "Reconnect after %d secs...", wait_time);
+			wait_time = wait_time * 1000 + rand() % 1000; // to ms
+			Thread_Sleep(wait_time);
+			LogInfoEx("Discord", "Reconnecting...");
+		}
+
+		if (shard_count <= 0) {
+			shard_count = response.shards;
+		}
+
+		Thread_Context_Params params = ThreadContextDefaultParams;
+		params.logger                = ThreadContext.logger;
+
+		Discord_ShardThread *shards = PushArray(arena, Discord_ShardThread, shard_count);
+		if (!shards) {
+			MemoryArenaFree(arena);
+			LogErrorEx("Discord", "Failed to allocate memory to launch shards");
+			return;
+		}
+
+		TraceEx("Discord", "Shard count: %d", shard_count);
+
+		int max_concurrency = response.session_start_limit.max_concurrency;
+
+		for (int32_t shard_id = 0; shard_id < shard_count - 1; ++shard_id) {
+			Discord_ShardThread *shard = &shards[shard_id];
+			shard->token               = token;
+			shard->intents             = intents;
+			shard->onevent             = onevent;
+			shard->presence            = nullptr;
+
+			if (shard_id < specs.specs.count) {
+				shard->spec = specs.specs[shard_id];
+			} else {
+				shard->spec = specs.default_spec;
+				shard->spec.shards[0] = shard_id;
+				shard->spec.shards[1] = shard_count;
+			}
+
+			shard->handle = Thread_Create(Discord_ShardThreadProc, shard, 0, params);
+
+			int rate_limit_key = shard_id % max_concurrency;
+			if (!shard_id && !rate_limit_key) {
+				Thread_Sleep(5000);
+			}
+		}
+
+		int32_t shard_id = shard_count - 1;
+		Discord_ShardThread *shard = &shards[shard_id];
+
+		shard->token    = token;
+		shard->intents  = intents;
+		shard->onevent  = onevent;
+		shard->presence = presence;
+
+		if (shard_id < specs.specs.count) {
+			shard->spec = specs.specs[shard_id];
+		} else {
+			shards[shard_id].spec = specs.default_spec;
+			shard->spec.shards[0] = shard_id;
+			shard->spec.shards[1] = shard_count;
+		}
+		
+		shard->handle = nullptr;
+
+		Discord_ShardThreadProc(shard);
+
+		for (int32_t shard_id = 0; shard_id < shard_count; ++shard_id) {
+			Thread_Wait(shards[shard_id].handle, -1);
+		}
+
+		MemoryArenaFree(arena);
+	}
+
 	void Init() {
 		Net_Initialize();
 		srand((unsigned int)time(0));
 	}
 }
-
-// @todo
-// Sharding: https://discord.com/developers/docs/topics/gateway#sharding
 
 static volatile bool Logout = false;
 
@@ -4306,6 +4452,8 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		auto ready = (Discord::ReadyEvent *)event;
 		Trace("Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
 		Trace("Discord Gateway Version : %d", ready->v);
+		Discord::Shard shard = Discord::GetShard(client);
+		Trace("Shard Tick: %d, %d", shard.id, shard.count);
 		return;
 	}
 
@@ -4538,6 +4686,8 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	}
 
 	if (event->type == Discord::EventType::MESSAGE_CREATE) {
+		Discord::Shard shard = Discord::GetShard(client);
+		Trace("Shard Tick: %d, %d", shard.id, shard.count);
 		auto msg = (Discord::MessageCreateEvent *)event;
 		Trace("Message sent: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
 		return;
@@ -4689,7 +4839,7 @@ int main(int argc, char **argv) {
 	activity->url   = "https://www.twitch.tv/ashishzero";
 	activity->type  = Discord::ActivityType::STREAMING;
 
-	Discord::Login(token, intents, TestEventHandler, &presence);
+	Discord::LoginSharded(token, intents, TestEventHandler, &presence);
 
 	return 0;
 }
