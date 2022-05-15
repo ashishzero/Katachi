@@ -14,6 +14,7 @@
 #include <openssl/err.h>
 #if PLATFORM_WINDOWS
 #pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "Winmm.lib")
 #pragma comment(lib, "openssl/libcrypto_static.lib")
 #pragma comment(lib, "openssl/libssl_static.lib")
 #endif
@@ -82,6 +83,9 @@ static bool PL_Net_Initialize() {
 		PL_Net_ReportError(error);
 		return false;
 	}
+
+	timeBeginPeriod(1);
+
 	return true;
 }
 
@@ -432,16 +436,22 @@ static bool PL_Net_OpenSSLReconnect(Net_Socket *net) {
 //
 //
 
+static bool IsInitialized = false;
+
 bool Net_Initialize() {
+	if (IsInitialized) return true;
+
 	if (!PL_Net_Initialize())
 		return false;
-
-	return PL_Net_OpenSSLInitialize();
+	IsInitialized = PL_Net_OpenSSLInitialize();
+	return IsInitialized;
 }
 
 void Net_Shutdown() {
-	PL_Net_OpenSSLShutdown();
-	PL_Net_Shutdown();
+	if (IsInitialized) {
+		PL_Net_OpenSSLShutdown();
+		PL_Net_Shutdown();
+	}
 }
 
 //
@@ -485,6 +495,8 @@ Net_Socket *Net_OpenConnection(const String node, const String service, Net_Sock
 
 		return net;
 	}
+
+	LogErrorEx("Net", "Failed to allocate memory for socket");
 
 	PL_Net_CloseSocketDescriptor(descriptor);
 

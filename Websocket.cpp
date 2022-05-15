@@ -326,6 +326,7 @@ Websocket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *h
 
 	if (websocket_uri.secure) {
 		if (!Net_OpenSecureChannel(socket)) {
+			LogErrorEx("Websocket", "Failed to open secure channel");
 			Net_CloseConnection(socket);
 			return nullptr;
 		}

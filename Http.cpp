@@ -345,7 +345,7 @@ static inline int Http_Send(Http *http, uint8_t *bytes, int length) {
 static inline bool Http_IterateSend(Http *http, uint8_t *bytes, ptrdiff_t bytes_to_write) {
 	while (bytes_to_write > 0) {
 		int bytes_sent = Http_Send(http, bytes, (int)bytes_to_write);
-		if (bytes_sent < 0)
+		if (bytes_sent <= 0)
 			return false;
 		bytes += bytes_sent;
 		bytes_to_write -= bytes_sent;
@@ -423,7 +423,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 
 		while (read_more) {
 			int bytes_read = Http_Receive(http, read_ptr, buffer_size);
-			if (bytes_read < 0) return false;
+			if (bytes_read <= 0) return false;
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -577,7 +577,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 		ptrdiff_t remaining = content_length - body_read;
 		while (remaining) {
 			int bytes_read = Http_Receive(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
-			if (bytes_read < 0) return false;
+			if (bytes_read <= 0) return false;
 			writer.proc(res->headers, buffer, bytes_read, writer.context);
 			remaining -= bytes_read;
 		}
@@ -591,7 +591,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 			while (true) {
 				while (chunk_read < 4) {
 					int bytes_read = Http_Receive(http, buffer + chunk_read, (HTTP_STREAM_CHUNK_SIZE - (int)chunk_read));
-					if (bytes_read < 0) return false;
+					if (bytes_read <= 0) return false;
 					chunk_read += bytes_read;
 				}
 
@@ -628,7 +628,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 					ptrdiff_t remaining = chunk_length - streamed_chunk_len;
 					while (remaining) {
 						int bytes_read = Http_Receive(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
-						if (bytes_read < 0) return false;
+						if (bytes_read <= 0) return false;
 						writer.proc(res->headers, buffer, bytes_read, writer.context);
 						remaining -= bytes_read;
 					}

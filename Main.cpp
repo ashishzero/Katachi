@@ -1,14 +1,15 @@
 ﻿#include "Kr/KrBasic.h"
-#include "Network.h"
 #include "Kr/KrString.h"
+#include "Kr/KrThread.h"
+
+#include "Network.h"
 #include "Websocket.h"
+#include "Json.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
-#include "Json.h"
-
+#include <math.h>
 
 //
 // https://discord.com/developers/docs/topics/rate-limits#rate-limits
@@ -1768,18 +1769,18 @@ namespace Discord {
 	};
 
 	struct Client {
-		Websocket *   websocket;
-		Identify      identify; // @todo: @remove
-		Heartbeat     heartbeat;
+		Websocket *      websocket = nullptr;
+		Heartbeat        heartbeat;
 
-		String        token;
-		String        session_id;
-		int           sequence = -1;
+		EventHandler     onevent = DefOnEvent;
 
-		EventHandler onevent = DefOnEvent;
+		Memory_Arena *   scratch   = nullptr;
+		Memory_Allocator allocator = ThreadContext.allocator;
 
-		Memory_Arena *   scratch = nullptr;
-		Memory_Allocator allocator;
+		Identify         identify;
+		uint8_t          session_id[1024] = {0};
+		int              sequence = -1;
+		bool             online = false;
 	};
 }
 
@@ -1882,7 +1883,7 @@ static void Discord_Jsonify(const Discord::VoiceStateUpdate &update_voice_state,
 }
 
 namespace Discord {
-	void SendIdentify(Client *client, const Identify &identify) {
+	void SendIdentify(Client *client) {
 		Jsonify j(client->scratch);
 		j.BeginObject();
 		j.KeyValue("op", (int)Discord::Opcode::IDENTIFY);
@@ -1899,8 +1900,8 @@ namespace Discord {
 		j.KeyValue("op", (int)Discord::Opcode::RESUME);
 		j.PushKey("d");
 		j.BeginObject();
-		j.KeyValue("token", client->token);
-		j.KeyValue("session_id", client->session_id);
+		j.KeyValue("token", client->identify.token);
+		j.KeyValue("session_id", String(client->session_id, strlen((char *)client->session_id)));
 		if (client->sequence >= 0)
 			j.KeyValue("seq", client->sequence);
 		else
@@ -1913,8 +1914,9 @@ namespace Discord {
 
 	void SendHearbeat(Client *client) {
 		if (client->heartbeat.count != client->heartbeat.acknowledged) {
-			// @todo: only wait for certain number of times
-			LogWarningEx("Discord", "Acknowledgement not reveived (%d/%d)", client->heartbeat.count, client->heartbeat.acknowledged);
+			LogWarningEx("Discord", "No Acknowledgement %d", client->heartbeat.acknowledged);
+			Websocket_Close(client->websocket, WEBSOCKET_CLOSE_ABNORMAL_CLOSURE);
+			return;
 		}
 
 		Jsonify j(client->scratch);
@@ -1962,6 +1964,10 @@ namespace Discord {
 		j.EndObject();
 		String msg = Jsonify_BuildString(&j);
 		Websocket_SendText(client->websocket, msg);
+	}
+
+	void Logout(Client *client) {
+		Websocket_Close(client->websocket, WEBSOCKET_CLOSE_NORMAL);
 	}
 }
 
@@ -3322,18 +3328,18 @@ static void Discord_EventHandlerReady(Discord::Client *client, const Json &data)
 	ready.session_id = JsonGetString(obj, "session_id");
 
 	Json_Array shard = JsonGetArray(obj, "shard");
-	ready.shard[0] = JsonGetInt(shard[0], 0);
-	ready.shard[1] = JsonGetInt(shard[1], 1);
+	ready.shard[0]   = JsonGetInt(shard[0], 0);
+	ready.shard[1]   = JsonGetInt(shard[1], 1);
 
 	Json_Object application = JsonGetObject(obj, "application");
-	ready.application.id = Discord_ParseId(JsonGetString(application, "id"));
+	ready.application.id    = Discord_ParseId(JsonGetString(application, "id"));
 	ready.application.flags = JsonGetInt(application, "flags");
 
-	if (ready.session_id.length) {
-		if (client->session_id.length)
-			MemoryFree(client->session_id.data, client->session_id.length + 1, client->allocator);
-		client->session_id = StrDup(ready.session_id, client->allocator);
-	}
+	Assert(ready.session_id.length < sizeof(client->session_id));
+	memset(client->session_id, 0, sizeof(client->session_id));
+	memcpy(client->session_id, ready.session_id.data, ready.session_id.length);
+
+	TraceEx("Discord", "Client Session ready: " StrFmt, StrArg(ready.session_id));
 
 	client->onevent(client, &ready);
 }
@@ -3346,14 +3352,29 @@ static void Discord_EventHandlerResumed(Discord::Client *client, const Json &dat
 static void Discord_EventHandlerReconnect(Discord::Client *client, const Json &data) {
 	Discord::ReconnectEvent reconnect;
 	client->onevent(client, &reconnect);
-	Unimplemented();
+	// Abnormal closure so that we can resume the session
+	Websocket_Close(client->websocket, WEBSOCKET_CLOSE_ABNORMAL_CLOSURE);
 }
 
 static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Json &data) {
 	Discord::InvalidSessionEvent invalid_session;
 	invalid_session.resumable = JsonGetBool(data);
 	client->onevent(client, &invalid_session);
-	Unimplemented();
+
+	// If session_id is present, then resume was requested
+	if (strlen((char *)client->session_id)) {
+		if (!invalid_session.resumable) {
+			TraceEx("Discord", "Failed to resume session: %s", client->session_id);
+
+			// Clean session_id so that identfy payload is sent if disconnected
+			memset(client->session_id, 0, sizeof(client->session_id));
+
+			Websocket_Close(client->websocket, WEBSOCKET_CLOSE_ABNORMAL_CLOSURE);
+
+			int wait_time = rand() % 4 + 1;
+			Thread_Sleep(wait_time * 1000);
+		}
+	}
 }
 
 static void Discord_EventHandlerApplicationCommandPermissionsUpdate(Discord::Client *client, const Json &data) {
@@ -3995,63 +4016,262 @@ static void Discord_HandleEvent(Discord::Client *client, String event, const Jso
 	LogErrorEx("Discord", "Unknown event: " StrFmt, event);
 }
 
+static bool Discord_GatewayCloseReconnect(int code) {
+	if (code >= 400 && code <= 4009 && code != 406)
+		return true;
+	return false;
+}
+
 static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event) {
-	if (event.type != WEBSOCKET_EVENT_TEXT)
-		return;
-
+	if (event.type == WEBSOCKET_EVENT_TEXT) {
 	Json json;
-	if (JsonParse(event.message, &json)) {
-		Json_Object payload = JsonGetObject(json);
-		int         opcode  = JsonGetInt(payload, "op");
-		Json        data    = JsonGet(payload, "d");
+		if (JsonParse(event.message, &json)) {
+			Json_Object payload = JsonGetObject(json);
+			int         opcode  = JsonGetInt(payload, "op");
+			Json        data    = JsonGet(payload, "d");
 
-		if (opcode == (int)Discord::Opcode::DISPATH) {
-			client->sequence  = JsonGetInt(payload, "s", client->sequence);
-			String event_name = JsonGetString(payload, "t");
-			Discord_HandleEvent(client, event_name, data);
+			if (opcode == (int)Discord::Opcode::DISPATH) {
+				client->sequence  = JsonGetInt(payload, "s", client->sequence);
+				String event_name = JsonGetString(payload, "t");
+				Discord_HandleEvent(client, event_name, data);
+				return;
+			}
+
+			if (opcode == (int)Discord::Opcode::HEARTBEAT) {
+				TraceEx("Discord", "Heartbeat (%d)", client->heartbeat.count);
+				Discord::SendHearbeat(client);
+				return;
+			}
+
+			if (opcode == (int)Discord::Opcode::RECONNECT) {
+				Discord_EventHandlerReconnect(client, data);
+				return;
+			}
+
+			if (opcode == (int)Discord::Opcode::INVALID_SESSION) {
+				Discord_EventHandlerInvalidSession(client, data);
+				return;
+			}
+
+			if (opcode == (int)Discord::Opcode::HELLO) {
+				Discord_EventHandlerHello(client, data);
+				// If session_id is present, then there's a possibility that the connection can be resumed
+				if (strlen((char *)client->session_id)) {
+					TraceEx("Discord", "Resuming session: %s", client->session_id);
+					Discord::SendResume(client);
+				} else {
+					Discord::SendIdentify(client);
+				}
+				return;
+			}
+
+			if (opcode == (int)Discord::Opcode::HEARTBEAT_ACK) {
+				client->heartbeat.acknowledged += 1;
+				TraceEx("Discord", "Acknowledgement (%d)", client->heartbeat.acknowledged);
+				return;
+			}
+
+			Unreachable();
 			return;
 		}
 
-		if (opcode == (int)Discord::Opcode::HEARTBEAT) {
-			TraceEx("Discord", "Heartbeat (%d)", client->heartbeat.count);
-			Discord::SendHearbeat(client);
-			return;
-		}
-
-		if (opcode == (int)Discord::Opcode::RECONNECT) {
-			Discord_EventHandlerReconnect(client, data);
-			return;
-		}
-
-		if (opcode == (int)Discord::Opcode::INVALID_SESSION) {
-			Discord_EventHandlerInvalidSession(client, data);
-			return;
-		}
-
-		if (opcode == (int)Discord::Opcode::HELLO) {
-			Discord_EventHandlerHello(client, data);
-			Discord::SendIdentify(client, client->identify);
-			return;
-		}
-
-		if (opcode == (int)Discord::Opcode::HEARTBEAT_ACK) {
-			client->heartbeat.acknowledged += 1;
-			TraceEx("Discord", "Acknowledgement (%d)", client->heartbeat.acknowledged);
-			return;
-		}
-
-		Unreachable();
-		return;
+		LogErrorEx("Discord", "Invalid Frame received: " StrFmt, StrArg(event.message));
 	}
 
-	LogErrorEx("Discord", "Invalid Frame received: " StrFmt, StrArg(event.message));
+	if (event.type == WEBSOCKET_EVENT_CLOSE) {
+		int code       = Websocket_EventCloseCode(event);
+		String message = Websocket_EventCloseMessage(event);
+
+		if (code == WEBSOCKET_CLOSE_GOING_AWAY && code == WEBSOCKET_CLOSE_GOING_AWAY)
+			LogInfoEx("Discord", StrFmt, message);
+		else
+			LogErrorEx("Discord", StrFmt, message);
+
+		client->online = Discord_GatewayCloseReconnect(code);
+	}
+}
+
+namespace Discord {
+	struct ClientMemorySpec {
+		uint32_t         scratch_size;
+		uint32_t         read_size;
+		uint32_t         write_size;
+		uint32_t         queue_size;
+		Memory_Allocator allocator;
+	};
+
+	static constexpr ClientMemorySpec MinClientMemorySpec = {
+		MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
+	};
+
+	// @todo: move this outside of Discord::
+	struct Discord_GatewayResponse {
+		int32_t shards;
+		struct {
+			int32_t total;
+			int32_t remaining;
+			int32_t reset_after;
+			int32_t max_concurrency;
+		} session_start_limit;
+	};
+
+	// @todo: move this outside of Discord::
+	static Websocket *Discord_ConnectToGateway(const String token, Memory_Arena *scratch, Websocket_Spec spec, Memory_Allocator allocator, Discord_GatewayResponse *response) {
+		auto temp = BeginTemporaryMemory(scratch);
+		Defer{ EndTemporaryMemory(&temp); };
+
+		String authorization = FmtStr(scratch, "Bot " StrFmt, StrArg(token));
+
+		Http *http = Http_Connect("https://discord.com");
+		if (!http)
+			return nullptr;
+
+		Http_Request req;
+		Http_InitRequest(&req);
+		Http_SetHost(&req, http);
+		Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
+		Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+
+		Http_Response res;
+		if (!Http_Get(http, "/api/v10/gateway/bot", req, &res, scratch)) {
+			Http_Disconnect(http);
+			return nullptr;
+		}
+
+		Json json;
+		if (!JsonParse(res.body, &json, MemoryArenaAllocator(scratch))) {
+			LogErrorEx("Discord", "Failed to parse JSON response: \n" StrFmt, StrArg(res.body));
+			Http_Disconnect(http);
+			return nullptr;
+		}
+
+		const Json_Object obj = JsonGetObject(json);
+
+		if (res.status.code != 200) {
+			String msg = JsonGetString(obj, "message");
+			LogErrorEx("Discord", "Connection Error; Code: %u, Message: " StrFmt, res.status.code, StrArg(msg));
+			Http_Disconnect(http);
+			return nullptr;
+		}
+
+		Http_Disconnect(http);
+
+		String url = JsonGetString(obj, "url");
+		url = StrContat(url, "/?v=9&encoding=json", scratch);
+
+		response->shards = JsonGetInt(obj, "shards");
+
+		Json_Object session_start_limit               = JsonGetObject(obj, "session_start_limit");
+		response->session_start_limit.total           = JsonGetInt(session_start_limit, "total");
+		response->session_start_limit.remaining       = JsonGetInt(session_start_limit, "remaining");
+		response->session_start_limit.reset_after     = JsonGetInt(session_start_limit, "reset_after");
+		response->session_start_limit.max_concurrency = JsonGetInt(session_start_limit, "max_concurrency");
+
+		TraceEx("Discord", "Getway Response: " StrFmt ", Shards: %d", StrArg(url), response->shards);
+
+		Websocket_Header headers;
+		Websocket_InitHeader(&headers);
+		Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, authorization);
+		Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+
+		Websocket *websocket = Websocket_Connect(url, &res, &headers, spec, allocator);
+		return websocket;
+	}
+
+	void Login(const String token, int32_t intents = 0, Discord::EventHandler onevent = Discord::DefOnEvent, Discord::PresenceUpdate *presence = nullptr, ClientMemorySpec spec = MinClientMemorySpec) {
+		Net_Initialize();
+
+		srand((unsigned int)time(0));
+
+		spec.scratch_size = Maximum(spec.scratch_size, MinClientMemorySpec.scratch_size);
+		spec.read_size    = Maximum(spec.read_size, MinClientMemorySpec.read_size);
+		spec.write_size   = Maximum(spec.write_size, MinClientMemorySpec.write_size);
+		spec.queue_size   = Maximum(spec.queue_size, MinClientMemorySpec.queue_size);
+
+		Websocket_Spec websocket_spec;
+		websocket_spec.read_size  = spec.read_size;
+		websocket_spec.write_size = spec.write_size;
+		websocket_spec.queue_size = spec.queue_size;
+
+		Memory_Arena *arena = MemoryArenaAllocate(spec.scratch_size);
+		Defer{ if (arena) MemoryArenaFree(arena); };
+
+		if (!arena) {
+			LogErrorEx("Discord", "Memory allocation failed");
+			return;
+		}
+
+		Discord::Client client;
+		client.scratch    = arena;
+		client.allocator  = spec.allocator;
+		client.identify   = Discord::Identify(token, intents, presence);
+		client.onevent    = onevent;
+		client.online     = true;
+
+		// @todo: handle sharding
+		client.identify.properties.browser = "Katachi";
+		client.identify.properties.device  = "Katachi";
+
+		ThreadContext.allocator = MemoryArenaAllocator(arena);
+
+		while (client.online) {
+			for (int reconnect = 0; !client.websocket; ++reconnect) {
+				Discord_GatewayResponse response;
+				client.websocket = Discord_ConnectToGateway(token, arena, websocket_spec, spec.allocator, &response);
+				if (!client.websocket) {
+					int maximum_backoff = 40; // secs
+					int wait_time = Minimum((int)powf(2.0f, (float)reconnect), maximum_backoff);
+					LogInfoEx("Discord", "Reconnect after %d secs...", wait_time);
+					wait_time = wait_time * 1000 + rand() % 1000; // to ms
+					Thread_Sleep(wait_time);
+					LogInfoEx("Discord", "Reconnecting...");
+				}
+			}
+
+			clock_t counter            = clock();
+			client.heartbeat           = Discord::Heartbeat();
+			client.heartbeat.remaining = client.heartbeat.interval;
+
+			while (Websocket_IsConnected(client.websocket)) {
+				Websocket_Event event;
+				Websocket_Result res = Websocket_Receive(client.websocket, &event, client.scratch, (int)client.heartbeat.remaining);
+
+				if (res == WEBSOCKET_E_CLOSED) break;
+
+				if (res == WEBSOCKET_OK) {
+					Discord_HandleWebsocketEvent(&client, event);
+				} else if (res == WEBSOCKET_E_NOMEM) {
+					LogWarningEx("Discord", "Packet lost. Reason: Buffer size too small");
+				}
+
+				clock_t new_counter = clock();
+				float spent = (1000.0f * (new_counter - counter)) / CLOCKS_PER_SEC;
+				client.heartbeat.remaining -= spent;
+				counter = new_counter;
+
+				if (client.heartbeat.remaining <= 0) {
+					client.heartbeat.remaining = client.heartbeat.interval;
+					res = WEBSOCKET_E_WAIT;
+				}
+
+				if (res == WEBSOCKET_E_WAIT) {
+					Discord::SendHearbeat(&client);
+					TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
+				}
+
+				MemoryArenaReset(client.scratch);
+			}
+
+			Websocket_Disconnect(client.websocket);
+			client.websocket = nullptr;
+		}
+	}
 }
 
 // @todo
 // Resume: https://discord.com/developers/docs/topics/gateway#resuming
 // Disconnect: https://discord.com/developers/docs/topics/gateway#disconnections
 // Sharding: https://discord.com/developers/docs/topics/gateway#sharding
-// Commands: https://discord.com/developers/docs/topics/gateway#commands-and-events-gateway-commands
 
 void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	if (event->type == Discord::EventType::READY) {
@@ -4072,19 +4292,19 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Channel created: " StrFmt, StrArg(channel->channel.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::CHANNEL_UPDATE) {
 		auto channel = (Discord::ChannelUpdateEvent *)event;
 		Trace("Channel updated: " StrFmt, StrArg(channel->channel.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::CHANNEL_DELETE) {
 		auto channel = (Discord::ChannelDeleteEvent *)event;
 		Trace("Channel deleted: " StrFmt, StrArg(channel->channel.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::CHANNEL_PINS_UPDATE) {
 		auto pins = (Discord::ChannelPinsUpdateEvent *)event;
 		Trace("Pins Updated");
@@ -4210,13 +4430,13 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Role created: " StrFmt, StrArg(role->role.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::GUILD_ROLE_UPDATE) {
 		auto role = (Discord::GuildRoleUpdateEvent *)event;
 		Trace("Role updated: " StrFmt, StrArg(role->role.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::GUILD_ROLE_DELETE) {
 		auto role = (Discord::GuildRoleDeleteEvent *)event;
 		Trace("Role deleted: %zu", role->role_id.value);
@@ -4234,19 +4454,19 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Scheduled event updated: " StrFmt, StrArg(scheduled_event->scheduled_event.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_DELETE) {
 		auto scheduled_event = (Discord::GuildScheduledEventDeleteEvent *)event;
 		Trace("Scheduled event deleted: " StrFmt, StrArg(scheduled_event->scheduled_event.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_USER_ADD) {
 		auto scheduled_event = (Discord::GuildScheduledEventUserAddEvent *)event;
 		Trace("Scheduled event user added: %zu ", scheduled_event->user_id.value);
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {
 		auto scheduled_event = (Discord::GuildScheduledEventUserRemoveEvent *)event;
 		Trace("Scheduled event user removed: %zu ", scheduled_event->user_id.value);
@@ -4264,7 +4484,7 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Integration updated: " StrFmt, StrArg(integration->integration.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::INTEGRATION_DELETE) {
 		auto integration = (Discord::IntegrationDeleteEvent *)event;
 		Trace("Integration updated: %zu", integration->id.value);
@@ -4294,19 +4514,19 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Message sent: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::MESSAGE_UPDATE) {
 		auto msg = (Discord::MessageUpdateEvent *)event;
 		Trace("Message updated: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::MESSAGE_DELETE) {
 		auto msg = (Discord::MessageDeleteEvent *)event;
 		Trace("Message deleted: %zu", msg->id.value);
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::MESSAGE_DELETE_BULK) {
 		auto msg = (Discord::MessageDeleteBulkEvent *)event;
 		Trace("Message bulk deleted from channel: %zu", msg->channel_id.value);
@@ -4318,7 +4538,7 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Reaction added: " StrFmt, StrArg(reaction->emoji.name));
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::MESSAGE_REACTION_REMOVE) {
 		auto reaction = (Discord::MessageReactionRemoveEvent *)event;
 		Trace("Reaction removed: " StrFmt, StrArg(reaction->emoji.name));
@@ -4381,13 +4601,13 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Trace("Voice state updated: %zu", voice->voice_state.channel_id.value);
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::VOICE_SERVER_UPDATE) {
 		auto voice = (Discord::VoiceServerUpdateEvent *)event;
 		Trace("Voice server updated: %zu", voice->guild_id.value);
 		return;
 	}
-	
+
 	if (event->type == Discord::EventType::WEBHOOKS_UPDATE) {
 		auto webhook = (Discord::WebhooksUpdateEvent *)event;
 		Trace("Webhooks updated: %zu", webhook->guild_id.value);
@@ -4404,73 +4624,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	Net_Initialize();
-
-	Discord::Client client;
-	client.scratch   = MemoryArenaAllocate(MegaBytes(64));
-	client.allocator = ThreadContextDefaultParams.allocator;
-
-	if (!client.scratch) {
-		return 1; // @todo log error
-	}
-
-	client.token         = StrDup(String(argv[1], strlen(argv[1])), client.allocator);
-	String authorization = FmtStr(client.scratch, "Bot " StrFmt, StrArg(client.token));
-
-	Http *http = Http_Connect("https://discord.com");
-	if (!http) {
-		return 1;
-	}
-
-	Http_Request req;
-	Http_InitRequest(&req);
-	Http_SetHost(&req, http);
-	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
-	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
-
-	Http_Response res;
-	if (!Http_Get(http, "/api/v10/gateway/bot", req, &res, client.scratch)) {
-		return 1; // @todo EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
-	}
-
-	Json json;
-	if (!JsonParse(res.body, &json, MemoryArenaAllocator(client.scratch))) {
-		return 1; // @todo log EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
-	}
-
-	const Json_Object obj = JsonGetObject(json);
-
-	if (res.status.code != 200) {
-		String msg = JsonGetString(obj, "message");
-		LogErrorEx("Discord", "Code: %u, Message: " StrFmt, res.status.code, StrArg(msg));
-		return 1; // @todo log EndTemporaryMemory? MemoryArenaFree? Http_Disconnect?
-	}
-
-	Http_Disconnect(http);
-
-	String url = JsonGetString(obj, "url");
-	url = StrContat(url, "/?v=9&encoding=json", client.scratch);
-
-	int shards = JsonGetInt(obj, "shards");
-	// @todo: Handle sharding
-	TraceEx("Discord", "Getway URL: " StrFmt ", Shards: %d", StrArg(url), shards);
-
-	Websocket_Header headers;
-	Websocket_InitHeader(&headers);
-	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, authorization);
-	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
-
-	Websocket_Spec spec;
-	spec.queue_size = 64;
-	spec.read_size  = MegaBytes(2);
-	spec.write_size = KiloBytes(8);
-
-	Websocket *websocket = Websocket_Connect(url, &res, &headers, spec);
-	if (!websocket) {
-		return 1;
-	}
-
-	MemoryArenaReset(client.scratch);
+	String token = String(argv[1], strlen(argv[1]));
 
 	int intents = 0;
 	intents |= Discord::Intent::GUILDS;
@@ -4490,55 +4644,14 @@ int main(int argc, char **argv) {
 	intents |= Discord::Intent::DIRECT_MESSAGE_REACTIONS;
 	intents |= Discord::Intent::DIRECT_MESSAGE_TYPING;
 
-	Discord::PresenceUpdate presence(client.allocator);
+	Discord::PresenceUpdate presence;
 	presence.status = Discord::StatusType::DO_NOT_DISTURB;
 	auto activity   = presence.activities.Add();
 	activity->name  = "Twitch";
 	activity->url   = "https://www.twitch.tv/ashishzero";
 	activity->type  = Discord::ActivityType::STREAMING;
 
-	client.websocket = websocket;
-	client.identify  = Discord::Identify(client.token, intents, &presence);
-	client.onevent   = TestEventHandler;
-
-	clock_t counter = clock();
-	client.heartbeat.remaining = client.heartbeat.interval;
-
-	ThreadContext.allocator = MemoryArenaAllocator(client.scratch);
-
-	while (Websocket_IsConnected(websocket)) {
-		Websocket_Event event;
-		Websocket_Result res = Websocket_Receive(websocket, &event, client.scratch, (int)client.heartbeat.remaining);
-
-		if (res == WEBSOCKET_E_CLOSED) break;
-
-		if (res == WEBSOCKET_OK) {
-			Discord_HandleWebsocketEvent(&client, event);
-		} else if (res == WEBSOCKET_E_NOMEM) {
-			LogWarningEx("Discord", "Packet lost. Reason: Buffer size too small");
-		}
-
-		clock_t new_counter = clock();
-		float spent = (1000.0f * (new_counter - counter)) / CLOCKS_PER_SEC;
-		client.heartbeat.remaining -= spent;
-		counter = new_counter;
-
-		if (client.heartbeat.remaining <= 0) {
-			client.heartbeat.remaining = client.heartbeat.interval;
-			res = WEBSOCKET_E_WAIT;
-		}
-
-		if (res == WEBSOCKET_E_WAIT) {
-			Discord::SendHearbeat(&client);
-			TraceEx("Discord", "Heartbeat (%d)", client.heartbeat.count);
-		}
-
-		MemoryArenaReset(client.scratch);
-	}
-
-	Websocket_Close(websocket, WEBSOCKET_CLOSE_GOING_AWAY);
-
-	Net_Shutdown();
+	Discord::Login(token, intents, TestEventHandler, &presence);
 
 	return 0;
 }
