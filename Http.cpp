@@ -177,6 +177,26 @@ void Http_SetHost(Http_Request *req, Http *http) {
 	req->headers.known[HTTP_HEADER_HOST] = Net_GetHostname((Net_Socket *)http);
 }
 
+void Http_SetHeaderFmt(Http_Request *req, Http_Header_Id id, const char *fmt, ...) {
+	uint8_t *buff = req->buffer + req->length;
+	va_list arg;
+	va_start(arg, fmt);
+	int len = vsnprintf((char *)buff, sizeof(req->buffer) - req->length, fmt, arg);
+	va_end(arg);
+	req->length += len;
+	Http_SetHeader(req, id, String(buff, len));
+}
+
+void Http_SetHeaderFmt(Http_Request *req, String name, const char *fmt, ...) {
+	uint8_t *buff = req->buffer + req->length;
+	va_list arg;
+	va_start(arg, fmt);
+	int len = vsnprintf((char *)buff, sizeof(req->buffer) - req->length, fmt, arg);
+	va_end(arg);
+	req->length += len;
+	Http_SetHeader(req, name, String(buff, len));
+}
+
 void Http_SetHeader(Http_Request *req, Http_Header_Id id, String value) {
 	req->headers.known[id] = value;
 }
@@ -252,6 +272,26 @@ String Http_GetHeader(Http_Request *req, const String name) {
 
 void Http_InitResponse(Http_Response *res) {
 	memset(res, 0, sizeof(*res));
+}
+
+void Http_SetHeaderFmt(Http_Response *res, Http_Header_Id id, const char *fmt, ...) {
+	uint8_t *buff = res->buffer + res->length;
+	va_list arg;
+	va_start(arg, fmt);
+	int len = vsnprintf((char *)buff, sizeof(res->buffer) - res->length, fmt, arg);
+	va_end(arg);
+	res->length += len;
+	Http_SetHeader(res, id, String(buff, len));
+}
+
+void Http_SetHeaderFmt(Http_Response *res, String name, const char *fmt, ...) {
+	uint8_t *buff = res->buffer + res->length;
+	va_list arg;
+	va_start(arg, fmt);
+	int len = vsnprintf((char *)buff, sizeof(res->buffer) - res->length, fmt, arg);
+	va_end(arg);
+	res->length += len;
+	Http_SetHeader(res, name, String(buff, len));
 }
 
 void Http_SetHeader(Http_Response *res, Http_Header_Id id, String value) {

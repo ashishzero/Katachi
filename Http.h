@@ -170,6 +170,8 @@ void   Http_DumpHeader(const Http_Request &req);
 void   Http_DumpHeader(const Http_Response &res);
 void   Http_InitRequest(Http_Request *req);
 void   Http_SetHost(Http_Request *req, Http *http);
+void   Http_SetHeaderFmt(Http_Request *req, Http_Header_Id id, const char *fmt, ...);
+void   Http_SetHeaderFmt(Http_Request *req, String name, const char *fmt, ...);
 void   Http_SetHeader(Http_Request *req, Http_Header_Id id, String value);
 void   Http_SetHeader(Http_Request *req, String name, String value);
 void   Http_AppendHeader(Http_Request *req, Http_Header_Id id, String value);
@@ -181,6 +183,8 @@ String Http_GetHeader(Http_Request *req, Http_Header_Id id);
 String Http_GetHeader(Http_Request *req, const String name);
 
 void   Http_InitResponse(Http_Response *res);
+void   Http_SetHeaderFmt(Http_Response *res, Http_Header_Id id, const char *fmt, ...);
+void   Http_SetHeaderFmt(Http_Response *res, String name, const char *fmt, ...);
 void   Http_SetHeader(Http_Response *res, Http_Header_Id id, String value);
 void   Http_SetHeader(Http_Response *res, String name, String value);
 void   Http_AppendHeader(Http_Response *res, Http_Header_Id id, String value);

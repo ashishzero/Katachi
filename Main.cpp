@@ -4100,6 +4100,7 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 
 namespace Discord {
 	struct ClientMemorySpec {
+		int32_t          shards[2];
 		int32_t          tick_ms;
 		uint32_t         scratch_size;
 		uint32_t         read_size;
@@ -4109,9 +4110,9 @@ namespace Discord {
 	};
 
 	static constexpr ClientMemorySpec MinClientMemorySpec = {
-		WEBSOCKET_MAX_WAIT_MS, MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
+		{0, 1}, WEBSOCKET_MAX_WAIT_MS, MegaBytes(64), MegaBytes(2), KiloBytes(8), 16, ThreadContextDefaultParams.allocator
 	};
-
+	
 	// @todo: move this outside of Discord::
 	struct Discord_GatewayResponse {
 		int32_t shards;
@@ -4186,11 +4187,11 @@ namespace Discord {
 		return websocket;
 	}
 
-	void Login(const String token, int32_t intents = 0, Discord::EventHandler onevent = Discord::DefOnEvent, Discord::PresenceUpdate *presence = nullptr, ClientMemorySpec spec = MinClientMemorySpec) {
-		Net_Initialize();
+	int32_t GetShardId(Client *client) {
+		return client->identify.shard[0];
+	}
 
-		srand((unsigned int)time(0));
-
+	void Login(const String token, int32_t intents = 0, EventHandler onevent = DefOnEvent, PresenceUpdate *presence = nullptr, ClientMemorySpec spec = MinClientMemorySpec) {
 		Assert(spec.tick_ms >= 0);
 		
 		int tick          = spec.tick_ms;
@@ -4219,7 +4220,9 @@ namespace Discord {
 		client.onevent    = onevent;
 		client.login      = true;
 
-		// @todo: handle sharding
+		client.identify.shard[0] = spec.shards[0];
+		client.identify.shard[1] = spec.shards[1];
+
 		client.identify.properties.browser = "Katachi";
 		client.identify.properties.device  = "Katachi";
 
@@ -4278,6 +4281,11 @@ namespace Discord {
 			Websocket_Disconnect(client.websocket);
 			client.websocket = nullptr;
 		}
+	}
+
+	void Init() {
+		Net_Initialize();
+		srand((unsigned int)time(0));
 	}
 }
 
@@ -4651,6 +4659,8 @@ int main(int argc, char **argv) {
 	}
 
 	signal(SIGINT, InterruptHandler);
+
+	Discord::Init();
 
 	String token = String(argv[1], strlen(argv[1]));
 
