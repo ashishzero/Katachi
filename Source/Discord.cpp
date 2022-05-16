@@ -1543,7 +1543,6 @@ static Websocket *Discord_ConnectToGateway(String token, Memory_Arena *scratch, 
 	Http_Disconnect(http);
 
 	String url = JsonGetString(obj, "url");
-	url = StrContat(url, "/?v=9&encoding=json", scratch);
 
 	String authorization = FmtStr(scratch, "Bot " StrFmt, StrArg(token));
 
@@ -1551,6 +1550,8 @@ static Websocket *Discord_ConnectToGateway(String token, Memory_Arena *scratch, 
 	Websocket_InitHeader(&headers);
 	Websocket_HeaderSet(&headers, HTTP_HEADER_AUTHORIZATION, authorization);
 	Websocket_HeaderSet(&headers, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+	Websocket_QueryParamSet(&headers, "v", "9");
+	Websocket_QueryParamSet(&headers, "encoding", "json");
 
 	Websocket *websocket = Websocket_Connect(url, &res, &headers, spec, allocator);
 	return websocket;

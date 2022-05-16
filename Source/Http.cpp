@@ -143,6 +143,21 @@ void Http_Disconnect(Http *http) {
 //
 //
 
+void Http_QueryParamSet(Http_Query_Params *params, String name, String value) {
+	Assert(params->count < HTTP_MAX_QUERY_PARAMS);
+	Http_Query *query = &params->queries[params->count++];
+	query->name  = name;
+	query->value = value;
+}
+
+String Http_QueryParamGet(Http_Query_Params *params, String name) {
+	for (ptrdiff_t index = 0; index < HTTP_MAX_QUERY_PARAMS; ++index) {
+		if (StrMatchICase(name, params->queries[index].name))
+			return params->queries[index].value;
+	}
+	return String();
+}
+
 void Http_DumpHeader(const Http_Request &req) {
 	LogInfoEx("Http", "================== Header Dump ==================");
 	LogInfo("%s ", (req.version == HTTP_VERSION_1_0 ? "HTTP/1.0" : "HTTP/1.1"));
@@ -411,45 +426,66 @@ static inline void Http_FlushRead(Http *http, Http_Response *res) {
 	}
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
-	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
+ptrdiff_t Http_BuildRequest(const String method, const String endpoint, const Http_Query_Params *params, const Http_Request &req, uint8_t *buffer, ptrdiff_t buff_len) {
+	Builder builder;
+	BuilderBegin(&builder, buffer, HTTP_STREAM_CHUNK_SIZE);
+	BuilderWrite(&builder, method, String(" "), endpoint);
 
-	{
-		// Send Request
+	if (params && params->count > 0) {
+		BuilderWrite(&builder, "?");
 
-		Builder builder;
-		BuilderBegin(&builder, buffer, HTTP_STREAM_CHUNK_SIZE);
-		BuilderWrite(&builder, method, String(" "), endpoint, String(" HTTP/1.1\r\n"));
-		for (int id = 0; id < _HTTP_HEADER_COUNT; ++id) {
-			String value = req.headers.known[id];
-			if (value.length) {
-				BuilderWrite(&builder, HttpHeaderMap[id], String(":"), value, String("\r\n"));
-			}
-		}
-		for (ptrdiff_t index = 0; index < req.headers.raw.count; ++index) {
-			const Http_Raw_Headers::Header &raw = req.headers.raw.data[index];
-			BuilderWrite(&builder, raw.name, String(":"), raw.value, String("\r\n"));
-		}
-		BuilderWrite(&builder, "\r\n");
+		BuilderWrite(&builder, params->queries[0].name);
+		BuilderWrite(&builder, "=");
+		BuilderWrite(&builder, params->queries[0].value);
 
-		if (builder.thrown) {
-			LogErrorEx("Http", "Writing header failed: out of memory");
-			return false;
-		}
-
-		String header = BuilderEnd(&builder);
-		if (!Http_IterateSend(http, header.data, header.length))
-			return false;
-
-		while (true) {
-			int read = reader.proc(buffer, HTTP_STREAM_CHUNK_SIZE, reader.context);
-			if (!read) break;
-			if (!Http_IterateSend(http, buffer, read))
-				return false;
+		for (ptrdiff_t index = 1; index < params->count; ++index) {
+			BuilderWrite(&builder, "&");
+			BuilderWrite(&builder, params->queries[index].name);
+			BuilderWrite(&builder, "=");
+			BuilderWrite(&builder, params->queries[index].value);
 		}
 	}
 
-	Http_InitResponse(res);
+	BuilderWrite(&builder, String(" HTTP/1.1\r\n"));
+
+	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id) {
+		String value = req.headers.known[id];
+		if (value.length) {
+			BuilderWrite(&builder, HttpHeaderMap[id], String(":"), value, String("\r\n"));
+		}
+	}
+	for (ptrdiff_t index = 0; index < req.headers.raw.count; ++index) {
+		const Http_Raw_Headers::Header &raw = req.headers.raw.data[index];
+		BuilderWrite(&builder, raw.name, String(":"), raw.value, String("\r\n"));
+	}
+	BuilderWrite(&builder, "\r\n");
+
+	if (builder.thrown) {
+		return -1;
+	}
+
+	String header = BuilderEnd(&builder);
+	return header.length;
+}
+
+bool Http_SendRequest(Http *http, const String header, Http_Reader reader) {
+	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
+
+	if (!Http_IterateSend(http, header.data, header.length))
+		return false;
+
+	while (true) {
+		int read = reader.proc(buffer, HTTP_STREAM_CHUNK_SIZE, reader.context);
+		if (!read) break;
+		if (!Http_IterateSend(http, buffer, read))
+			return false;
+	}
+
+	return true;
+}
+
+bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
+	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
 
 	ptrdiff_t body_read = 0;
 
@@ -682,6 +718,47 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	return true;
 }
 
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	uint8_t buffer[HTTP_STREAM_CHUNK_SIZE];
+
+	{
+		ptrdiff_t len = Http_BuildRequest(method, endpoint, &params, req, buffer, HTTP_STREAM_CHUNK_SIZE);
+		if (len < 0) {
+			LogErrorEx("Http", "Writing header failed: out of memory");
+			return false;
+		}
+
+		if (!Http_SendRequest(http, String(buffer, len), reader))
+			return false;
+	}
+
+	Http_InitResponse(res);
+
+	bool received = Http_ReceiveResponse(http, res, writer);
+	return received;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, reader, res, writer);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, reader, res, writer);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, reader, res, writer);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, reader, res, writer);
+}
+
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "POST", endpoint, req, reader, res, writer);
 }
@@ -693,6 +770,10 @@ bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_R
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, writer);
 }
+
+//
+//
+//
 
 struct Http_Buffer_Reader {
 	ptrdiff_t written;
@@ -708,7 +789,7 @@ static int Http_BufferReaderProc(uint8_t *buffer, int length, void *context) {
 	return copy_len;
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	Http_Buffer_Reader buffer_reader;
 	buffer_reader.written = 0;
 	buffer_reader.length  = req.body.length;
@@ -718,8 +799,29 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	reader.proc    = Http_BufferReaderProc;
 	reader.context = &buffer_reader;
 	
-	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	bool result = Http_CustomMethod(http, method, endpoint, params, req, reader, res, writer);
 	return result;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, res, writer);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, res, writer);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, res, writer);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, res, writer);
 }
 
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
@@ -733,6 +835,10 @@ bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_R
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, writer);
 }
+
+//
+//
+//
 
 struct Http_Arena_Writer {
 	Memory_Arena *arena;
@@ -758,7 +864,7 @@ static void Http_ArenaWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_t
 	writer->length = -1;
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
 	uint8_t *body = (uint8_t *)MemoryArenaGetCurrent(arena);
 	auto temp     = BeginTemporaryMemory(arena);
 
@@ -772,7 +878,7 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	writer.proc    = Http_ArenaWriterProc;
 	writer.context = &arena_writer;
 
-	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	bool result = Http_CustomMethod(http, method, endpoint, params, req, reader, res, writer);
 	if (result && arena_writer.length >= 0) {
 		res->body = Buffer(body, arena_writer.length);
 		return true;
@@ -781,6 +887,27 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	EndTemporaryMemory(&temp);
 
 	return false;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, reader, res, arena);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, reader, res, arena);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, reader, res, arena);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, reader, res, arena);
 }
 
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena) {
@@ -795,7 +922,11 @@ bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_R
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, arena);
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	Http_Buffer_Reader res_body_reader;
 	res_body_reader.written = 0;
 	res_body_reader.length  = req.body.length;
@@ -805,8 +936,29 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	reader.proc    = Http_BufferReaderProc;
 	reader.context = &res_body_reader;
 
-	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, arena);
+	bool result = Http_CustomMethod(http, method, endpoint, params, req, reader, res, arena);
 	return result;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, res, arena);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, res, arena);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, res, arena);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, res, arena);
 }
 
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
@@ -820,6 +972,10 @@ bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_R
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, arena);
 }
+
+//
+//
+//
 
 struct Http_Buffer_Writer {
 	ptrdiff_t   written;
@@ -840,7 +996,7 @@ static void Http_BufferWriterProc(Http_Header &header, uint8_t *buffer, ptrdiff_
 	writer->written = -1;
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	Http_Buffer_Writer buffer_writer;
 	buffer_writer.written = 0;
 	buffer_writer.length = length;
@@ -851,12 +1007,33 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	writer.proc = Http_BufferWriterProc;
 	writer.context = &buffer_writer;
 
-	bool result = Http_CustomMethod(http, method, endpoint, req, reader, res, writer);
+	bool result = Http_CustomMethod(http, method, endpoint, params, req, reader, res, writer);
 	if (result && buffer_writer.written >= 0) {
 		res->body = Buffer(memory, buffer_writer.written);
 		return true;
 	}
 	return false;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, reader, res, memory, length);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, reader, res, memory, length);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, reader, res, memory, length);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, reader, res, memory, length);
 }
 
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
@@ -871,7 +1048,11 @@ bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_R
 	return Http_CustomMethod(http, "PUT", endpoint, req, reader, res, memory, length);
 }
 
-bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	Http_Buffer_Writer buffer_writer;
 	buffer_writer.written = 0;
 	buffer_writer.length  = length;
@@ -882,12 +1063,33 @@ bool Http_CustomMethod(Http *http, const String method, const String endpoint, c
 	writer.proc    = Http_BufferWriterProc;
 	writer.context = &buffer_writer;
 
-	bool result = Http_CustomMethod(http, method, endpoint, req, res, writer);
+	bool result = Http_CustomMethod(http, method, endpoint, params, req, res, writer);
 	if (result && buffer_writer.written >= 0) {
 		res->body = Buffer(memory, buffer_writer.written);
 		return true;
 	}
 	return false;
+}
+
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "POST", endpoint, params, req, res, memory, length);
+}
+
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "GET", endpoint, params, req, res, memory, length);
+}
+
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	return Http_CustomMethod(http, "PUT", endpoint, params, req, res, memory, length);
+}
+
+//
+//
+//
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
+	Http_Query_Params params;
+	return Http_CustomMethod(http, method, endpoint, params, req, res, memory, length);
 }
 
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {

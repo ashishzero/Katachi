@@ -12,6 +12,7 @@ struct Websocket_Procotols {
 
 struct Websocket_Header {
 	Http_Header         headers;
+	Http_Query_Params   params;
 	Websocket_Procotols protocols;
 };
 
@@ -19,6 +20,7 @@ void Websocket_InitHeader(Websocket_Header *header);
 void Websocket_HeaderAddProcotols(Websocket_Header *header, String protocol);
 void Websocket_HeaderSet(Websocket_Header *header, Http_Header_Id id, String value);
 void Websocket_HeaderSet(Websocket_Header *header, String name, String value);
+void Websocket_QueryParamSet(Websocket_Header *header, String name, String value);
 
 struct Websocket;
 

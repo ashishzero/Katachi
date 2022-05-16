@@ -27,6 +27,10 @@ void Websocket_HeaderSet(Websocket_Header *header, String name, String value) {
 	header->headers.raw.count += 1;
 }
 
+void Websocket_QueryParamSet(Websocket_Header *header, String name, String value) {
+	Http_QueryParamSet(&header->params, name, value);
+}
+
 //
 //
 //
@@ -338,8 +342,11 @@ Websocket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *h
 	Http_Request req;
 	Http_InitRequest(&req);
 
+	Http_Query_Params params;
+
 	if (header) {
 		memcpy(&req.headers, &header->headers, sizeof(req.headers));
+		memcpy(&params, &header->params, sizeof(params));
 	}
 
 	Websocket_Key ws_key = Websocket_GenerateSecurityKey();
@@ -367,7 +374,7 @@ Websocket *Websocket_Connect(String uri, Http_Response *res, Websocket_Header *h
 		}
 	}
 
-	if (Http_Get(http, websocket_uri.path, req, res, nullptr, 0) && res->status.code == 101) {
+	if (Http_Get(http, websocket_uri.path, params, req, res, nullptr, 0) && res->status.code == 101) {
 		if (!StrMatchICase(Http_GetHeader(res, HTTP_HEADER_UPGRADE), "websocket")) {
 			LogErrorEx("Websocket", "Upgrade header is not present in websocket handshake");
 			Http_Disconnect(http);

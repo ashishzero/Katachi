@@ -4,6 +4,7 @@
 static constexpr int HTTP_MAX_HEADER_SIZE   = KiloBytes(8);
 static constexpr int HTTP_STREAM_CHUNK_SIZE = HTTP_MAX_HEADER_SIZE;
 static constexpr int HTTP_MAX_RAW_HEADERS   = 64;
+static constexpr int HTTP_MAX_QUERY_PARAMS  = 8;
 
 static_assert(HTTP_MAX_HEADER_SIZE >= HTTP_STREAM_CHUNK_SIZE, "");
 
@@ -87,6 +88,16 @@ struct Http_Header {
 	Http_Raw_Headers raw;
 };
 
+struct Http_Query {
+	String name;
+	String value;
+};
+
+struct Http_Query_Params {
+	ptrdiff_t  count = 0;
+	Http_Query queries[HTTP_MAX_QUERY_PARAMS];
+};
+
 enum Http_Version : uint32_t {
 	HTTP_VERSION_1_0,
 	HTTP_VERSION_1_1,
@@ -136,20 +147,44 @@ Http *Http_Connect(const String host, const String port, Http_Connection connect
 Http *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
 void  Http_Disconnect(Http *http);
 
+ptrdiff_t Http_BuildRequest(const String method, const String endpoint, const Http_Query_Params *params, const Http_Request &req, uint8_t *buffer, ptrdiff_t buff_len);
+bool      Http_SendRequest(Http *http, const String header, Http_Reader reader);
+bool      Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer);
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+
 bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Http_Writer writer);
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer);
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Http_Writer writer);
 
 bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Http_Writer writer);
 
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+
 bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, Memory_Arena *arena);
+
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
 
 bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, Memory_Arena *arena);
@@ -161,10 +196,18 @@ bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Reader reader, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 
+bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Post(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Get(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+bool Http_Put(Http *http, const String endpoint, const Http_Query_Params &params, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+
 bool Http_CustomMethod(Http *http, const String method, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 bool Http_Post(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length);
+
+void   Http_QueryParamSet(Http_Query_Params *params, String name, String value);
+String Http_QueryParamGet(Http_Query_Params *params, String name);
 
 void   Http_DumpHeader(const Http_Request &req);
 void   Http_DumpHeader(const Http_Response &res);
