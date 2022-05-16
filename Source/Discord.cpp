@@ -1861,6 +1861,10 @@ namespace Discord {
 			Thread_Wait(shards[shard_id].handle, -1);
 		}
 
+		for (int32_t shard_id = 0; shard_id < shard_count; ++shard_id) {
+			Thread_Destroy(shards[shard_id].handle);
+		}
+
 		MemoryArenaFree(arena);
 	}
 
