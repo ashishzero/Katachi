@@ -48,6 +48,70 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 	}
 }
 
+#include "Network.h"
+#include "Http.h"
+#include "Kr/KrThread.h"
+#include "Kr/KrAtomic.h"
+
+struct Http_Service_Connection {
+	Http *          http;
+	Http_Connection type;
+	String          hostname;
+	String          port;
+	uint8_t         buffer[NET_MAX_CANON_NAME];
+};
+
+struct Http_Service_Request {
+	Http_Service_Request *next;
+	Http_Service_Request *prev;
+	Http_Connection       type;
+	String                hostname;
+	String                port;
+	String                header;
+	uint8_t               buffer[HTTP_MAX_HEADER_SIZE];
+	Buffer                body;
+	Memory_Arena *        arena;
+};
+
+struct Http_Service_Request_Queue {
+	Http_Service_Request *head;
+	Http_Service_Request *tail;
+	Http_Service_Request *free;
+	Atomic_Guard          guard;
+};
+
+struct Http_Service {
+	volatile bool              running = false;
+	ptrdiff_t                  p2nconnection;
+	Http_Service_Connection *  connections;
+	Http_Service_Request_Queue queue;
+	Semaphore *                read;
+	Semaphore *                write;
+	Memory_Arena *             arena = nullptr;
+};
+
+Http_Service_Request *HttpService_QueuePop(Http_Service_Request_Queue *q) {
+	SpinLock(&q->guard);
+	Http_Service_Request *req = q->head;
+	q->head = q->head->next;
+	req->next = nullptr;
+	SpinUnlock(&q->guard);
+	return req;
+}
+
+int HttpService_ThreadProc(void *arg) {
+	Http_Service *service = (Http_Service *)arg;
+
+	while (service->running) {
+		int wait = Semaphore_Wait(service->read, 5000);
+		if (wait > 0) {
+
+		}
+	}
+
+	return 0;
+}
+
 static void InterruptHandler(int signo) {
 	Logout = true;
 }

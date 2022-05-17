@@ -119,13 +119,14 @@ constexpr int WEBSOCKET_QUEUE_MIN_BUFFER_SIZE = 8;
 
 struct Websocket_Queue {
 	struct Node {
-		Node *    prev;
 		Node *    next;
 		int32_t   header;
 		ptrdiff_t len;
 		uint8_t   buff[WEBSOCKET_QUEUE_MIN_BUFFER_SIZE];
 	};
-	Atomic_Guard    guard;
+	Atomic_Guard    rguard;
+	Atomic_Guard    wguard;
+	Atomic_Guard    memguard;
 	ptrdiff_t       buffp2cap;
 	Node            head;
 	Node *          tail;
@@ -133,9 +134,9 @@ struct Websocket_Queue {
 
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
 	struct {
-		int in_queue;
-		int allocated;
-		int free;
+		volatile int32_t in_queue;
+		volatile int32_t allocated;
+		volatile int32_t free;
 	} debug_info;
 #endif
 };
@@ -235,7 +236,6 @@ static uint8_t *Websocket_InitReader(Websocket_Reader *reader, uint32_t p2buff_s
 static uint8_t *Websocket_InitQueue(Websocket_Queue *queue, uint32_t p2buff_size, uint32_t count, uint8_t *mem) {
 	queue->buffp2cap = p2buff_size;
 	queue->head.next = &queue->head;
-	queue->head.prev = &queue->head;
 	queue->tail      = &queue->head;
 
 	ptrdiff_t node_size = Websocket_GetQueueNodeSize(p2buff_size);
@@ -464,60 +464,58 @@ void Websocket_Disconnect(Websocket *websocket) {
 //
 
 static Websocket_Queue::Node *Websocket_QueueAlloc(Websocket_Queue *q) {
-	SpinLock(&q->guard);
+	SpinLock(&q->memguard);
 	Websocket_Queue::Node *node = q->free;
 	if (node) {
 		q->free    = node->next;
 		node->next = nullptr;
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
-	q->debug_info.allocated += 1;
-	q->debug_info.free -= 1;
+		AtomicInc(&q->debug_info.allocated);
+		AtomicDec(&q->debug_info.free);
 #endif
 	}
-	SpinUnlock(&q->guard);
+	SpinUnlock(&q->memguard);
 	return node;
 }
 
 static void Websocket_QueueFree(Websocket_Queue *q, Websocket_Queue::Node *node) {
-	SpinLock(&q->guard);
-	Assert(!node->prev && !node->next);
+	SpinLock(&q->memguard);
+	Assert(!node->next);
 	node->next = q->free;
 	q->free    = node;
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
-	q->debug_info.allocated -= 1;
-	q->debug_info.free += 1;
+	AtomicDec(&q->debug_info.allocated);
+	AtomicInc(&q->debug_info.free);
 #endif
-	SpinUnlock(&q->guard);
+	SpinUnlock(&q->memguard);
 }
 
 static void Websocket_QueuePush(Websocket_Queue *q, Websocket_Queue::Node *node) {
-	SpinLock(&q->guard);
-	Assert(!node->prev && !node->next);
+	SpinLock(&q->wguard);
+	Assert(!node->next);
 	q->tail->next = node;
-	node->prev = q->tail;
 	node->next = &q->head;
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
-	q->debug_info.allocated -= 1;
-	q->debug_info.in_queue += 1;
+	AtomicDec(&q->debug_info.allocated);
+	AtomicInc(&q->debug_info.in_queue);
 #endif
-	SpinUnlock(&q->guard);
+	SpinUnlock(&q->wguard);
 }
 
 static Websocket_Queue::Node *Websocket_QueuePop(Websocket_Queue *q) {
 	Websocket_Queue::Node *node = nullptr;
-	SpinLock(&q->guard);
+	SpinLock(&q->rguard);
 	if (q->head.next != &q->head) {
 		node         = q->head.next;
 		auto next    = node->next;
 		q->head.next = next;
-		next->prev   = &q->head;
-		node->prev   = node->next = nullptr;
+		node->next = nullptr;
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
-	q->debug_info.allocated += 1;
-	q->debug_info.in_queue -= 1;
+		AtomicInc(&q->debug_info.allocated);
+		AtomicDec(&q->debug_info.in_queue);
 #endif
 	}
-	SpinUnlock(&q->guard);
+	SpinUnlock(&q->rguard);
 	return node;
 }
 
