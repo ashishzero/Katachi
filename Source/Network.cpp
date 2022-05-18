@@ -46,7 +46,7 @@ struct Net_Socket {
 	sockaddr_storage address;
 	Memory_Allocator allocator;
 	ptrdiff_t        allocated;
-	uint8_t          user[NET_DEFAULT_USER_SIZE];
+	uint8_t          user[NET_DEFAULT_USER_SIZE + 0]; // this is extented upto give user size
 };
 
 static constexpr int SocketTypeMap[] = { SOCK_STREAM, SOCK_DGRAM };

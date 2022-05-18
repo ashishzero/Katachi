@@ -122,7 +122,7 @@ struct Websocket_Queue {
 		Node *    next;
 		int32_t   header;
 		ptrdiff_t len;
-		uint8_t   buff[WEBSOCKET_QUEUE_MIN_BUFFER_SIZE];
+		uint8_t   buff[WEBSOCKET_QUEUE_MIN_BUFFER_SIZE + 0]; // this is extended upto buffp2cap
 	};
 	Atomic_Guard    rguard;
 	Atomic_Guard    wguard;
@@ -509,7 +509,7 @@ static Websocket_Queue::Node *Websocket_QueuePop(Websocket_Queue *q) {
 		node         = q->head.next;
 		auto next    = node->next;
 		q->head.next = next;
-		node->next = nullptr;
+		node->next   = nullptr;
 #if defined(WEBSOCKET_ENABLE_DEBUG_INFO)
 		AtomicInc(&q->debug_info.allocated);
 		AtomicDec(&q->debug_info.in_queue);
@@ -532,27 +532,6 @@ static ptrdiff_t Websocket_StreamReadableSize(Websocket_Read_Stream *stream) {
 		size += stream->stop;
 	}
 	return size;
-}
-
-template <typename Reader>
-static bool Websocket_StreamDump(Websocket_Read_Stream *stream, Reader reader) {
-	const ptrdiff_t buffer_size = stream->p2cap;
-	while (true) {
-		if (stream->stop >= stream->start) {
-			ptrdiff_t read_size = buffer_size - stream->stop;
-			ptrdiff_t read = reader(stream->buffer + stream->stop, read_size);
-			if (read == 0) return true;
-			if (read < 0) return false;
-			stream->stop = (stream->stop + read) & (buffer_size - 1);
-		} else {
-			ptrdiff_t read_size = stream->start - stream->stop - 1;
-			ptrdiff_t read = reader(stream->buffer + stream->stop, read_size);
-			if (read == 0) return true;
-			if (read < 0) return false;
-			stream->stop = (stream->stop + read) & (buffer_size - 1);
-		}
-	}
-	return true;
 }
 
 static ptrdiff_t Websocket_StreamDrop(Websocket_Read_Stream *stream, ptrdiff_t size) {
@@ -991,6 +970,26 @@ static bool Websocket_HandleMessage(Websocket_Context *ctx) {
 	return true;
 }
 
+static bool Websocket_NetReceiveStream(Net_Socket *socket, Websocket_Read_Stream *stream) {
+	const ptrdiff_t buffer_size = stream->p2cap;
+	while (true) {
+		if (stream->stop >= stream->start) {
+			ptrdiff_t read_size = buffer_size - stream->stop;
+			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, read_size);
+			if (read == 0) return true;
+			if (read < 0) return false;
+			stream->stop = (stream->stop + read) & (buffer_size - 1);
+		} else {
+			ptrdiff_t read_size = stream->start - stream->stop - 1;
+			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, read_size);
+			if (read == 0) return true;
+			if (read < 0) return false;
+			stream->stop = (stream->stop + read) & (buffer_size - 1);
+		}
+	}
+	return true;
+}
+
 static int Websocket_ThreadProc(void *arg) {
 	Net_Socket *websocket  = (Net_Socket *)arg;
 	Websocket_Context *ctx = (Websocket_Context *)Net_GetUserBuffer(websocket);
@@ -1055,11 +1054,7 @@ static int Websocket_ThreadProc(void *arg) {
 		}
 
 		if (fd.revents & POLLRDNORM) {
-			const auto reader = [websocket](uint8_t *buff, ptrdiff_t len) -> ptrdiff_t {
-				return Net_Receive(websocket, buff, (int)len);
-			};
-			
-			if (!Websocket_StreamDump(&ctx->reader.stream, reader)) {
+			if (!Websocket_NetReceiveStream(websocket, &ctx->reader.stream)) {
 				LogErrorEx("Websocket", "Connection lost abrubtly while reading");
 				ctx->connection = WEBSOCKET_CLOSED;
 				return 1;

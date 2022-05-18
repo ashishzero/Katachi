@@ -145,6 +145,7 @@ Http *      Http_FromSocket(Net_Socket *socket);
 
 Http *Http_Connect(const String host, const String port, Http_Connection connection, Memory_Allocator allocator);
 Http *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFAULT, Memory_Allocator allocator = ThreadContext.allocator);
+bool  Http_Reconnect(Http *http);
 void  Http_Disconnect(Http *http);
 
 ptrdiff_t Http_BuildRequest(const String method, const String endpoint, const Http_Query_Params *params, const Http_Request &req, uint8_t *buffer, ptrdiff_t buff_len);

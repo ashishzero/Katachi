@@ -135,6 +135,10 @@ Http *Http_Connect(const String hostname, Http_Connection connection, Memory_All
 	return nullptr;
 }
 
+bool Http_Reconnect(Http *http) {
+	return Net_TryReconnect((Net_Socket *)http);
+}
+
 void Http_Disconnect(Http *http) {
 	Net_CloseConnection((Net_Socket *)http);
 }

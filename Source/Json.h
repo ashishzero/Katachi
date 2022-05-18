@@ -61,10 +61,15 @@ struct Json;
 typedef Array<Json> Json_Array;
 typedef Hash_Table<String, Json> Json_Object;
 
+struct Json_String {
+	String           value;
+	Memory_Allocator allocator;
+};
+
 union Json_Value {
 	bool        boolean;
 	float       number;
-	String      string;
+	Json_String string;
 	Json_Array  array;
 	Json_Object object;
 	Json_Value() {}
@@ -78,7 +83,7 @@ struct Json {
 	explicit Json(bool val) : type(JSON_TYPE_BOOL) { value.boolean = val; }
 	explicit Json(float num) : type(JSON_TYPE_NUMBER) { value.number = num; }
 	explicit Json(int num) : type(JSON_TYPE_NUMBER) { value.number = (float)num; }
-	explicit Json(String str) : type(JSON_TYPE_STRING) { value.string = str; }
+	explicit Json(String str) : type(JSON_TYPE_STRING) { value.string.value = str; value.string.allocator = NullMemoryAllocator(); }
 	explicit Json(Json_Array arr) : type(JSON_TYPE_ARRAY) { value.array = arr; }
 	explicit Json(Json_Object obj) : type(JSON_TYPE_OBJECT) { value.object = obj; }
 };

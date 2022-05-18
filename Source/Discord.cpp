@@ -1338,7 +1338,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationComm
 	const Json *value = obj.Find("value");
 	if (value) {
 		if (value->type == JSON_TYPE_STRING) {
-			option->value.string = value->value.string;
+			option->value.string = value->value.string.value;
 		} else if (value->type == JSON_TYPE_NUMBER) {
 			option->value.number = value->value.number;
 		} else if (value->type == JSON_TYPE_BOOL) {

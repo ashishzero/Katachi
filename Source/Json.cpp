@@ -174,6 +174,8 @@ void JsonFree(Json *json) {
 			JsonFree(&item.value);
 		}
 		Free(&json->value.object);
+	} else if (type == JSON_TYPE_STRING) {
+		MemoryFree(json->value.string.value.data, json->value.string.value.length, json->value.string.allocator);
 	}
 }
 
@@ -202,7 +204,7 @@ int JsonGetInt(const Json &json, int def) {
 
 String JsonGetString(const Json &json, String def) {
 	if (json.type == JSON_TYPE_STRING)
-		return json.value.string;
+		return json.value.string.value;
 	return def;
 }
 
@@ -544,6 +546,32 @@ static bool JsonParseExpectToken(Json_Parser *parser, Json_Token_Kind token, Jso
 static bool JsonParseObject(Json_Parser *parser, Json *json);
 static bool JsonParseArray(Json_Parser *parser, Json *json);
 
+static Json_String JsonNormalizeString(Json_Parser *parser, String input) {
+	Array<uint8_t> string(parser->allocator);
+	string.Resize(input.length);
+
+	ptrdiff_t length = 0;
+	for (ptrdiff_t index = 0; index < input.length; ++index) {
+		if (input[index] != '\\') {
+			string[length++] = input[index];
+		} else if (index + 1 < input.length && input[index + 1] == '"') {
+			string[length++] = '"';
+			index += 1;
+		} else {
+			string[length++] = input[index];
+		}
+
+	}
+
+	string.count = length;
+	string.Pack();
+
+	Json_String result;
+	result.allocator = string.allocator;
+	result.value     = String(string.data, string.count);
+	return result;
+}
+
 static bool JsonParseValue(Json_Parser *parser, Json *json) {
 	if (JsonParsing(parser)) {
 		if (JsonParsePeekToken(parser, JSON_TOKEN_OPEN_CURLY_BRACKET)) {
@@ -570,7 +598,7 @@ static bool JsonParseValue(Json_Parser *parser, Json *json) {
 
 		if (JsonParseAcceptToken(parser, JSON_TOKEN_IDENTIFIER, &token)) {
 			json->type = JSON_TYPE_STRING;
-			json->value.string = token.identifier;
+			json->value.string = JsonNormalizeString(parser, token.identifier);
 			return true;
 		}
 
