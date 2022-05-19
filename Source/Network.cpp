@@ -420,6 +420,7 @@ static void PL_Net_OpenSSLCloseChannel(Net_Socket *net) {
 
 static bool PL_Net_OpenSSLReconnect(Net_Socket *net) {
 	if (net->ssl) {
+		SSL_set_fd(net->ssl, (int)net->descriptor);
 		if (SSL_connect(net->ssl) == -1) {
 			PL_Net_ReportOpenSSLError();
 			return false;

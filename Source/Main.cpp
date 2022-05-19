@@ -1,4 +1,5 @@
 ﻿#include "Discord.h"
+#include "Kr/KrString.h"
 
 #include <stdio.h>
 
@@ -43,97 +44,28 @@ void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
 		Discord::Shard shard = Discord::GetShard(client);
 		Trace("Shard Tick: %d, %d", shard.id, shard.count);
 		auto msg = (Discord::MessageCreateEvent *)event;
-		Trace("Message sent: \"" StrFmt "\" by " StrFmt, StrArg(msg->message.content), StrArg(msg->message.author.username));
+		
+		if (msg->message.content == "info") {
+			Discord::Channel *channel = Discord::GetChannel(client, msg->message.channel_id);
+			if (channel) {
+				Trace("Channel name" StrFmt, StrArg(channel->name));
+			} else {
+				Trace("Channle not found!");
+			}
+		} else if (StrStartsWith(msg->message.content, "rename ")) {
+			String name = StrTrim(SubStr(msg->message.content, 7));
+			if (name.length) {
+				Discord::ChannelPatch patch;
+				Discord::PatchName(&patch, name);
+				Discord::ModifyChannel(client, msg->message.channel_id, patch);
+			}
+		} else if (msg->message.content == "deleteme") {
+			Discord::DeleteChannel(client, msg->message.channel_id);
+		}
+
 		return;
 	}
 }
-
-#if 1
-
-#include "Network.h"
-#include "Http.h"
-#include "Kr/KrThread.h"
-#include "Kr/KrAtomic.h"
-
-typedef void (*Http_Response_Proc)(const Http_Response &res, void *);
-typedef void (*Http_Error_Proc)(void *);
-
-struct Http_Service_Handler {
-	Http_Response_Proc response;
-	Http_Error_Proc    error;
-	void *             context;
-};
-
-struct Http_Service_Request {
-	Http_Service_Request *next;
-	Http_Connection       type;
-	String                hostname;
-	String                port;
-	String                header;
-	Http_Reader           reader;
-	Http_Writer           writer;
-	Http_Service_Handler  handler;
-	ptrdiff_t             bufflen;
-	uint8_t               buffer[HTTP_MAX_HEADER_SIZE];
-};
-
-struct Http_Service {
-	volatile bool         active;
-	Semaphore *           read;
-	Semaphore *           aval;
-	Atomic_Guard          rguard;
-	Atomic_Guard          wguard;
-	Atomic_Guard          memguard;
-	Http_Service_Request *head;
-	Http_Service_Request *tail;
-	Http_Service_Request *free;
-	Memory_Arena *        arena;
-};
-
-static Http_Service_Request *HttpService_AllocateRequest(Http_Service *service) {
-	Http_Service_Request *req = nullptr;
-	SpinLock(&service->memguard);
-	if (service->free) {
-		req = service->free;
-		service->free = req->next;
-	} else {
-		req = PushType(service->arena, Http_Service_Request);
-		if (!req) {
-			
-		}
-	}
-	SpinUnlock(&service->memguard);
-	return req;
-}
-
-int HttpService_ThreadProc(void *arg) {
-	Http_Service *service = (Http_Service *)arg;
-
-	while (service->active) {
-		int wait = Semaphore_Wait(service->read, 5000);
-		if (wait > 0) {
-			Http_Service_Request *req;
-			Http *http;
-
-			if (!Http_SendRequest(http, req->header, req->reader)) {
-				req->handler.error(req->handler.context);
-				continue;
-			}
-
-			Http_Response res;
-			if (!Http_ReceiveResponse(http, &res, req->writer)) {
-				req->handler.error(req->handler.context);
-				continue;
-			}
-
-			req->handler.response(res, req->handler.context);
-		}
-	}
-
-	return 0;
-}
-
-#endif
 
 static void InterruptHandler(int signo) {
 	Logout = true;

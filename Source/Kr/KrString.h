@@ -23,6 +23,24 @@ INLINE_PROCEDURE String FmtStr(Memory_Arena *arena, const char *fmt, ...) {
 	return string;
 }
 
+INLINE_PROCEDURE String FmtStrV(Memory_Allocator allocator, const char *fmt, va_list list) {
+	va_list args;
+	va_copy(args, list);
+	int   len = 1 + vsnprintf(NULL, 0, fmt, args);
+	char *buf = (char *)MemoryAllocate(len, allocator);
+	vsnprintf(buf, len, fmt, list);
+	va_end(args);
+	return String(buf, len - 1);
+}
+
+INLINE_PROCEDURE String FmtStr(Memory_Allocator allocator, const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	String string = FmtStrV(allocator, fmt, args);
+	va_end(args);
+	return string;
+}
+
 INLINE_PROCEDURE bool StrIsEmpty(String str) {
 	return str.length == 0;
 }
@@ -44,10 +62,8 @@ INLINE_PROCEDURE String StrTrim(String str) {
 	str.length -= trim;
 
 	for (ptrdiff_t index = str.length - 1; index >= 0; --index) {
-		if (IsSpace(str.data[index])) {
-			str.data[index] = '\0';
+		if (IsSpace(str.data[index]))
 			str.length -= 1;
-		}
 		else
 			break;
 	}
@@ -104,13 +120,13 @@ INLINE_PROCEDURE String StrContat(String a, String b, Memory_Arena *arena) {
 }
 
 INLINE_PROCEDURE String SubStr(const String str, ptrdiff_t index, ptrdiff_t count) {
-	Assert(index < str.length);
+	Assert(index <= str.length);
 	count = (ptrdiff_t)Minimum(str.length - index, count);
 	return String(str.data + index, count);
 }
 
 INLINE_PROCEDURE String SubStr(const String str, ptrdiff_t index) {
-	Assert(index < str.length);
+	Assert(index <= str.length);
 	ptrdiff_t count = str.length - index;
 	return String(str.data + index, count);
 }

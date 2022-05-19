@@ -192,13 +192,13 @@ bool JsonGetBool(const Json &json, bool def) {
 
 float JsonGetFloat(const Json &json, float def) {
 	if (json.type == JSON_TYPE_NUMBER)
-		return json.value.number;
+		return json.value.number.real;
 	return def;
 }
 
 int JsonGetInt(const Json &json, int def) {
 	if (json.type == JSON_TYPE_NUMBER)
-		return (int)json.value.number;
+		return (int)json.value.number.integer;
 	return def;
 }
 
@@ -293,12 +293,12 @@ struct Json_Token {
 	Json_Token_Kind kind;
 	String          content;
 	String          identifier;
-	float           number;
+	Json_Number     number;
 };
 
 struct Json_Tokenizer {
-	String buffer;
-	uint8_t *current;
+	String     buffer;
+	uint8_t *  current;
 	Json_Token token;
 };
 
@@ -405,8 +405,9 @@ static bool JsonTokenize(Json_Tokenizer *tokenizer) {
 			}
 			buffer[pos] = 0;
 
-			char *str_end           = nullptr;
-			tokenizer->token.number = (float)strtod(buffer, &str_end);
+			char *str_end                   = nullptr;
+			tokenizer->token.number.real    = (float)strtod(buffer, &str_end);
+			tokenizer->token.number.integer = (int)strtol(buffer, nullptr, 10);
 
 			if (str_end != buffer + pos)
 				return false;
@@ -554,13 +555,25 @@ static Json_String JsonNormalizeString(Json_Parser *parser, String input) {
 	for (ptrdiff_t index = 0; index < input.length; ++index) {
 		if (input[index] != '\\') {
 			string[length++] = input[index];
-		} else if (index + 1 < input.length && input[index + 1] == '"') {
-			string[length++] = '"';
-			index += 1;
+		} else if (index + 1 < input.length) {
+			if (input[index + 1] == '"') {
+				string[length++] = '"';
+				index += 1;
+			} else if (input[index + 1] == 't') {
+				string[length++] = '\t';
+				index += 1;
+			} else if (input[index + 1] == 'n') {
+				string[length++] = '\n';
+				index += 1;
+			} else if (input[index + 1] == 'r') {
+				string[length++] = '\r';
+				index += 1;
+			} else {
+				string[length++] = input[index];
+			}
 		} else {
 			string[length++] = input[index];
 		}
-
 	}
 
 	string.count = length;
@@ -737,4 +750,62 @@ bool JsonParse(String json_string, Json *out_json, Memory_Allocator allocator) {
 		*out_json = {};
 	}
 	return parsed;
+}
+
+//
+//
+//
+
+static void JsonDump(Jsonify *j, const Json &json) {
+	if (json.type == JSON_TYPE_NULL) {
+		j->PushNull();
+	} else if (json.type == JSON_TYPE_BOOL) {
+		j->PushBool(json.value.boolean);
+	} else if (json.type == JSON_TYPE_NUMBER) {
+		float frac = json.value.number.real - json.value.number.integer;
+		if (frac)
+			j->PushFloat(json.value.number.real);
+		else
+			j->PushInt(json.value.number.integer);
+	} else if (json.type == JSON_TYPE_STRING) {
+		j->NextElement(false);
+		j->PushByte('"');
+		for (auto ch : json.value.string.value) {
+			if (ch == '\\') {
+				j->PushByte(ch);
+				j->PushByte(ch);
+			} else if (ch == '\r') {
+				j->PushByte('\\');
+				j->PushByte('r');
+			} else if (ch == '\n') {
+				j->PushByte('\\');
+				j->PushByte('n');
+			} else if (ch == '\t') {
+				j->PushByte('\\');
+				j->PushByte('t');
+			} else {
+				j->PushByte(ch);
+			}
+		}
+		j->PushByte('"');
+	} else if (json.type == JSON_TYPE_ARRAY) {
+		j->BeginArray();
+		for (const auto &elem : json.value.array) {
+			JsonDump(j, elem);
+		}
+		j->EndArray();
+	} else if (json.type == JSON_TYPE_OBJECT) {
+		j->BeginObject();
+		for (const auto &pair : json.value.object) {
+			j->PushKey(pair.key);
+			JsonDump(j, pair.value);
+		}
+		j->EndObject();
+	}
+}
+
+String JsonDump(const Json &json, Memory_Arena *arena) {
+	Jsonify j(arena);
+	JsonDump(&j, json);
+	return Jsonify_BuildString(&j);
 }

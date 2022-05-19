@@ -1,4 +1,4 @@
-#include "Discord.h"
+﻿#include "Discord.h"
 
 #include "Kr/KrString.h"
 #include "Kr/KrThread.h"
@@ -9,6 +9,11 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+
+namespace Discord {
+	const String UserAgent        = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
+	const String BaseHttpEndpoint = "/api/v10";
+}
 
 static void Discord_Jsonify(const Discord::Activity &activity, Jsonify *j) {
 	j->BeginObject();
@@ -449,7 +454,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Channel *channe
 	channel->parent_id                     = Discord_ParseId(JsonGetString(obj, "parent_id"));
 	channel->last_pin_timestamp            = Discord_ParseTimestamp(JsonGetString(obj, "last_pin_timestamp"));
 	channel->rtc_region                    = JsonGetString(obj, "rtc_region");
-	channel->video_quality_mode            = JsonGetInt(obj, "video_quality_mode", 1);
+	channel->video_quality_mode            = (Discord::VideoQualityMode)JsonGetInt(obj, "video_quality_mode", 1);
 	channel->message_count                 = JsonGetInt(obj, "message_count");
 	channel->member_count                  = JsonGetInt(obj, "member_count");
 	channel->default_auto_archive_duration = JsonGetInt(obj, "default_auto_archive_duration");
@@ -1340,7 +1345,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::ApplicationComm
 		if (value->type == JSON_TYPE_STRING) {
 			option->value.string = value->value.string.value;
 		} else if (value->type == JSON_TYPE_NUMBER) {
-			option->value.number = value->value.number;
+			option->value.number = value->value.number.real;
 		} else if (value->type == JSON_TYPE_BOOL) {
 			option->value.integer = value->value.boolean;
 		}
@@ -1470,8 +1475,10 @@ static bool Discord_ConnectToGatewayBot(String token, Memory_Arena *arena, Disco
 	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
+	String endpoint = FmtStr(arena, StrFmt "/gateway/bot", StrArg(Discord::BaseHttpEndpoint));
+
 	Http_Response res;
-	if (!Http_Get(http, "/api/v10/gateway/bot", req, &res, arena)) {
+	if (!Http_Get(http, endpoint, req, &res, arena)) {
 		Http_Disconnect(http);
 		return nullptr;
 	}
@@ -1518,8 +1525,10 @@ static Websocket *Discord_ConnectToGateway(String token, Memory_Arena *scratch, 
 	Http_SetHost(&req, http);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
+	String endpoint = FmtStr(scratch, StrFmt "/gateway", StrArg(Discord::BaseHttpEndpoint));
+
 	Http_Response res;
-	if (!Http_Get(http, "/api/v10/gateway", req, &res, scratch)) {
+	if (!Http_Get(http, endpoint, req, &res, scratch)) {
 		Http_Disconnect(http);
 		return nullptr;
 	}
@@ -1578,6 +1587,53 @@ static int Discord_ShardThreadProc(void *arg) {
 
 static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event);
 
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json);
+
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const String body, Json *res) {
+	Http_Query_Params params;
+	return Discord_CustomMethod(client, method, api_endpoint, params, body, res);
+}
+
+static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
+	return Discord_CustomMethod(client, "GET", api_endpoint, params, body, res);
+}
+
+static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
+	return Discord_CustomMethod(client, "POST", api_endpoint, params, body, res);
+}
+
+static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PATCH", api_endpoint, params, body, res);
+}
+
+static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
+	return Discord_CustomMethod(client, "DELETE", api_endpoint, params, body, res);
+}
+
+static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
+	return Discord_CustomMethod(client, "GET", api_endpoint, body, res);
+}
+
+static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
+	return Discord_CustomMethod(client, "POST", api_endpoint, body, res);
+}
+
+static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PATCH", api_endpoint, body, res);
+}
+
+static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
+	return Discord_CustomMethod(client, "DELETE", api_endpoint, body, res);
+}
+
+static inline String Discord_IdToString(Discord::Snowflake id) {
+	return FmtStr(ThreadContext.allocator, "%zu", id.value);
+}
+
+static inline String Discord_BitIntToString(uint64_t value) {
+	return FmtStr(ThreadContext.allocator, "%zu", value);
+}
+
 //
 //
 //
@@ -1585,8 +1641,11 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 namespace Discord {
 	
 	struct Client {
+		Http *           http      = nullptr;
 		Websocket *      websocket = nullptr;
 		Heartbeat        heartbeat;
+
+		String           authorization;
 
 		EventHandler     onevent   = DefaultEventHandler;
 
@@ -1722,6 +1781,8 @@ namespace Discord {
 
 		client.identify.properties.browser = "Katachi";
 		client.identify.properties.device  = "Katachi";
+
+		client.authorization = FmtStr(client.allocator, "Bot " StrFmt, StrArg(client.identify.token));
 
 		ThreadContext.allocator = MemoryArenaAllocator(arena);
 
@@ -1884,6 +1945,188 @@ namespace Discord {
 		Net_Initialize();
 		srand((unsigned int)time(0));
 	}
+
+	void PatchName(ChannelPatch *p, String name) {
+		p->obj.Put("name", Json(name));
+	}
+
+	void PatchIcon(ChannelPatch *p, Buffer icon) {
+		p->obj.Put("icon", Json(icon));
+	}
+
+	void PatchChannelType(ChannelPatch *p, ChannelType type) {
+		p->obj.Put("type", Json((int)type));
+	}
+
+	void PatchPosition(ChannelPatch *p, int position) {
+		p->obj.Put("position", Json(position));
+	}
+
+	void PatchTopic(ChannelPatch *p, String topic) {
+		p->obj.Put("topic", Json(topic));
+	}
+
+	void PatchNSFW(ChannelPatch *p, bool value) {
+		p->obj.Put("nsfw", Json(value));
+	}
+
+	void PatchRateLimitPerUser(ChannelPatch *p, int rate_limit_per_user) {
+		p->obj.Put("rate_limit_per_user", Json(rate_limit_per_user));
+	}
+
+	void PatchBitrate(ChannelPatch *p, int bitrate) {
+		p->obj.Put("bitrate", Json(bitrate));
+	}
+
+	void PatchUserLimit(ChannelPatch *p, int user_limit) {
+		p->obj.Put("user_limit", Json(user_limit));
+	}
+
+	void PatchOverwrites(ChannelPatch *p, Array_View<Overwrite> overwrites) {
+		Json_Array arr;
+		arr.Resize(overwrites.count);
+
+		for (ptrdiff_t index = 0; index < arr.count; ++index) {
+			Json_Object obj;
+			obj.Put("id", Json(Discord_IdToString(overwrites[index].id)));
+			obj.Put("type", Json((int)overwrites[index].type));
+			obj.Put("allow", Json(Discord_BitIntToString(overwrites[index].allow)));
+			obj.Put("deny", Json(Discord_BitIntToString(overwrites[index].deny)));
+			arr[index] = Json(obj);
+		}
+
+		p->obj.Put("permission_overwrites", Json(arr));
+	}
+
+	void PatchParentId(ChannelPatch *p, Snowflake parent_id) {
+		p->obj.Put("parent_id", Json(Discord_IdToString(parent_id)));
+	}
+
+	void PatchRTCRegion(ChannelPatch *p, String rtc_region) {
+		if (rtc_region.length)
+			p->obj.Put("rtc_region", Json(rtc_region));
+		else
+			p->obj.Put("rtc_region", Json());
+	}
+
+	void PatchVideoQualityMode(ChannelPatch *p, VideoQualityMode mode) {
+		p->obj.Put("video_quality_mode", Json((int)mode));
+	}
+
+	void PatchDefaultAutoArchiveDuration(ChannelPatch *p, int duration) {
+		p->obj.Put("default_auto_archive_duration", Json(duration));
+	}
+
+	void PatchArchived(ChannelPatch *p, bool archived) {
+		p->obj.Put("archived", Json(archived));
+	}
+
+	void PatchAutoArchiveDuration(ChannelPatch *p, int auto_archive_duration) {
+		p->obj.Put("auto_archive_duration", Json(auto_archive_duration));
+	}
+
+	void PatchLocked(ChannelPatch *p, bool locked) {
+		p->obj.Put("locked", Json(locked));
+	}
+
+	void PatchInvitable(ChannelPatch *p, bool invitable) {
+		p->obj.Put("invitable", Json(invitable));
+	}
+
+	Channel *GetChannel(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
+
+		Json res;
+		if (Discord_Get(client, endpoint, String(), &res)) {
+			Channel *channel = new Channel;
+			Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
+		return nullptr;
+	}
+
+	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
+		String body     = JsonDump(Json(patch.obj), client->scratch);
+
+		Json res;
+		if (Discord_Patch(client, endpoint, body, &res)) {
+			Channel *channel = new Channel;
+			Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
+		return nullptr;
+	}
+
+	Channel *DeleteChannel(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, String(), &res)) {
+			Channel *channel = new Channel;
+			Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
+		return nullptr;
+	}
+
+
+}
+
+//
+//
+//
+
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json) {
+	if (!client->http) {
+		const String host = "https://discord.com";
+		client->http = Http_Connect(host, HTTPS_CONNECTION, client->allocator);
+		if (!client->http) {
+			LogErrorEx("Discord", "Unable to connect to \"" StrFmt "\".", StrArg(host));
+			return false;
+		}
+	}
+
+	Http_Request req;
+	Http_InitRequest(&req);
+	Http_SetHost(&req, client->http);
+	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "keep-alive");
+	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, client->authorization);
+	Http_SetContent(&req, "application/json", body);
+
+	int len = snprintf((char *)req.buffer + req.length, sizeof(req.buffer) - req.length, StrFmt StrFmt, 
+		StrArg(Discord::BaseHttpEndpoint), StrArg(api_endpoint));
+
+	String endpoint = String(req.buffer + req.length, len);
+
+	Http_Response res;
+
+	for (int i = 0; i < 2; ++i) {
+		if (Http_CustomMethod(client->http, method, endpoint, params, req, &res, client->scratch)) {
+			if (res.status.code != 200) {
+				// @todo: handle rate limiting
+				Unimplemented();
+				return false;
+			}
+
+			if (res.headers.known[HTTP_HEADER_CONNECTION] == "close") {
+				Http_Disconnect(client->http);
+				client->http = nullptr;
+			}
+
+			if (JsonParse(res.body, json))
+				return true;
+
+			LogErrorEx("Discord", "Failed to parse HTTP response");
+
+			return false;
+		} else {
+			Http_Reconnect(client->http);
+		}
+	}
+
+	return false;
 }
 
 //

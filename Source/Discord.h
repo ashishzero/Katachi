@@ -1,10 +1,8 @@
 #pragma once
 #include "Kr/KrBasic.h"
-
+#include "Json.h"
 
 namespace Discord {
-	const String UserAgent = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
-
 	struct Snowflake {
 		uint64_t value = 0;
 		Snowflake() = default;
@@ -435,6 +433,10 @@ namespace Discord {
 		Presence *     presence      = nullptr;
 	};
 
+	enum class VideoQualityMode {
+		NONE = 0, AUTO = 1, FULL = 2
+	};
+
 	struct Channel {
 		Snowflake        id;
 		ChannelType      type = ChannelType::GUILD_TEXT;
@@ -455,7 +457,7 @@ namespace Discord {
 		Snowflake        parent_id;
 		Timestamp        last_pin_timestamp = 0;
 		String           rtc_region;
-		int32_t          video_quality_mode = 0;
+		VideoQualityMode video_quality_mode = VideoQualityMode::NONE;
 		int32_t          message_count = 0;
 		int32_t          member_count = 0;
 		ThreadMetadata * thread_metadata;
@@ -1741,10 +1743,10 @@ namespace Discord {
 	struct ClientSpec {
 		int32_t          shards[2]    = { 0, 1 };
 		int32_t          tick_ms      = 500;
-		uint32_t         scratch_size = MegaBytes(64);
+		uint32_t         scratch_size = MegaBytes(512);
 		uint32_t         read_size    = MegaBytes(2);
 		uint32_t         write_size   = KiloBytes(8);
-		uint32_t         queue_size   = 16;
+		uint32_t         queue_size   = 32;
 		Memory_Allocator allocator    = ThreadContextDefaultParams.allocator;
 	};
 
@@ -1766,4 +1768,35 @@ namespace Discord {
 	Shard GetShard(Client *client);
 
 	void Initialize();
+
+	//
+	//
+	//
+
+	struct ChannelPatch {
+		Json_Object obj;
+	};
+
+	void PatchName(ChannelPatch *p, String name);
+	void PatchIcon(ChannelPatch *p, Buffer icon);
+	void PatchChannelType(ChannelPatch *p, ChannelType type);
+	void PatchPosition(ChannelPatch *p, int position);
+	void PatchTopic(ChannelPatch *p, String topic);
+	void PatchNSFW(ChannelPatch *p, bool value);
+	void PatchRateLimitPerUser(ChannelPatch *p, int rate_limit_per_user);
+	void PatchBitrate(ChannelPatch *p, int bitrate);
+	void PatchUserLimit(ChannelPatch *p, int user_limit);
+	void PatchOverwrites(ChannelPatch *p, Array_View<Overwrite> overwrites);
+	void PatchParentId(ChannelPatch *p, Snowflake parent_id);
+	void PatchRTCRegion(ChannelPatch *p, String rtc_region);
+	void PatchVideoQualityMode(ChannelPatch *p, VideoQualityMode mode);
+	void PatchDefaultAutoArchiveDuration(ChannelPatch *p, int duration);
+	void PatchArchived(ChannelPatch *p, bool archived);
+	void PatchAutoArchiveDuration(ChannelPatch *p, int auto_archive_duration);
+	void PatchLocked(ChannelPatch *p, bool locked);
+	void PatchInvitable(ChannelPatch *p, bool invitable);
+
+	Channel *GetChannel(Client *client, Snowflake channel_id);
+	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
+	Channel *DeleteChannel(Client *client, Snowflake channel_id);
 }

@@ -66,9 +66,14 @@ struct Json_String {
 	Memory_Allocator allocator;
 };
 
+struct Json_Number {
+	int   integer;
+	float real;
+};
+
 union Json_Value {
 	bool        boolean;
-	float       number;
+	Json_Number number;
 	Json_String string;
 	Json_Array  array;
 	Json_Object object;
@@ -81,8 +86,8 @@ struct Json {
 
 	Json() : type(JSON_TYPE_NULL){}
 	explicit Json(bool val) : type(JSON_TYPE_BOOL) { value.boolean = val; }
-	explicit Json(float num) : type(JSON_TYPE_NUMBER) { value.number = num; }
-	explicit Json(int num) : type(JSON_TYPE_NUMBER) { value.number = (float)num; }
+	explicit Json(float num) : type(JSON_TYPE_NUMBER) { value.number.real = num; value.number.integer = (int)num; }
+	explicit Json(int num) : type(JSON_TYPE_NUMBER) { value.number.real = (float)num; value.number.integer = num; }
 	explicit Json(String str) : type(JSON_TYPE_STRING) { value.string.value = str; value.string.allocator = NullMemoryAllocator(); }
 	explicit Json(Json_Array arr) : type(JSON_TYPE_ARRAY) { value.array = arr; }
 	explicit Json(Json_Object obj) : type(JSON_TYPE_OBJECT) { value.object = obj; }
@@ -112,3 +117,9 @@ Json_Object JsonGetObject(const Json_Object &obj, String key, Json_Object def = 
 //
 
 bool JsonParse(String json_string, Json *out_json, Memory_Allocator allocator = ThreadContext.allocator);
+
+//
+//
+//
+
+String JsonDump(const Json &json, Memory_Arena *arena);
