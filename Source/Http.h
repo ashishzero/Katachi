@@ -99,8 +99,8 @@ struct Http_Query_Params {
 };
 
 enum Http_Version : uint32_t {
-	HTTP_VERSION_1_0,
 	HTTP_VERSION_1_1,
+	HTTP_VERSION_1_0,
 };
 
 struct Http_Status {
@@ -148,6 +148,7 @@ Http *Http_Connect(const String hostname, Http_Connection connection = HTTP_DEFA
 bool  Http_Reconnect(Http *http);
 void  Http_Disconnect(Http *http);
 
+void      Http_DumpProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context);
 ptrdiff_t Http_BuildRequest(const String method, const String endpoint, const Http_Query_Params *params, const Http_Request &req, uint8_t *buffer, ptrdiff_t buff_len);
 bool      Http_SendRequest(Http *http, const String header, Http_Reader reader);
 bool      Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer);

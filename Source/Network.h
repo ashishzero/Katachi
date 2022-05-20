@@ -33,6 +33,8 @@ Net_Socket  *Net_OpenConnection(const String node, const String service, Net_Soc
 bool         Net_OpenSecureChannel(Net_Socket *net, bool verify = true);
 void         Net_CloseConnection(Net_Socket *net);
 void         Net_Shutdown(Net_Socket *net);
+void         Net_SetSocketReceiveBufferSize(Net_Socket *net, int size);
+void         Net_SetSocketSendBufferSize(Net_Socket *net, int size);
 void *       Net_GetUserBuffer(Net_Socket *net);
 Net_Error    Net_GetLastError(Net_Socket *net);
 void         Net_SetError(Net_Socket *net, Net_Error error);

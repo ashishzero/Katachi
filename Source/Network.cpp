@@ -531,6 +531,14 @@ void Net_Shutdown(Net_Socket *net) {
 	shutdown(net->descriptor, how);
 }
 
+void Net_SetSocketReceiveBufferSize(Net_Socket *net, int size) {
+	setsockopt(net->descriptor, SOL_SOCKET, SO_RCVBUF, (char *)&size, sizeof(size));
+}
+
+void Net_SetSocketSendBufferSize(Net_Socket *net, int size) {
+	setsockopt(net->descriptor, SOL_SOCKET, SO_SNDBUF, (char *)&size, sizeof(size));
+}
+
 void *Net_GetUserBuffer(Net_Socket *net) {
 	return net->user;
 }
@@ -588,41 +596,65 @@ bool Net_SetSocketBlockingMode(Net_Socket *net, bool blocking) {
 #endif
 }
 
+
+static void Net_ReportError(Net_Socket *net) {
+#ifdef NETWORK_OPENSSL_ENABLE
+	if (net->ssl)
+		PL_Net_ReportOpenSSLError();
+	else
+		PL_Net_ReportLastSocketError();
+#else
+	PL_Net_ReportLastSocketError();
+#endif
+}
+
 int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 	pollfd fds = {};
 	fds.fd = net->descriptor;
 	fds.events = POLLWRNORM;
 
-	int presult = poll(&fds, 1, timeout);
+	time_t counter = clock();
 
-	if (presult > 0) {
-		if (fds.revents & POLLWRNORM) {
-			int written = net->write(net, buffer, length);
-			if (written >= 0) {
-				net->error = NET_E_NONE;
-				return written;
-			}
-			net->error = NET_E_CONNECTION_LOST;
+	while (timeout >= 0) {
+		int presult = poll(&fds, 1, timeout);
+
+		if (presult > 0) {
+			if (fds.revents & POLLWRNORM) {
+				int written = net->write(net, buffer, length);
+
 #ifdef NETWORK_OPENSSL_ENABLE
-			if (net->ssl)
-				PL_Net_ReportOpenSSLError();
-			else
-				PL_Net_ReportLastSocketError();
-#else
-				PL_Net_ReportLastSocketError();
+				if (net->ssl) {
+					if (SSL_get_error(net->ssl, written) == SSL_ERROR_WANT_WRITE) {
+						time_t current = clock();
+						int time_passed = (1000 * (current - counter)) / CLOCKS_PER_SEC;
+						timeout -= time_passed;
+						counter = current;
+						continue;
+					}
+				}
 #endif
-			return -1;
-		}
 
-		if (fds.revents & (POLLHUP | POLLERR)) {
-			net->error = NET_E_CONNECTION_LOST;
+				if (written >= 0) {
+					net->error = NET_E_NONE;
+					return written;
+				}
+				net->error = NET_E_CONNECTION_LOST;
+				Net_ReportError(net);
+				return -1;
+			}
+
+			if (fds.revents & (POLLHUP | POLLERR)) {
+				net->error = NET_E_CONNECTION_LOST;
+				return -1;
+			}
+			net->error = NET_E_WOULD_BLOCK;
+			return 0;
+		} else if (presult == 0) {
+			net->error = NET_E_TIMED_OUT;
 			return -1;
+		} else {
+			break;
 		}
-		net->error = NET_E_WOULD_BLOCK;
-		return 0;
-	} else if (presult == 0) {
-		net->error = NET_E_TIMED_OUT;
-		return -1;
 	}
 
 	net->error = NET_E_CONNECTION_LOST;
@@ -635,45 +667,68 @@ int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 	fds.fd = net->descriptor;
 	fds.events = POLLRDNORM;
 
-	int presult = poll(&fds, 1, timeout);
+	time_t counter = clock();
 
-	if (presult > 0) {
-		if (fds.revents & POLLRDNORM) {
-			int read = net->read(net, buffer, length);
-			if (read > 0)
-				return read;
-			if (read == 0) LogErrorEx("Net", "Lost connection unexpectedly");
+	while (timeout >= 0) {
+		int presult = poll(&fds, 1, timeout);
+
+		if (presult > 0) {
+			if (fds.revents & POLLRDNORM) {
+				int read = net->read(net, buffer, length);
+
 #ifdef NETWORK_OPENSSL_ENABLE
-			if (net->ssl)
-				PL_Net_ReportOpenSSLError();
-			else
-				PL_Net_ReportLastSocketError();
-#else
-			PL_Net_ReportLastSocketError();
+				if (net->ssl) {
+					if (SSL_get_error(net->ssl, read) == SSL_ERROR_WANT_READ) {
+						time_t current  = clock();
+						int time_passed = (1000 * (current - counter)) / CLOCKS_PER_SEC;
+						timeout -= time_passed;
+						counter = current;
+						continue;
+					}
+				}
 #endif
-			net->error = NET_E_CONNECTION_LOST;
-			return -1;
-		}
 
-		if (fds.revents & (POLLHUP | POLLERR)) {
-			net->error = NET_E_CONNECTION_LOST;
-			return -1;
+				if (read > 0)
+					return read;
+				if (read == 0)
+					LogErrorEx("Net", "Lost connection unexpectedly");
+				else
+					Net_ReportError(net);
+				net->error = NET_E_CONNECTION_LOST;
+				return -1;
+			}
+
+			if (fds.revents & (POLLHUP | POLLERR)) {
+				Net_ReportError(net);
+				net->error = NET_E_CONNECTION_LOST;
+				return -1;
+			}
+			net->error = NET_E_WOULD_BLOCK;
+			return 0;
+		} else if (presult == 0) {
+			net->error = NET_E_WOULD_BLOCK;
+			return 0;
+		} else {
+			break;
 		}
-		net->error = NET_E_WOULD_BLOCK;
-		return 0;
-	} else if (presult == 0) {
-		net->error = NET_E_WOULD_BLOCK;
-		return 0;
 	}
 
+	Net_ReportError(net);
 	net->error = NET_E_CONNECTION_LOST;
-	PL_Net_ReportLastPlatformError();
 	return -1;
 }
 
 int Net_Send(Net_Socket *net, void *buffer, int length) {
 	int written = net->write(net, buffer, length);
 	if (written < 0) {
+#ifdef NETWORK_OPENSSL_ENABLE
+		if (net->ssl) {
+			if (SSL_get_error(net->ssl, written) == SSL_ERROR_WANT_WRITE) {
+				return 0;
+			}
+		}
+#endif
+
 #if PLATFORM_WINDOWS
 		if (WSAGetLastError() == WSAEWOULDBLOCK) {
 			net->error = NET_E_WOULD_BLOCK;
@@ -686,14 +741,7 @@ int Net_Send(Net_Socket *net, void *buffer, int length) {
 		}
 #endif
 
-#ifdef NETWORK_OPENSSL_ENABLE
-		if (net->ssl)
-			PL_Net_ReportOpenSSLError();
-		else
-			PL_Net_ReportLastSocketError();
-#else
-		PL_Net_ReportLastSocketError();
-#endif
+		Net_ReportError(net);
 		net->error = NET_E_CONNECTION_LOST;
 		return -1;
 	}
@@ -704,6 +752,15 @@ int Net_Send(Net_Socket *net, void *buffer, int length) {
 int Net_Receive(Net_Socket *net, void *buffer, int length) {
 	int read = net->read(net, buffer, length);
 	if (read <= 0) {
+
+#ifdef NETWORK_OPENSSL_ENABLE
+		if (net->ssl) {
+			if (SSL_get_error(net->ssl, read) == SSL_ERROR_WANT_READ) {
+				return 0;
+			}
+		}
+#endif
+
 #if PLATFORM_WINDOWS
 		if (WSAGetLastError() == WSAEWOULDBLOCK) {
 			net->error = NET_E_WOULD_BLOCK;
@@ -717,14 +774,7 @@ int Net_Receive(Net_Socket *net, void *buffer, int length) {
 #endif
 		if (read == 0) LogErrorEx("Net", "Lost connection unexpectedly");
 
-#ifdef NETWORK_OPENSSL_ENABLE
-		if (net->ssl)
-			PL_Net_ReportOpenSSLError();
-		else
-			PL_Net_ReportLastSocketError();
-#else
-		PL_Net_ReportLastSocketError();
-#endif
+		Net_ReportError(net);
 		net->error = NET_E_CONNECTION_LOST;
 		return -1;
 	}

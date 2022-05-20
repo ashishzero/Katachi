@@ -1249,480 +1249,212 @@ namespace Discord {
 
 	static_assert(ArrayCount(EventNames) == (int)EventType::EVENT_COUNT, "");
 
-	struct Event {
-		EventType type = EventType::TICK;
-		String    name = "TICK";
-
-		Event() = default;
-		Event(EventType _type): type(_type), name(EventNames[(int)_type]) {}
+	struct Ready {
+		int32_t                      v;
+		User                         user;
+		Array_View<UnavailableGuild> guilds;
+		String                       session_id;
+		int32_t                      shard[2] = {};
+		Application                  application;
 	};
 
-	struct HelloEvent : public Event {
-		int32_t heartbeat_interval;
-		HelloEvent(): Event(EventType::HELLO) {}
+	struct GuildInfo {
+		Timestamp                       joined_at;
+		bool                            large = false;
+		bool                            unavailable = false;
+		int32_t                         member_count = 0;
+		Array_View<VoiceState>          voice_states;
+		Array_View<GuildMember>         members;
+		Array_View<Channel>             channels;
+		Array_View<Channel>             threads;
+		Array_View<Presence>            presences;
+		Array_View<StageInstance>       stage_instances;
+		Array_View<GuildScheduledEvent> guild_scheduled_events;
 	};
 
-	struct ReadyEvent : public Event {
-		int32_t                 v;
-		User                    user;
-		Array<UnavailableGuild> guilds;
-		String                  session_id;
-		int32_t                 shard[2] = {};
-		Application             application;
-
-		ReadyEvent() : Event(EventType::READY) {}
-		ReadyEvent(Memory_Allocator allocator): Event(EventType::READY), guilds(allocator), application(allocator) {}
+	struct GuildMemberUpdate {
+		Array_View<Snowflake> roles;
+		User                  user;
+		String                nick;
+		String                avatar;
+		Timestamp             joined_at = 0;
+		Timestamp             premium_since = 0;
+		bool                  deaf = false;
+		bool                  mute = false;
+		bool                  pending = false;
+		Timestamp             communication_disabled_until = 0;
 	};
 
-	struct ResumedEvent : public Event {
-		ResumedEvent(): Event(EventType::RESUMED) {}
+	struct GuildMembersChunk {
+		Array_View<GuildMember> members;
+		int32_t                 chunk_index = 0;
+		int32_t                 chunk_count = 0;
+		Array_View<Snowflake>   not_found;
+		Array_View<Presence>    presences;
+		String                  nonce;
 	};
 
-	struct ReconnectEvent : public Event {
-		ReconnectEvent() : Event(EventType::RECONNECT) {}
-	};
-
-	struct InvalidSessionEvent : public Event {
-		bool resumable = false;
-		InvalidSessionEvent(): Event(EventType::INVALID_SESSION) {}
-	};
-
-	struct ApplicationCommandPermissionsUpdateEvent : public Event {
-		ApplicationCommandPermissions permissions;
-
-		ApplicationCommandPermissionsUpdateEvent(): Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE) {}
-		ApplicationCommandPermissionsUpdateEvent(Memory_Allocator allocator):
-			Event(EventType::APPLICATION_COMMAND_PERMISSIONS_UPDATE), permissions(allocator) {}
-	};
-
-	struct ChannelCreateEvent : public Event {
-		Channel channel;
-		ChannelCreateEvent() : Event(EventType::CHANNEL_CREATE) {}
-		ChannelCreateEvent(Memory_Allocator allocator): Event(EventType::CHANNEL_CREATE), channel(allocator) {}
-	};
-
-	struct ChannelUpdateEvent : public Event {
-		Channel channel;
-		ChannelUpdateEvent() : Event(EventType::CHANNEL_UPDATE) {}
-		ChannelUpdateEvent(Memory_Allocator allocator) : Event(EventType::CHANNEL_UPDATE), channel(allocator) {}
-	};
-
-	struct ChannelDeleteEvent : public Event {
-		Channel channel;
-		ChannelDeleteEvent(): Event(EventType::CHANNEL_DELETE) {}
-		ChannelDeleteEvent(Memory_Allocator allocator) : Event(EventType::CHANNEL_DELETE), channel(allocator) {}
-	};
-
-	struct ChannelPinsUpdateEvent : public Event {
-		Snowflake guild_id;
-		Snowflake channel_id;
-		Timestamp last_pin_timestamp;
-
-		ChannelPinsUpdateEvent(): Event(EventType::CHANNEL_PINS_UPDATE) {}
-	};
-
-	struct ThreadCreateEvent : public Event {
-		Channel channel;
-		bool newly_created = false;
-
-		ThreadCreateEvent(): Event(EventType::THREAD_CREATE) {}
-		ThreadCreateEvent(Memory_Allocator allocator): Event(EventType::THREAD_CREATE), channel(allocator) {}
-	};
-
-	struct ThreadUpdateEvent : public Event {
-		Channel channel;
-		ThreadUpdateEvent(): Event(EventType::THREAD_UPDATE) {}
-		ThreadUpdateEvent(Memory_Allocator allocator) : Event(EventType::THREAD_UPDATE), channel(allocator) {}
-	};
-
-	struct ThreadDeleteEvent : public Event {
-		Snowflake   id;
-		Snowflake   guild_id;
-		Snowflake   parent_id;
-		ChannelType type = ChannelType::GUILD_TEXT;
-
-		ThreadDeleteEvent(): Event(EventType::THREAD_DELETE) {}
-	};
-
-	struct ThreadListSyncEvent : public Event {
-		Snowflake           guild_id;
-		Array<Snowflake>    channel_ids;
-		Array<Channel>      threads;
-		Array<ThreadMember> members;
-
-		ThreadListSyncEvent(): Event(EventType::THREAD_LIST_SYNC) {}
-		ThreadListSyncEvent(Memory_Allocator allocator): 
-			Event(EventType::THREAD_LIST_SYNC), channel_ids(allocator), threads(allocator), members(allocator) {}
-	};
-
-	struct ThreadMemberUpdateEvent : public Event {
-		Snowflake    guild_id;
-		ThreadMember member;
-
-		ThreadMemberUpdateEvent(): Event(EventType::THREAD_MEMBER_UPDATE) {}
-	};
-
-	struct ThreadMembersUpdateEvent : public Event {
-		Snowflake           id;
-		Snowflake           guild_id;
-		int32_t             member_count = 0;
-		Array<ThreadMember> added_members;
-		Array<Snowflake>    removed_member_ids;
-
-		ThreadMembersUpdateEvent(): Event(EventType::THREAD_MEMBERS_UPDATE) {}
-		ThreadMembersUpdateEvent(Memory_Allocator allocator): 
-			Event(EventType::THREAD_MEMBERS_UPDATE), added_members(allocator), removed_member_ids(allocator) {}
-	};
-
-	struct GuildCreateEvent : public Event {
-		Guild                      guild;
-		Timestamp                  joined_at;
-		bool                       large = false;
-		bool                       unavailable = false;
-		int32_t                    member_count = 0;
-		Array<VoiceState>          voice_states;
-		Array<GuildMember>         members;
-		Array<Channel>             channels;
-		Array<Channel>             threads;
-		Array<Presence>            presences;
-		Array<StageInstance>       stage_instances;
-		Array<GuildScheduledEvent> guild_scheduled_events;
-
-		GuildCreateEvent(): Event(EventType::GUILD_CREATE) {}
-		GuildCreateEvent(Memory_Allocator allocator): 
-			Event(EventType::GUILD_CREATE), guild(allocator), members(allocator),
-			channels(allocator), threads(allocator), presences(allocator),
-			stage_instances(allocator), guild_scheduled_events(allocator) {}
-	};
-
-	struct GuildUpdateEvent : public Event {
-		Guild guild;
-
-		GuildUpdateEvent(): Event(EventType::GUILD_UPDATE) {}
-		GuildUpdateEvent(Memory_Allocator allocator):
-			Event(EventType::GUILD_UPDATE), guild(allocator) {}
-	};
-
-	struct GuildDeleteEvent : public Event {
-		UnavailableGuild unavailable_guild;
-		GuildDeleteEvent(): Event(EventType::GUILD_DELETE) {}
-	};
-
-	struct GuildBanAddEvent : public Event {
-		Snowflake guild_id;
-		User      user;
-
-		GuildBanAddEvent(): Event(EventType::GUILD_BAN_ADD) {}
-	};
-
-	struct GuildBanRemoveEvent : public Event {
-		Snowflake guild_id;
-		User      user;
-
-		GuildBanRemoveEvent(): Event(EventType::GUILD_BAN_REMOVE) {}
-	};
-
-	struct GuildEmojisUpdateEvent : public Event {
-		Snowflake    guild_id;
-		Array<Emoji> emojis;
-
-		GuildEmojisUpdateEvent(): Event(EventType::GUILD_EMOJIS_UPDATE) {}
-		GuildEmojisUpdateEvent(Memory_Allocator allocator):
-			Event(EventType::GUILD_EMOJIS_UPDATE), emojis(allocator) {}
-	};
-
-	struct GuildStickersUpdateEvent : public Event {
-		Snowflake      guild_id;
-		Array<Sticker> stickers;
-
-		GuildStickersUpdateEvent() : Event(EventType::GUILD_STICKERS_UPDATE) {}
-		GuildStickersUpdateEvent(Memory_Allocator allocator) :
-			Event(EventType::GUILD_STICKERS_UPDATE), stickers(allocator) {}
-	};
-
-	struct GuildIntegrationsUpdateEvent : public Event {
-		Snowflake guild_id;
-		GuildIntegrationsUpdateEvent(): Event(EventType::GUILD_INTEGRATIONS_UPDATE) {}
-	};
-
-	struct GuildMemberAddEvent : public Event {
-		Snowflake  guild_id;
-		GuildMember member;
-
-		GuildMemberAddEvent(): Event(EventType::GUILD_MEMBER_ADD) {}
-		GuildMemberAddEvent(Memory_Allocator allocator):
-			Event(EventType::GUILD_MEMBER_ADD), member(allocator) {}
-	};
-
-	struct GuildMemberRemoveEvent : public Event {
-		Snowflake  guild_id;
-		User       user;
-
-		GuildMemberRemoveEvent(): Event(EventType::GUILD_MEMBER_REMOVE) {}
-	};
-
-	struct GuildMemberUpdateEvent : public Event {
-		Snowflake        guild_id;
-		Array<Snowflake> roles;
-		User             user;
-		String           nick;
-		String           avatar;
-		Timestamp        joined_at = 0;
-		Timestamp        premium_since = 0;
-		bool             deaf = false;
-		bool             mute = false;
-		bool             pending = false;
-		Timestamp        communication_disabled_until = 0;
-
-		GuildMemberUpdateEvent(): Event(EventType::GUILD_MEMBER_UPDATE) {}
-		GuildMemberUpdateEvent(Memory_Allocator allocator):
-			Event(EventType::GUILD_MEMBER_UPDATE), roles(allocator) {}
-	};
-
-	struct GuildMembersChunkEvent : public Event {
-		Snowflake          guild_id;
-		Array<GuildMember> members;
-		int32_t            chunk_index = 0;
-		int32_t            chunk_count = 0;
-		Array<Snowflake>   not_found;
-		Array<Presence>    presences;
-		String             nonce;
-
-		GuildMembersChunkEvent(): Event(EventType::GUILD_MEMBERS_CHUNK) {}
-		GuildMembersChunkEvent(Memory_Allocator allocator):
-			Event(EventType::GUILD_MEMBERS_CHUNK), members(allocator), not_found(allocator), presences(allocator) {}
-	};
-
-	struct GuildRoleCreateEvent : public Event {
-		Snowflake guild_id;
-		Role      role;
-		GuildRoleCreateEvent(): Event(EventType::GUILD_ROLE_CREATE) {}
-	};
-	
-	struct GuildRoleUpdateEvent : public Event {
-		Snowflake guild_id;
-		Role      role;
-		GuildRoleUpdateEvent(): Event(EventType::GUILD_ROLE_UPDATE) {}
-	};
-
-	struct GuildRoleDeleteEvent : public Event {
-		Snowflake guild_id;
-		Snowflake role_id;
-		GuildRoleDeleteEvent(): Event(EventType::GUILD_ROLE_DELETE) {}
-	};
-
-	struct GuildScheduledEventCreateEvent : public Event {
-		GuildScheduledEvent scheduled_event;
-		GuildScheduledEventCreateEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_CREATE) {}
-	};
-	
-	struct GuildScheduledEventUpdateEvent : public Event {
-		GuildScheduledEvent scheduled_event;
-		GuildScheduledEventUpdateEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_UPDATE) {}
-	};
-	
-	struct GuildScheduledEventDeleteEvent : public Event {
-		GuildScheduledEvent scheduled_event;
-		GuildScheduledEventDeleteEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_DELETE) {}
-	};
-
-	struct GuildScheduledEventUserAddEvent : public Event {
-		Snowflake guild_scheduled_event_id;
-		Snowflake user_id;
-		Snowflake guild_id;
-		GuildScheduledEventUserAddEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_USER_ADD) {}
-	};
-
-	struct GuildScheduledEventUserRemoveEvent : public Event {
-		Snowflake guild_scheduled_event_id;
-		Snowflake user_id;
-		Snowflake guild_id;
-		GuildScheduledEventUserRemoveEvent(): Event(EventType::GUILD_SCHEDULED_EVENT_USER_REMOVE) {}
-	};
-
-	struct IntegrationCreateEvent : public Event {
-		Snowflake   guild_id;
-		Integration integration;
-		IntegrationCreateEvent(): Event(EventType::INTEGRATION_CREATE) {}
-	};
-
-	struct IntegrationUpdateEvent : public Event {
-		Snowflake   guild_id;
-		Integration integration;
-		IntegrationUpdateEvent(): Event(EventType::INTEGRATION_UPDATE) {}
-	};
-
-	struct IntegrationDeleteEvent : public Event {
-		Snowflake id;
-		Snowflake guild_id;
-		Snowflake application_id;
-		IntegrationDeleteEvent(): Event(EventType::INTEGRATION_DELETE) {}
-	};
-
-	struct InteractionCreateEvent : public Event {
-		Interaction interation;
-		InteractionCreateEvent(): Event(EventType::INTERACTION_CREATE) {}
-	};
-
-	struct InviteCreateEvent : public Event {
+	struct InviteInfo {
 		Snowflake        channel_id;
 		String           code;
 		Timestamp        created_at;
 		Snowflake        guild_id;
-		User *           inviter = nullptr;
+		User *inviter = nullptr;
 		int32_t          max_age;
 		int32_t          max_uses;
 		InviteTargetType target_type = InviteTargetType::NONE;
-		User *           target_user = nullptr;
-		Application *    target_application = nullptr;
+		User *target_user = nullptr;
+		Application *target_application = nullptr;
 		bool             temporary = false;
 		int32_t          uses = 0;
-
-		InviteCreateEvent(): Event(EventType::INVITE_CREATE) {}
 	};
 
-	struct InviteDeleteEvent : public Event {
-		Snowflake channel_id;
-		Snowflake guild_id;
-		String    code;
-
-		InviteDeleteEvent(): Event(EventType::INVITE_DELETE) {}
-	};
-
-	struct MessageCreateEvent : public Event {
-		Message message;
-		MessageCreateEvent(): Event(EventType::MESSAGE_CREATE) {}
-		MessageCreateEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_CREATE), message(allocator) {}
-	};
-
-	struct MessageUpdateEvent : public Event {
-		Message message;
-		MessageUpdateEvent() : Event(EventType::MESSAGE_UPDATE) {}
-		MessageUpdateEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_UPDATE), message(allocator) {}
-	};
-
-	struct MessageDeleteEvent : public Event {
-		Snowflake id;
-		Snowflake channel_id;
-		Snowflake guild_id;
-		MessageDeleteEvent(): Event(EventType::MESSAGE_DELETE) {}
-	};
-	
-	struct MessageDeleteBulkEvent : public Event {
-		Array<Snowflake> ids;
-		Snowflake        channel_id;
-		Snowflake        guild_id;
-		MessageDeleteBulkEvent(): Event(EventType::MESSAGE_DELETE_BULK) {}
-		MessageDeleteBulkEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_DELETE_BULK), ids(allocator) {}
-	};
-
-	struct MessageReactionAddEvent : public Event {
+	struct MessageReactionInfo {
 		Snowflake    user_id;
 		Snowflake    channel_id;
 		Snowflake    message_id;
 		Snowflake    guild_id;
 		GuildMember *member = nullptr;
 		Emoji        emoji;
-
-		MessageReactionAddEvent(): Event(EventType::MESSAGE_REACTION_ADD) {}
-		MessageReactionAddEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_REACTION_ADD), emoji(allocator) {}
 	};
 
-	struct MessageReactionRemoveEvent : public Event {
-		Snowflake user_id;
-		Snowflake channel_id;
-		Snowflake message_id;
-		Snowflake guild_id;
-		Emoji     emoji;
-
-		MessageReactionRemoveEvent(): Event(EventType::MESSAGE_REACTION_REMOVE) {}
-		MessageReactionRemoveEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_REACTION_REMOVE), emoji(allocator) {}
-	};
-
-	struct MessageReactionRemoveAllEvent : public Event {
-		Snowflake channel_id;
-		Snowflake message_id;
-		Snowflake guild_id;
-
-		MessageReactionRemoveAllEvent(): Event(EventType::MESSAGE_REACTION_REMOVE_ALL) {}
-	};
-
-	struct MessageReactionRemoveEmojiEvent : public Event {
-		Snowflake channel_id;
-		Snowflake guild_id;
-		Snowflake message_id;
-		Emoji     emoji;
-
-		MessageReactionRemoveEmojiEvent(): Event(EventType::MESSAGE_REACTION_REMOVE_EMOJI) {}
-		MessageReactionRemoveEmojiEvent(Memory_Allocator allocator):
-			Event(EventType::MESSAGE_REACTION_REMOVE_EMOJI), emoji(allocator) {}
-	};
-
-	struct PresenceUpdateEvent : public Event {
-		Presence presence;
-		PresenceUpdateEvent(): Event(EventType::PRESENCE_UPDATE) {}
-		PresenceUpdateEvent(Memory_Allocator allocator): 
-			Event(EventType::PRESENCE_UPDATE), presence(allocator) {}
-	};
-
-	struct StageInstanceCreateEvent : public Event {
-		StageInstance stage;
-		StageInstanceCreateEvent(): Event(EventType::STAGE_INSTANCE_CREATE) {}
-	};
-
-	struct StageInstanceDeleteEvent : public Event {
-		StageInstance stage;
-		StageInstanceDeleteEvent(): Event(EventType::STAGE_INSTANCE_DELETE) {}
-	};
-	
-	struct StageInstanceUpdateEvent : public Event {
-		StageInstance stage;
-		StageInstanceUpdateEvent(): Event(EventType::STAGE_INSTANCE_UPDATE) {}
-	};
-
-	struct TypingStartEvent : public Event {
+	struct TypingStartInfo {
 		Snowflake    channel_id;
 		Snowflake    guild_id;
 		Snowflake    user_id;
 		Timestamp    timestamp;
 		GuildMember *member = nullptr;
-
-		TypingStartEvent(): Event(EventType::TYPING_START) {}
 	};
 
-	struct UserUpdateEvent : public Event {
-		User user;
-		UserUpdateEvent(): Event(EventType::USER_UPDATE) {}
-	};
+	struct Client;
 
-	struct VoiceStateUpdateEvent : public Event {
-		VoiceState voice_state;
-		VoiceStateUpdateEvent(): Event(EventType::VOICE_STATE_UPDATE) {}
-	};
-
-	struct VoiceServerUpdateEvent : public Event {
-		String    token;
-		Snowflake guild_id;
-		String    endpoint;
-		VoiceServerUpdateEvent(): Event(EventType::VOICE_SERVER_UPDATE) {}
-	};
-
-	struct WebhooksUpdateEvent : public Event {
-		Snowflake guild_id;
-		Snowflake channel_id;
-		WebhooksUpdateEvent(): Event(EventType::WEBHOOKS_UPDATE) {}
-	};
+	using TickEventProc           = void(*)(Client *);
+	using HelloEventProc          = void(*)(Client *, int32_t heartbeat_interval);
+	using ReadyEventProc          = void(*)(Client *, const Ready &);
+	using ResumedEventProc        = void(*)(Client *);
+	using ReconnectEventProc      = void(*)(Client *);
+	using InvalidSessionEventProc = void(*)(Client *, bool resumable);
+	using ApplicationCommandPermissionsUpdateEventProc = void(*)(Client *, const ApplicationCommandPermissions &permissions);
+	using ChannelCreateEventProc  = void(*)(Client *, const Channel &channel);
+	using ChannelUpdateEventProc  = void(*)(Client *, const Channel &channel);
+	using ChannelDeleteEventProc  = void(*)(Client *, const Channel &channel);
+	using ChannelPinsUpdateEventProc = void(*)(Client *, Snowflake guild_id, Snowflake channel_id, Timestamp last_pin_timestamp);
+	using ThreadCreateEventProc   = void(*)(Client *, const Channel &channel, bool newly_created);
+	using ThreadUpdateEventProc   = void(*)(Client *, const Channel &channel);
+	using ThreadDeleteEventProc   = void(*)(Client *, Snowflake id, Snowflake guild_id, Snowflake parent_id, ChannelType type);
+	using ThreadListSyncEventProc = void(*)(Client *, Snowflake guild_id, Array_View<Snowflake> channel_ids, Array_View<Channel> threads, Array<ThreadMember> members);
+	using ThreadMemberUpdateEventProc  = void(*)(Client *, Snowflake guild_id, const ThreadMember &member);
+	using ThreadMembersUpdateEventProc = void(*)(Client *, Snowflake id, Snowflake guild_id, int32_t member_count, Array_View<ThreadMember> added_members, Array_View<Snowflake> removed_member_ids);
+	using GuildCreateEventProc    = void(*)(Client *, const Guild &guild, const GuildInfo &info);
+	using GuildUpdateEventProc    = void(*)(Client *, const Guild &guild);
+	using GuildDeleteEventProc    = void(*)(Client *, const UnavailableGuild &unavailable_guild);
+	using GuildBanAddEventProc    = void(*)(Client *, Snowflake guild_id, const User &user);
+	using GuildBanRemoveEventProc = void(*)(Client *, Snowflake guild_id, const User &user);
+	using GuildEmojisUpdateEventProc   = void (*)(Client *, Snowflake guild_id, Array_View<Emoji> emojis);
+	using GuildStickersUpdateEventProc = void(*)(Client *, Snowflake guild_id, Array_View<Sticker> stickers);
+	using GuildIntegrationsUpdateEventProc = void(*)(Client *, Snowflake guild_id);
+	using GuildMemberAddEventProc    = void(*)(Client *, Snowflake guild_id, const GuildMember &member);
+	using GuildMemberRemoveEventProc = void(*)(Client *, Snowflake guild_id, const User &user);
+	using GuildMemberUpdateEventProc = void(*)(Client *, Snowflake guild_id, const GuildMemberUpdate &member);
+	using GuildMembersChunkEventProc = void(*)(Client *, Snowflake guild_id, const GuildMembersChunk &member_chunk);
+	using GuildRoleCreateEventProc = void(*)(Client *, Snowflake guild_id, const Role &role);
+	using GuildRoleUpdateEventProc = void(*)(Client *, Snowflake guild_id, const Role &role);
+	using GuildRoleDeleteEventProc = void(*)(Client *, Snowflake guild_id, Snowflake role_id);
+	using GuildScheduledEventCreateEventProc = void(*)(Client *, const GuildScheduledEvent &scheduled_event);
+	using GuildScheduledEventUpdateEventProc = void(*)(Client *, const GuildScheduledEvent &scheduled_event);
+	using GuildScheduledEventDeleteEventProc = void(*)(Client *, const GuildScheduledEvent &scheduled_event);
+	using GuildScheduledEventUserAddEventProc = void(*)(Client *, Snowflake guild_scheduled_event_id, Snowflake user_id, Snowflake guild_id);
+	using GuildScheduledEventUserRemoveEventProc = void(*)(Client *, Snowflake guild_scheduled_event_id, Snowflake user_id, Snowflake guild_id);
+	using IntegrationCreateEventProc = void(*)(Client *, Snowflake guild_id, const Integration &integration);
+	using IntegrationUpdateEventProc = void(*)(Client *, Snowflake guild_id, const Integration &integration);
+	using IntegrationDeleteEventProc = void(*)(Client *, Snowflake id, Snowflake guild_id, Snowflake application_id);
+	using InteractionCreateEventProc = void(*)(Client *, const Interaction &interaction);
+	using InviteCreateEventProc = void(*)(Client *, const InviteInfo &invite);
+	using InviteDeleteEventProc = void(*)(Client *, Snowflake channel_id, Snowflake guild_id, String code);
+	using MessageCreateEventProc = void(*)(Client *, const Message &message);
+	using MessageUpdateEventProc = void(*)(Client *, const Message &message);
+	using MessageDeleteEventProc = void(*)(Client *, Snowflake id, Snowflake channel_id, Snowflake guild_id);
+	using MessageDeleteBulkEventProc        = void(*)(Client *, Array_View<Snowflake> ids, Snowflake channel_id, Snowflake guild_id);
+	using MessageReactionAddEventProc       = void(*)(Client *, const MessageReactionInfo &reaction);
+	using MessageReactionRemoveEventProc    = void(*)(Client *, Snowflake user_id, Snowflake channel_id, Snowflake message_id, Snowflake guild_id, const Emoji &emoji);
+	using MessageReactionRemoveAllEventProc = void(*)(Client *, Snowflake channel_id, Snowflake message_id, Snowflake guild_id);
+	using MessageReactionRemoveEmojiEventProc = void(*)(Client *, Snowflake channel_id, Snowflake guild_id, Snowflake message_id, const Emoji &emoji);
+	using PresenceUpdateEventProc = void(*)(Client *, const Presence &presence);
+	using StageInstanceCreateEventProc = void(*)(Client *, StageInstance &stage);
+	using StageInstanceDeleteEventProc = void(*)(Client *, StageInstance &stage);
+	using StageInstanceUpdateEventProc = void(*)(Client *, StageInstance &stage);
+	using TypingStartEventProc = void(*)(Client *, const TypingStartInfo &typing);
+	using UserUpdateEventProc = void(*)(Client *, const User &user);
+	using VoiceStateUpdateEventProc  = void(*)(Client *, const VoiceState &voice_state);
+	using VoiceServerUpdateEventProc = void(*)(Client *, String token, Snowflake guild_id, String endpoint);
+	using WebhooksUpdateEventProc    = void(*)(Client *, Snowflake guild_id, Snowflake channel_id);
 
 	//
 	//
 	//
 
-	using EventHandler = void(*)(struct Client *client, const struct Event *event);
+	struct EventHandler {
+		TickEventProc                                tick    = nullptr;
+		HelloEventProc                               hello   = nullptr;
+		ReadyEventProc                               ready   = nullptr;
+		ResumedEventProc                             resumed = nullptr;
+		ReconnectEventProc                           reconnect = nullptr;
+		InvalidSessionEventProc                      invalid_session = nullptr;
+		ApplicationCommandPermissionsUpdateEventProc application_command_permissions_update = nullptr;
+		ChannelCreateEventProc                       channel_create = nullptr;
+		ChannelUpdateEventProc                       channel_update = nullptr;
+		ChannelDeleteEventProc                       channel_delete = nullptr;
+		ChannelPinsUpdateEventProc                   channel_pins_update = nullptr;
+		ThreadCreateEventProc                        thread_create = nullptr;
+		ThreadUpdateEventProc                        thread_update = nullptr;
+		ThreadDeleteEventProc                        thread_delete = nullptr;
+		ThreadListSyncEventProc                      thread_list_sync = nullptr;
+		ThreadMemberUpdateEventProc	                 thread_member_update = nullptr;
+		ThreadMembersUpdateEventProc                 thread_members_update = nullptr;
+		GuildCreateEventProc                         guild_create  = nullptr;
+		GuildUpdateEventProc                         guild_update  = nullptr;
+		GuildDeleteEventProc                         guild_delete  = nullptr;
+		GuildBanAddEventProc                         guild_ban_add = nullptr;
+		GuildBanRemoveEventProc                      guild_ban_remove = nullptr;
+		GuildEmojisUpdateEventProc	                 guild_emojis_update = nullptr;
+		GuildStickersUpdateEventProc                 guild_stickers_update = nullptr;
+		GuildIntegrationsUpdateEventProc             guild_integrations_update = nullptr;
+		GuildMemberAddEventProc                      guild_member_add = nullptr;
+		GuildMemberRemoveEventProc                   guild_member_remove = nullptr;
+		GuildMemberUpdateEventProc                   guild_member_update = nullptr;
+		GuildMembersChunkEventProc                   guild_members_chunk = nullptr;
+		GuildRoleCreateEventProc                     guild_role_create = nullptr;
+		GuildRoleUpdateEventProc                     guild_role_update = nullptr;
+		GuildRoleDeleteEventProc                     guild_role_delete = nullptr;
+		GuildScheduledEventCreateEventProc           guild_scheduled_event_create = nullptr;
+		GuildScheduledEventUpdateEventProc           guild_scheduled_event_update = nullptr;
+		GuildScheduledEventDeleteEventProc           guild_scheduled_event_delete = nullptr;
+		GuildScheduledEventUserAddEventProc          guild_scheduled_event_user_add = nullptr;
+		GuildScheduledEventUserRemoveEventProc       guild_scheduled_event_user_remove = nullptr;
+		IntegrationCreateEventProc                   integration_create = nullptr;
+		IntegrationUpdateEventProc                   integration_update = nullptr;
+		IntegrationDeleteEventProc                   integration_delete = nullptr;
+		InteractionCreateEventProc                   interaction_create = nullptr;
+		InviteCreateEventProc                        invite_create = nullptr;
+		InviteDeleteEventProc                        invite_delete = nullptr;
+		MessageCreateEventProc                       message_create = nullptr;
+		MessageUpdateEventProc                       message_update = nullptr;
+		MessageDeleteEventProc                       message_delete = nullptr;
+		MessageDeleteBulkEventProc                   message_delete_bulk = nullptr;
+		MessageReactionAddEventProc                  message_reaction_add = nullptr;
+		MessageReactionRemoveEventProc               message_reaction_remove = nullptr;
+		MessageReactionRemoveAllEventProc            message_reaction_remove_all = nullptr;
+		MessageReactionRemoveEmojiEventProc          message_reaction_remove_emoji = nullptr;
+		PresenceUpdateEventProc                      presence_update = nullptr;
+		StageInstanceCreateEventProc                 stage_instance_create = nullptr;
+		StageInstanceDeleteEventProc                 stage_instance_delete = nullptr;
+		StageInstanceUpdateEventProc                 stage_instance_update = nullptr;
+		TypingStartEventProc                         typing_start = nullptr;
+		UserUpdateEventProc                          user_update = nullptr;
+		VoiceStateUpdateEventProc                    voice_state_update = nullptr;
+		VoiceServerUpdateEventProc                   voice_server_update = nullptr;
+		WebhooksUpdateEventProc                      webhooks_update = nullptr;
+	};
 
 	struct Heartbeat {
 		float interval     = 2000.0f;
@@ -1730,8 +1462,6 @@ namespace Discord {
 		int   count        = 0;
 		int   acknowledged = 0;
 	};
-
-	struct Client;
 
 	void IdentifyCommand(Client *client);
 	void ResumeCommand(Client *client);
@@ -1760,10 +1490,8 @@ namespace Discord {
 		ClientSpec             default_spec;
 	};
 
-	void DefaultEventHandler(struct Client *client, const struct Event *event);
-
-	void  Login(const String token, int32_t intents = 0, EventHandler onevent = DefaultEventHandler, PresenceUpdate *presence = nullptr, ClientSpec spec = ClientSpec());
-	void  LoginSharded(const String token, int32_t intents = 0, EventHandler onevent = DefaultEventHandler, PresenceUpdate *presence = nullptr, int32_t shard_count = 0, const ShardSpec &specs = ShardSpec());
+	void  Login(const String token, int32_t intents = 0, EventHandler onevent = EventHandler{}, PresenceUpdate *presence = nullptr, ClientSpec spec = ClientSpec());
+	void  LoginSharded(const String token, int32_t intents = 0, EventHandler onevent = EventHandler{}, PresenceUpdate *presence = nullptr, int32_t shard_count = 0, const ShardSpec &specs = ShardSpec());
 	void  Logout(Client *client);
 	Shard GetShard(Client *client);
 
@@ -1799,4 +1527,6 @@ namespace Discord {
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
 	Channel *DeleteChannel(Client *client, Snowflake channel_id);
+	Array_View<Message> GetChannelMessages(Client *client, Snowflake channel_id, int limit = 0, Snowflake around = 0, Snowflake before = 0, Snowflake after = 0);
+	Message *GetChannelMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 }

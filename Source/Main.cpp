@@ -17,53 +17,38 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 
 static volatile bool Logout = false;
 
-void TestEventHandler(Discord::Client *client, const Discord::Event *event) {
-	if (event->type == Discord::EventType::TICK) {
-		if (Logout) {
-			Discord::Logout(client);
+void OnTick(Discord::Client *client) {
+	if (Logout) {
+		Discord::Logout(client);
+	}
+}
+
+void OnMessage(Discord::Client *client, const Discord::Message &message) {
+	if (message.content == "info") {
+		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
+		if (channel) {
+			Trace("Channel name" StrFmt, StrArg(channel->name));
+		} else {
+			Trace("Channle not found!");
 		}
-		return;
-	}
-
-	if (event->type == Discord::EventType::READY) {
-		auto ready = (Discord::ReadyEvent *)event;
-		Trace("Bot online " StrFmt "#" StrFmt, StrArg(ready->user.username), StrArg(ready->user.discriminator));
-		Trace("Discord Gateway Version : %d", ready->v);
-		Discord::Shard shard = Discord::GetShard(client);
-		Trace("Shard Tick: %d, %d", shard.id, shard.count);
-		return;
-	}
-
-	if (event->type == Discord::EventType::GUILD_CREATE) {
-		auto guild = (Discord::GuildCreateEvent *)event;
-		Trace("Joined guild: " StrFmt, StrArg(guild->guild.name));
-		return;
-	}
-
-	if (event->type == Discord::EventType::MESSAGE_CREATE) {
-		Discord::Shard shard = Discord::GetShard(client);
-		Trace("Shard Tick: %d, %d", shard.id, shard.count);
-		auto msg = (Discord::MessageCreateEvent *)event;
-		
-		if (msg->message.content == "info") {
-			Discord::Channel *channel = Discord::GetChannel(client, msg->message.channel_id);
-			if (channel) {
-				Trace("Channel name" StrFmt, StrArg(channel->name));
-			} else {
-				Trace("Channle not found!");
-			}
-		} else if (StrStartsWith(msg->message.content, "rename ")) {
-			String name = StrTrim(SubStr(msg->message.content, 7));
-			if (name.length) {
-				Discord::ChannelPatch patch;
-				Discord::PatchName(&patch, name);
-				Discord::ModifyChannel(client, msg->message.channel_id, patch);
-			}
-		} else if (msg->message.content == "deleteme") {
-			Discord::DeleteChannel(client, msg->message.channel_id);
+	} else if (StrStartsWith(message.content, "rename ")) {
+		String name = StrTrim(SubStr(message.content, 7));
+		if (name.length) {
+			Discord::ChannelPatch patch;
+			Discord::PatchName(&patch, name);
+			Discord::ModifyChannel(client, message.channel_id, patch);
 		}
-
-		return;
+	} else if (message.content == "deleteme") {
+		Discord::DeleteChannel(client, message.channel_id);
+	} else if (message.content == "getmsgs") {
+		auto msgs = Discord::GetChannelMessages(client, message.channel_id);
+		Trace("Get Msgs Count: %d", (int)msgs.count);
+		for (auto &m : msgs) {
+			Trace(StrFmt, StrArg(m.content));
+		}
+	} else if (message.content == "getmsg") {
+		auto current = Discord::GetChannelMessage(client, message.channel_id, message.id);
+		Trace(StrFmt, StrArg(current->content));
 	}
 }
 
@@ -104,7 +89,11 @@ int main(int argc, char **argv) {
 	activity->url   = "https://www.twitch.tv/ashishzero";
 	activity->type  = Discord::ActivityType::STREAMING;
 
-	Discord::LoginSharded(token, intents, TestEventHandler, &presence);
+	Discord::EventHandler events;
+	events.tick           = OnTick;
+	events.message_create = OnMessage;
+
+	Discord::LoginSharded(token, intents, events, &presence);
 
 	return 0;
 }

@@ -165,11 +165,14 @@ String Http_QueryParamGet(Http_Query_Params *params, String name) {
 void Http_DumpHeader(const Http_Request &req) {
 	LogInfoEx("Http", "================== Header Dump ==================");
 	LogInfo("%s ", (req.version == HTTP_VERSION_1_0 ? "HTTP/1.0" : "HTTP/1.1"));
-	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id)
-		LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(req.headers.known[id]));
+	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id) {
+		if (req.headers.known[id].length)
+			LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(req.headers.known[id]));
+	}
 	for (int index = 0; index < req.headers.raw.count; ++index) {
 		const auto &raw = req.headers.raw.data[index];
-		LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
+		if (raw.name.length)
+			LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
 	}
 	LogInfoEx("Http", "=================================================");
 }
@@ -179,11 +182,14 @@ void Http_DumpHeader(const Http_Response &res) {
 
 	LogInfoEx("Http", "================== Header Dump ==================");
 	LogInfo("%s %u " StrFmt, version, res.status.code, StrArg(res.status.name));
-	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id)
-		LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(res.headers.known[id]));
+	for (int id = 0; id < _HTTP_HEADER_COUNT; ++id) {
+		if (res.headers.known[id].length)
+			LogInfo("> " StrFmt ": " StrFmt, StrArg(HttpHeaderMap[id]), StrArg(res.headers.known[id]));
+	}
 	for (int index = 0; index < res.headers.raw.count; ++index) {
 		const auto &raw = res.headers.raw.data[index];
-		LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
+		if (raw.name.length)
+			LogInfo("> " StrFmt ": " StrFmt, StrArg(raw.name), StrArg(raw.value));
 	}
 	LogInfoEx("Http", "=================================================");
 }
@@ -390,8 +396,11 @@ String Http_GetHeader(Http_Response *res, const String name) {
 //
 //
 
+
+constexpr int HTTP_TIMEOUT_MS = 5000;
+
 static inline int Http_Send(Http *http, uint8_t *bytes, int length) {
-	int ret = Net_SendBlocked((Net_Socket *)http, bytes, length);
+	int ret = Net_SendBlocked((Net_Socket *)http, bytes, length, HTTP_TIMEOUT_MS);
 	if (ret >= 0) return ret;
 	Net_Error error = Net_GetLastError((Net_Socket *)http);
 	if (error == NET_E_TIMED_OUT) {
@@ -413,7 +422,7 @@ static inline bool Http_IterateSend(Http *http, uint8_t *bytes, ptrdiff_t bytes_
 }
 
 static inline int Http_Receive(Http *http, uint8_t *buffer, int length) {
-	int ret = Net_ReceiveBlocked((Net_Socket *)http, buffer, length);
+	int ret = Net_ReceiveBlocked((Net_Socket *)http, buffer, length, HTTP_TIMEOUT_MS);
 	if (ret >= 0) return ret;
 	Net_Error error = Net_GetLastError((Net_Socket *)http);
 	if (error == NET_E_TIMED_OUT) {
@@ -428,6 +437,10 @@ static inline void Http_FlushRead(Http *http, Http_Response *res) {
 		int bytes_read = Net_ReceiveBlocked((Net_Socket *)http, res->buffer, HTTP_MAX_HEADER_SIZE);
 		if (bytes_read <= 0) break;
 	}
+}
+
+void Http_DumpProc(Http_Header &header, uint8_t *buffer, ptrdiff_t length, void *context) {
+	LogInfo(StrFmt, StrArg(String(buffer, length)));
 }
 
 ptrdiff_t Http_BuildRequest(const String method, const String endpoint, const Http_Query_Params *params, const Http_Request &req, uint8_t *buffer, ptrdiff_t buff_len) {
@@ -503,7 +516,10 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 
 		while (read_more) {
 			int bytes_read = Http_Receive(http, read_ptr, buffer_size);
-			if (bytes_read <= 0) return false;
+			if (bytes_read <= 0)
+				return false;
+
+			Assert(res->buffer[0] != '\n');
 
 			read_ptr += bytes_read;
 			buffer_size -= bytes_read;
@@ -602,7 +618,8 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 					}
 				}
 				if (!prefix_present) {
-					LogErrorEx("Http", "Corrupt header received: missing HTTP prefix");
+					LogErrorEx("Http", "Corrupt header received: missing HTTP prefix: " StrFmt, StrArg(line));
+					LogInfoEx("Http", "Received: " StrFmt, StrArg(String(res->buffer, res->length)));
 					Http_FlushRead(http, res);
 					return false;
 				}
@@ -611,6 +628,7 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 				ptrdiff_t name_pos = StrFindChar(line, ' ');
 				if (name_pos < 0) {
 					LogErrorEx("Http", "Corrupt header received: missing status code");
+					LogInfoEx("Http", "Received: " StrFmt, StrArg(String(res->buffer, res->length)));
 					Http_FlushRead(http, res);
 					return false;
 				}
@@ -618,10 +636,12 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 				ptrdiff_t status_code;
 				if (!ParseInt(SubStr(line, 0, name_pos), &status_code)) {
 					LogErrorEx("Http", "Corrupt header received: invalid status code");
+					LogInfoEx("Http", "Received: " StrFmt, StrArg(String(res->buffer, res->length)));
 					Http_FlushRead(http, res);
 					return false;
 				} else if (status_code < 0) {
 					LogErrorEx("Http", "Corrupt header received: status code is negative");
+					LogInfoEx("Http", "Received: " StrFmt, StrArg(String(res->buffer, res->length)));
 					Http_FlushRead(http, res);
 					return false;
 				}
@@ -664,56 +684,83 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 	} else {
 		String transfer_encoding = res->headers.known[HTTP_HEADER_TRANSFER_ENCODING];
 
+		Trace("===> Transfer encoding");
+
 		// Transfer-Encoding: chunked
 		if (transfer_encoding.length && StrFindICase(transfer_encoding, "chunked") >= 0) {
 			ptrdiff_t chunk_read  = body_read;
 
 			while (true) {
-				while (chunk_read < 4) {
+				ptrdiff_t data_pos = -1;
+
+				while (data_pos < 0) {
 					int bytes_read = Http_Receive(http, buffer + chunk_read, (HTTP_STREAM_CHUNK_SIZE - (int)chunk_read));
-					if (bytes_read <= 0) return false;
+					if (bytes_read <= 0) {
+						LogErrorEx("Http", "Failed to receive chunked data");
+						return false;
+					}
 					chunk_read += bytes_read;
+					data_pos = StrFind(String(buffer, chunk_read), "\r\n");
 				}
 
-				String chunk_header(buffer, chunk_read);
-				ptrdiff_t data_pos = StrFind(chunk_header, "\r\n");
-				if (data_pos < 0) {
-					LogErrorEx("Http", "Transfer-Encoding: chunk size not present");
-					Http_DumpHeader(*res);
-					Http_FlushRead(http, res);
-					return false;
-				}
+				while (data_pos >= 0) {
+					String chunk_header(buffer, chunk_read);
+					String length_str = SubStr(chunk_header, 0, data_pos);
 
-				String length_str = SubStr(chunk_header, 0, data_pos);
-				ptrdiff_t chunk_length;
-				if (!ParseHex(length_str, &chunk_length) || chunk_length < 0) {
-					LogErrorEx("Http", "Transfer-Encoding: invalid chunk size");
-					Http_FlushRead(http, res);
-					return false;
-				}
-
-				if (chunk_length == 0)
-					break;
-
-				data_pos += 2; // skip \r\n
-				ptrdiff_t streamed_chunk_len = chunk_read - data_pos;
-
-				if (chunk_length <= streamed_chunk_len) {
-					writer.proc(res->headers, buffer + data_pos, chunk_length, writer.context);
-					chunk_read -= (data_pos + chunk_length);
-					memmove(buffer, buffer + data_pos + chunk_length, chunk_read);
-				} else {
-					writer.proc(res->headers, buffer + data_pos, streamed_chunk_len, writer.context);
-
-					ptrdiff_t remaining = chunk_length - streamed_chunk_len;
-					while (remaining) {
-						int bytes_read = Http_Receive(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
-						if (bytes_read <= 0) return false;
-						writer.proc(res->headers, buffer, bytes_read, writer.context);
-						remaining -= bytes_read;
+					ptrdiff_t chunk_length;
+					if (!ParseHex(length_str, &chunk_length) || chunk_length < 0) {
+						LogErrorEx("Http", "Transfer-Encoding: invalid chunk size");
+						Http_FlushRead(http, res);
+						return false;
 					}
 
-					chunk_read = 0;
+					data_pos += 2; // skip \r\n
+					ptrdiff_t streamed_chunk_len = chunk_read - data_pos;
+
+					if (chunk_length <= streamed_chunk_len) {
+						writer.proc(res->headers, buffer + data_pos, chunk_length, writer.context);
+						chunk_read -= (data_pos + chunk_length);
+						memmove(buffer, buffer + data_pos + chunk_length, chunk_read);
+					} else {
+						writer.proc(res->headers, buffer + data_pos, streamed_chunk_len, writer.context);
+
+						ptrdiff_t remaining = chunk_length - streamed_chunk_len;
+						while (remaining) {
+							int bytes_read = Http_Receive(http, buffer, (int)Minimum(remaining, HTTP_STREAM_CHUNK_SIZE));
+							if (bytes_read <= 0)
+								return false;
+							writer.proc(res->headers, buffer, bytes_read, writer.context);
+							remaining -= bytes_read;
+						}
+
+						chunk_read = 0;
+					}
+
+					{
+						// Read the next "\r\n"
+						ptrdiff_t remaining = 2 - chunk_read;
+						while (remaining > 0) {
+							int bytes_read = Http_Receive(http, buffer + chunk_read, (HTTP_STREAM_CHUNK_SIZE - (int)chunk_read));
+							if (bytes_read <= 0) {
+								LogErrorEx("Http", "Failed to receive chunked data");
+								return false;
+							}
+							chunk_read += bytes_read;
+							remaining -= bytes_read;
+						}
+						if (buffer[0] == '\r' && buffer[1] == '\n') {
+							memmove(buffer, buffer + 2, chunk_read - 2);
+							chunk_read -= 2;
+						} else {
+							LogErrorEx("Http", "Invalid chunks present in the body");
+							return false;
+						}
+
+						if (chunk_length == 0)
+							return true;
+
+						data_pos = StrFind(String(buffer, chunk_read), "\r\n");
+					}
 				}
 			}
 		}

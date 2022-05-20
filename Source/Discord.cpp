@@ -10,9 +10,12 @@
 #include <math.h>
 #include <time.h>
 
+constexpr int DISCORD_HTTP_SEND_BUFFER_SIZE    = MegaBytes(16);
+constexpr int DISCORD_HTTP_RECEIVE_BUFFER_SIZE = MegaBytes(16);
+
 namespace Discord {
 	const String UserAgent        = "Katachi (https://github.com/Zero5620/Katachi, 0.1.1)";
-	const String BaseHttpEndpoint = "/api/v10";
+	const String BaseHttpUrl = "/api/v10";
 }
 
 static void Discord_Jsonify(const Discord::Activity &activity, Jsonify *j) {
@@ -1449,6 +1452,73 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Interaction *in
 //
 //
 
+static void Discord_SetupEventHandlers(Discord::EventHandler *h) {
+	using namespace Discord;
+	if (!h->tick) h->tick           = [](Client *) {};
+	if (!h->hello) h->hello         = [](Client *, int32_t) {};
+	if (!h->ready) h->ready         = [](Client *, const Ready &) {};
+	if (!h->resumed) h->resumed     = [](Client *) {};
+	if (!h->reconnect) h->reconnect = [](Client *) {};
+	if (!h->invalid_session) h->invalid_session = [](Discord::Client *, bool) {};
+	if (!h->application_command_permissions_update) h->application_command_permissions_update = [](Client *, const ApplicationCommandPermissions &) {};
+	if (!h->channel_create) h->channel_create = [](Client *, const Channel &channel) {};
+	if (!h->channel_update) h->channel_update = [](Client *, const Channel &channel) {};
+	if (!h->channel_delete) h->channel_delete = [](Client *, const Channel &channel) {};
+	if (!h->channel_pins_update) h->channel_pins_update = [](Client *, Snowflake guild_id, Snowflake channel_id, Timestamp last_pin_timestamp) {};
+	if (!h->thread_create) h->thread_create = [](Client *, const Channel &channel, bool newly_created) {};
+	if (!h->thread_update) h->thread_update = [](Client *, const Channel &channel) {};
+	if (!h->thread_delete) h->thread_delete = [](Client *, Snowflake id, Snowflake guild_id, Snowflake parent_id, ChannelType type) {};
+	if (!h->thread_list_sync) h->thread_list_sync = [](Client *, Snowflake guild_id, Array_View<Snowflake> channel_ids, Array_View<Channel> threads, Array<ThreadMember> members) {};
+	if (!h->thread_member_update) h->thread_member_update = [](Client *, Snowflake guild_id, const ThreadMember & member) {};
+	if (!h->thread_members_update) h->thread_members_update = [](Client *, Snowflake id, Snowflake guild_id, int32_t member_count, Array_View<ThreadMember> added_members, Array_View<Snowflake> removed_member_ids) {};
+	if (!h->guild_create) h->guild_create = [](Client *, const Guild &guild, const GuildInfo &info) {};
+	if (!h->guild_update) h->guild_update = [](Client *, const Guild &guild) {};
+	if (!h->guild_delete) h->guild_delete = [](Client *, const UnavailableGuild &unavailable_guild) {};
+	if (!h->guild_ban_add) h->guild_ban_add = [](Client *, Snowflake guild_id, const User &user) {};
+	if (!h->guild_ban_remove) h->guild_ban_remove = [](Client *, Snowflake guild_id, const User &user) {};
+	if (!h->guild_emojis_update) h->guild_emojis_update = [](Client *, Snowflake guild_id, Array_View<Emoji> emojis) {};
+	if (!h->guild_stickers_update) h->guild_stickers_update = [](Client *, Snowflake guild_id, Array_View<Sticker> stickers) {};
+	if (!h->guild_integrations_update) h->guild_integrations_update = [](Client *, Snowflake guild_id) {};
+	if (!h->guild_member_add) h->guild_member_add = [](Client *, Snowflake guild_id, const GuildMember &member) {};
+	if (!h->guild_member_remove) h->guild_member_remove = [](Client *, Snowflake guild_id, const User &user) {};
+	if (!h->guild_member_update) h->guild_member_update = [](Client *, Snowflake guild_id, const GuildMemberUpdate &member) {};
+	if (!h->guild_members_chunk) h->guild_members_chunk = [](Client *, Snowflake guild_id, const GuildMembersChunk &member_chunk) {};
+	if (!h->guild_role_create) h->guild_role_create = [](Client *, Snowflake guild_id, const Role &role) {};
+	if (!h->guild_role_update) h->guild_role_update = [](Client *, Snowflake guild_id, const Role &role) {};
+	if (!h->guild_role_delete) h->guild_role_delete = [](Client *, Snowflake guild_id, Snowflake role_id) {};
+	if (!h->guild_scheduled_event_create) h->guild_scheduled_event_create = [](Client *, const GuildScheduledEvent &scheduled_event) {};
+	if (!h->guild_scheduled_event_update) h->guild_scheduled_event_update = [](Client *, const GuildScheduledEvent &scheduled_event) {};
+	if (!h->guild_scheduled_event_delete) h->guild_scheduled_event_delete = [](Client *, const GuildScheduledEvent &scheduled_event) {};
+	if (!h->guild_scheduled_event_user_add) h->guild_scheduled_event_user_add = [](Client *, Snowflake guild_scheduled_event_id, Snowflake user_id, Snowflake guild_id) {};
+	if (!h->guild_scheduled_event_user_remove) h->guild_scheduled_event_user_remove = [](Client *, Snowflake guild_scheduled_event_id, Snowflake user_id, Snowflake guild_id) {};
+	if (!h->integration_create) h->integration_create = [](Client *, Snowflake guild_id, const Integration &integration) {};
+	if (!h->integration_update) h->integration_update = [](Client *, Snowflake guild_id, const Integration &integration) {};
+	if (!h->integration_delete) h->integration_delete = [](Client *, Snowflake id, Snowflake guild_id, Snowflake application_id) {};
+	if (!h->interaction_create) h->interaction_create = [](Client *, const Interaction &interaction) {};
+	if (!h->invite_create) h->invite_create = [](Client *, const InviteInfo &invite) {};
+	if (!h->invite_delete) h->invite_delete = [](Client *, Snowflake channel_id, Snowflake guild_id, String code) {};
+	if (!h->message_create) h->message_create = [](Client *, const Message &message) {};
+	if (!h->message_update) h->message_update = [](Client *, const Message &message) {};
+	if (!h->message_delete) h->message_delete = [](Client *, Snowflake id, Snowflake channel_id, Snowflake guild_id) {};
+	if (!h->message_delete_bulk) h->message_delete_bulk = [](Client *, Array_View<Snowflake> ids, Snowflake channel_id, Snowflake guild_id) {};
+	if (!h->message_reaction_add) h->message_reaction_add = [](Client *, const MessageReactionInfo &reaction) {};
+	if (!h->message_reaction_remove) h->message_reaction_remove = [](Client *, Snowflake user_id, Snowflake channel_id, Snowflake message_id, Snowflake guild_id, const Emoji &emoji) {};
+	if (!h->message_reaction_remove_all) h->message_reaction_remove_all = [](Client *, Snowflake channel_id, Snowflake message_id, Snowflake guild_id) {};
+	if (!h->message_reaction_remove_emoji) h->message_reaction_remove_emoji = [](Client *, Snowflake channel_id, Snowflake guild_id, Snowflake message_id, const Emoji &emoji) {};
+	if (!h->presence_update) h->presence_update = [](Client *, const Presence &presence) {};
+	if (!h->stage_instance_create) h->stage_instance_create = [](Client *, StageInstance &stage) {};
+	if (!h->stage_instance_delete) h->stage_instance_delete = [](Client *, StageInstance &stage) {};
+	if(!h->typing_start) h->typing_start = [](Client *, const TypingStartInfo &typing) {};
+	if (!h->user_update) h->user_update = [](Client *, const User &user) {};
+	if (!h->voice_state_update) h->voice_state_update = [](Client *, const VoiceState &voice_state) {};
+	if (!h->voice_server_update) h->voice_server_update = [](Client *, String token, Snowflake guild_id, String endpoint) {};
+	if (!h->webhooks_update) h->webhooks_update = [](Client *, Snowflake guild_id, Snowflake channel_id) {};
+}
+
+//
+//
+//
+
 struct Discord_GatewayResponse {
 	int32_t shards;
 	struct {
@@ -1475,7 +1545,7 @@ static bool Discord_ConnectToGatewayBot(String token, Memory_Arena *arena, Disco
 	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, authorization);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
-	String endpoint = FmtStr(arena, StrFmt "/gateway/bot", StrArg(Discord::BaseHttpEndpoint));
+	String endpoint = FmtStr(arena, StrFmt "/gateway/bot", StrArg(Discord::BaseHttpUrl));
 
 	Http_Response res;
 	if (!Http_Get(http, endpoint, req, &res, arena)) {
@@ -1525,7 +1595,7 @@ static Websocket *Discord_ConnectToGateway(String token, Memory_Arena *scratch, 
 	Http_SetHost(&req, http);
 	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 
-	String endpoint = FmtStr(scratch, StrFmt "/gateway", StrArg(Discord::BaseHttpEndpoint));
+	String endpoint = FmtStr(scratch, StrFmt "/gateway", StrArg(Discord::BaseHttpUrl));
 
 	Http_Response res;
 	if (!Http_Get(http, endpoint, req, &res, scratch)) {
@@ -1641,13 +1711,13 @@ static inline String Discord_BitIntToString(uint64_t value) {
 namespace Discord {
 	
 	struct Client {
-		Http *           http      = nullptr;
 		Websocket *      websocket = nullptr;
 		Heartbeat        heartbeat;
 
+		Http *           http = nullptr;
 		String           authorization;
 
-		EventHandler     onevent   = DefaultEventHandler;
+		EventHandler     onevent;
 
 		Memory_Arena *   scratch   = nullptr;
 		Memory_Allocator allocator = ThreadContext.allocator;
@@ -1741,10 +1811,6 @@ namespace Discord {
 		Websocket_SendText(client->websocket, msg);
 	}
 
-	void DefaultEventHandler(struct Client *client, const struct Event *event) {
-		TraceEx("Discord", StrFmt, StrArg(event->name));
-	}
-
 	void Login(const String token, int32_t intents, EventHandler onevent, PresenceUpdate *presence, ClientSpec spec) {
 		Assert(spec.tick_ms >= 0);
 
@@ -1785,6 +1851,8 @@ namespace Discord {
 		client.authorization = FmtStr(client.allocator, "Bot " StrFmt, StrArg(client.identify.token));
 
 		ThreadContext.allocator = MemoryArenaAllocator(arena);
+
+		Discord_SetupEventHandlers(&client.onevent);
 
 		while (client.login) {
 			client.heartbeat = Discord::Heartbeat();
@@ -1828,8 +1896,7 @@ namespace Discord {
 				}
 
 				if (res == WEBSOCKET_E_WAIT) {
-					Discord::Event none;
-					client.onevent(&client, &none);
+					client.onevent.tick(&client);
 				}
 
 				MemoryArenaReset(client.scratch);
@@ -2070,49 +2137,86 @@ namespace Discord {
 		return nullptr;
 	}
 
+	Array_View<Message> GetChannelMessages(Client *client, Snowflake channel_id, int limit, Snowflake around, Snowflake before, Snowflake after) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages", channel_id);
 
+		Http_Query_Params params;
+		if (limit > 0)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%d", limit));
+		if (around)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%zu", around.value));
+		else if (before)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%zu", before.value));
+		else if (after)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%zu", after.value));
+
+		Json res;
+		if (Discord_Get(client, endpoint, params, String(), &res)) {
+			Json_Array arr = JsonGetArray(res);
+			Array<Message> messages;
+			messages.Resize(arr.count);
+			for (ptrdiff_t index = 0; index < messages.count; ++index) {
+				Discord_Deserialize(JsonGetObject(arr[index]), &messages[index]);
+			}
+			return messages;
+		}
+		return Array_View<Message>();
+	}
+
+	Message *GetChannelMessage(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu", channel_id, message_id);
+
+		Json res;
+		if (Discord_Get(client, endpoint, String(), &res)) {
+			Message *message = new Message;
+			Discord_Deserialize(JsonGetObject(res), message);
+			return message;
+		}
+		return nullptr;
+	}
 }
 
 //
 //
 //
 
-static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json) {
+static void Discord_InitHttpRequest(Http *http, Http_Request *req, String authorization, String body = String()) {
+	Http_InitRequest(req);
+	Http_SetHost(req, http);
+	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "close");
+	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
+	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, authorization);
+	Http_SetContent(req, "application/json", body);
+}
+
+static bool Discord_HttpConnect(Discord::Client *client) {
+	const String host = "https://discord.com";
+	client->http = Http_Connect(host, HTTPS_CONNECTION, client->allocator);
 	if (!client->http) {
-		const String host = "https://discord.com";
-		client->http = Http_Connect(host, HTTPS_CONNECTION, client->allocator);
-		if (!client->http) {
-			LogErrorEx("Discord", "Unable to connect to \"" StrFmt "\".", StrArg(host));
-			return false;
-		}
+		LogErrorEx("Discord", "Unable to connect to \"" StrFmt "\".", StrArg(host));
+		return nullptr;
 	}
 
+	return true;
+}
+
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json) {
+	if (!client->http) {
+		if (!Discord_HttpConnect(client))
+			return false;
+	}
+
+	String endpoint = FmtStr(client->scratch, StrFmt StrFmt, StrArg(Discord::BaseHttpUrl), StrArg(api_endpoint));
+
 	Http_Request req;
-	Http_InitRequest(&req);
-	Http_SetHost(&req, client->http);
-	Http_SetHeader(&req, HTTP_HEADER_CONNECTION, "keep-alive");
-	Http_SetHeader(&req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
-	Http_SetHeader(&req, HTTP_HEADER_AUTHORIZATION, client->authorization);
-	Http_SetContent(&req, "application/json", body);
-
-	int len = snprintf((char *)req.buffer + req.length, sizeof(req.buffer) - req.length, StrFmt StrFmt, 
-		StrArg(Discord::BaseHttpEndpoint), StrArg(api_endpoint));
-
-	String endpoint = String(req.buffer + req.length, len);
-
 	Http_Response res;
 
-	for (int i = 0; i < 2; ++i) {
+	for (int retry = 0; retry < 2; ++retry) {
+		Discord_InitHttpRequest(client->http, &req, client->authorization, body);
 		if (Http_CustomMethod(client->http, method, endpoint, params, req, &res, client->scratch)) {
 			if (res.status.code != 200) {
 				// @todo: handle rate limiting
-				Unimplemented();
 				return false;
-			}
-
-			if (res.headers.known[HTTP_HEADER_CONNECTION] == "close") {
-				Http_Disconnect(client->http);
-				client->http = nullptr;
 			}
 
 			if (JsonParse(res.body, json))
@@ -2122,7 +2226,9 @@ static bool Discord_CustomMethod(Discord::Client *client, const String method, c
 
 			return false;
 		} else {
-			Http_Reconnect(client->http);
+			Http_Disconnect(client->http);
+			if (!Discord_HttpConnect(client))
+				return false;
 		}
 	}
 
@@ -2140,24 +2246,26 @@ static void Discord_EventHandlerNone(Discord::Client *client, const Json &data) 
 static void Discord_EventHandlerHello(Discord::Client *client, const Json &data) {
 	Json_Object obj = JsonGetObject(data);
 	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
-	Discord::HelloEvent hello;
-	hello.heartbeat_interval = (int32_t)client->heartbeat.interval;
-	client->onevent(client, &hello);
+	client->onevent.hello(client, client->heartbeat.interval);
 }
 
 static void Discord_EventHandlerReady(Discord::Client *client, const Json &data) {
-	Discord::ReadyEvent ready;
+	Discord::Ready ready;
 
 	Json_Object obj = JsonGetObject(data);
 	ready.v = JsonGetInt(obj, "v");
 	Discord_Deserialize(JsonGetObject(obj, "user"), &ready.user);
 
-	Json_Array guilds = JsonGetArray(obj, "guilds");
-	ready.guilds.Resize(guilds.count);
+	Json_Array jsonguilds = JsonGetArray(obj, "guilds");
+
+	Array<Discord::UnavailableGuild> guilds;
+	guilds.Resize(jsonguilds.count);
 
 	for (ptrdiff_t index = 0; index < ready.guilds.count; ++index) {
-		Discord_Deserialize(JsonGetObject(guilds[index]), &ready.guilds[index]);
+		Discord_Deserialize(JsonGetObject(jsonguilds[index]), &guilds[index]);
 	}
+
+	ready.guilds = guilds;
 
 	ready.session_id = JsonGetString(obj, "session_id");
 
@@ -2175,29 +2283,26 @@ static void Discord_EventHandlerReady(Discord::Client *client, const Json &data)
 
 	TraceEx("Discord", "Client Session ready: " StrFmt, StrArg(ready.session_id));
 
-	client->onevent(client, &ready);
+	client->onevent.ready(client, ready);
 }
 
 static void Discord_EventHandlerResumed(Discord::Client *client, const Json &data) {
-	Discord::ResumedEvent resumed;
-	client->onevent(client, &resumed);
+	client->onevent.resumed(client);
 }
 
 static void Discord_EventHandlerReconnect(Discord::Client *client, const Json &data) {
-	Discord::ReconnectEvent reconnect;
-	client->onevent(client, &reconnect);
+	client->onevent.reconnect(client);
 	// Abnormal closure so that we can resume the session
 	Websocket_Close(client->websocket, WEBSOCKET_CLOSE_ABNORMAL_CLOSURE);
 }
 
 static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Json &data) {
-	Discord::InvalidSessionEvent invalid_session;
-	invalid_session.resumable = JsonGetBool(data);
-	client->onevent(client, &invalid_session);
+	bool resumable = JsonGetBool(data);
+	client->onevent.invalid_session(client, resumable);
 
 	// If session_id is present, then resume was requested
 	if (strlen((char *)client->session_id)) {
-		if (!invalid_session.resumable) {
+		if (!resumable) {
 			TraceEx("Discord", "Failed to resume session: %s", client->session_id);
 
 			// Clean session_id so that identfy payload is sent if disconnected
@@ -2214,262 +2319,282 @@ static void Discord_EventHandlerInvalidSession(Discord::Client *client, const Js
 }
 
 static void Discord_EventHandlerApplicationCommandPermissionsUpdate(Discord::Client *client, const Json &data) {
-	Discord::ApplicationCommandPermissionsUpdateEvent app_cmd_perms_update;
-	Discord_Deserialize(JsonGetObject(data), &app_cmd_perms_update.permissions);
-	client->onevent(client, &app_cmd_perms_update);
+	Discord::ApplicationCommandPermissions permissions;
+	Discord_Deserialize(JsonGetObject(data), &permissions);
+	client->onevent.application_command_permissions_update(client, permissions);
 }
 
 static void Discord_EventHandlerChannelCreate(Discord::Client *client, const Json &data) {
-	Discord::ChannelCreateEvent channel;
-	Discord_Deserialize(JsonGetObject(data), &channel.channel);
-	client->onevent(client, &channel);
+	Discord::Channel channel;
+	Discord_Deserialize(JsonGetObject(data), &channel);
+	client->onevent.channel_create(client, channel);
 }
 
 static void Discord_EventHandlerChannelUpdate(Discord::Client *client, const Json &data) {
-	Discord::ChannelUpdateEvent channel;
-	Discord_Deserialize(JsonGetObject(data), &channel.channel);
-	client->onevent(client, &channel);
+	Discord::Channel channel;
+	Discord_Deserialize(JsonGetObject(data), &channel);
+	client->onevent.channel_update(client, channel);
 }
 
 static void Discord_EventHandlerChannelDelete(Discord::Client *client, const Json &data) {
-	Discord::ChannelDeleteEvent channel;
-	Discord_Deserialize(JsonGetObject(data), &channel.channel);
-	client->onevent(client, &channel);
+	Discord::Channel channel;
+	Discord_Deserialize(JsonGetObject(data), &channel);
+	client->onevent.channel_delete(client, channel);
 }
 
 static void Discord_EventHandlerChannelPinsUpdate(Discord::Client *client, const Json &data) {
-	Discord::ChannelPinsUpdateEvent pins;
-	Json_Object obj         = JsonGetObject(data);
-	pins.guild_id           = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	pins.channel_id         = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	pins.last_pin_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "last_pin_timestamp"));
-	client->onevent(client, &pins);
+	Json_Object obj                       = JsonGetObject(data);
+	Discord::Snowflake guild_id           = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake channel_id         = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Timestamp last_pin_timestamp = Discord_ParseTimestamp(JsonGetString(obj, "last_pin_timestamp"));
+	client->onevent.channel_pins_update(client, guild_id, channel_id, last_pin_timestamp);
 }
 
 static void Discord_EventHandlerThreadCreate(Discord::Client *client, const Json &data) {
-	Discord::ThreadCreateEvent thread;
+	Discord::Channel thread;
 	Json_Object obj = JsonGetObject(data);
-	Discord_Deserialize(obj, &thread.channel);
-	thread.newly_created = JsonGetBool(obj, "newly_created");
-	client->onevent(client, &thread);
+	Discord_Deserialize(obj, &thread);
+	bool newly_created = JsonGetBool(obj, "newly_created");
+	client->onevent.thread_create(client, thread, newly_created);
 }
 
 static void Discord_EventHandlerThreadUpdate(Discord::Client *client, const Json &data) {
-	Discord::ThreadUpdateEvent thread;
+	Discord::Channel thread;
 	Json_Object obj = JsonGetObject(data);
-	Discord_Deserialize(obj, &thread.channel);
-	client->onevent(client, &thread);
+	Discord_Deserialize(obj, &thread);
+	client->onevent.thread_update(client, thread);
 }
 
 static void Discord_EventHandlerThreadDelete(Discord::Client *client, const Json &data) {
-	Discord::ThreadDeleteEvent thread;
 	Json_Object obj  = JsonGetObject(data);
-	thread.id        = Discord_ParseId(JsonGetString(obj, "id"));
-	thread.guild_id  = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	thread.parent_id = Discord_ParseId(JsonGetString(obj, "parent_id"));
-	thread.type      = (Discord::ChannelType)JsonGetInt(obj, "type");
-	client->onevent(client, &thread);
+	Discord::Snowflake id        = Discord_ParseId(JsonGetString(obj, "id"));
+	Discord::Snowflake guild_id  = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake parent_id = Discord_ParseId(JsonGetString(obj, "parent_id"));
+	Discord::ChannelType type    = (Discord::ChannelType)JsonGetInt(obj, "type");
+	client->onevent.thread_delete(client, id, guild_id, parent_id, type);
 }
 
 static void Discord_EventHandlerThreadListSync(Discord::Client *client, const Json &data) {
-	Discord::ThreadListSyncEvent sync;
 	Json_Object obj = JsonGetObject(data);
-	sync.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
-	Json_Array channel_ids = JsonGetArray(obj, "channel_ids");
-	sync.channel_ids.Resize(channel_ids.count);
-	for (ptrdiff_t index = 0; index < sync.channel_ids.count; ++index) {
-		sync.channel_ids[index] = Discord_ParseId(JsonGetString(channel_ids[index]));
+	Json_Array jsonchannel_ids = JsonGetArray(obj, "channel_ids");
+	Array<Discord::Snowflake> channel_ids;
+	channel_ids.Resize(jsonchannel_ids.count);
+	for (ptrdiff_t index = 0; index < channel_ids.count; ++index) {
+		channel_ids[index] = Discord_ParseId(JsonGetString(jsonchannel_ids[index]));
 	}
 
-	Json_Array threads = JsonGetArray(obj, "threads");
-	sync.threads.Resize(threads.count);
-	for (ptrdiff_t index = 0; index < sync.threads.count; ++index) {
-		Discord_Deserialize(JsonGetObject(threads[index]), &sync.threads[index]);
+	Json_Array jsonthreads = JsonGetArray(obj, "threads");
+	Array<Discord::Channel> threads;
+	threads.Resize(jsonthreads.count);
+	for (ptrdiff_t index = 0; index < threads.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonthreads[index]), &threads[index]);
 	}
 
-	Json_Array members = JsonGetArray(obj, "members");
-	sync.members.Resize(members.count);
-	for (ptrdiff_t index = 0; index < sync.members.count; ++index) {
-		Discord_Deserialize(JsonGetObject(members[index]), &sync.threads[index]);
+	Json_Array jsonmembers = JsonGetArray(obj, "members");
+	Array<Discord::ThreadMember> members;
+	members.Resize(jsonmembers.count);
+	for (ptrdiff_t index = 0; index < members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonmembers[index]), &threads[index]);
 	}
 
-	client->onevent(client, &sync);
+	client->onevent.thread_list_sync(client, guild_id, channel_ids, threads, members);
 }
 
 static void Discord_EventHandlerThreadMemberUpdate(Discord::Client *client, const Json &data) {
-	Discord::ThreadMemberUpdateEvent mem_update;
 	Json_Object obj = JsonGetObject(data);
-	Discord_Deserialize(obj, &mem_update.member);
-	mem_update.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &mem_update);
+	Discord::ThreadMember member;
+	Discord_Deserialize(obj, &member);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.thread_member_update(client, guild_id, member);
 }
 
 static void Discord_EventHandlerThreadMembersUpdate(Discord::Client *client, const Json &data) {
-	Discord::ThreadMembersUpdateEvent mems_update;
-	Json_Object obj          = JsonGetObject(data);
-	mems_update.id           = Discord_ParseId(JsonGetString(obj, "id"));
-	mems_update.id           = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	mems_update.member_count = JsonGetInt(obj, "member_count");
+	Json_Object obj                 = JsonGetObject(data);
+	Discord::Snowflake id           = Discord_ParseId(JsonGetString(obj, "id"));
+	Discord::Snowflake guild_id     = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake member_count = JsonGetInt(obj, "member_count");
 
-	Json_Array added_members = JsonGetArray(obj, "added_members");
-	mems_update.added_members.Resize(added_members.count);
-	for (ptrdiff_t index = 0; index < mems_update.added_members.count; ++index) {
-		Discord_Deserialize(JsonGetObject(added_members[index]), &mems_update.added_members[index]);
+	Json_Array jsonadded_members = JsonGetArray(obj, "added_members");
+	Array<Discord::ThreadMember> added_members;
+	added_members.Resize(jsonadded_members.count);
+	for (ptrdiff_t index = 0; index < added_members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonadded_members[index]), &added_members[index]);
 	}
 
-	Json_Array removed_member_ids = JsonGetArray(obj, "removed_member_ids");
-	mems_update.removed_member_ids.Resize(removed_member_ids.count);
-	for (ptrdiff_t index = 0; index < mems_update.removed_member_ids.count; ++index) {
-		mems_update.removed_member_ids[index] = Discord_ParseId(JsonGetString(removed_member_ids[index]));
+	Json_Array jsonremoved_member_ids = JsonGetArray(obj, "removed_member_ids");
+	Array<Discord::Snowflake> removed_member_ids;
+	removed_member_ids.Resize(removed_member_ids.count);
+	for (ptrdiff_t index = 0; index < removed_member_ids.count; ++index) {
+		removed_member_ids[index] = Discord_ParseId(JsonGetString(jsonremoved_member_ids[index]));
 	}
 
-	client->onevent(client, &mems_update);
+	client->onevent.thread_members_update(client, id, guild_id, member_count, added_members, removed_member_ids);
 }
 
 static void Discord_EventHandlerGuildCreate(Discord::Client *client, const Json &data) {
-	Discord::GuildCreateEvent guild;
 	Json_Object obj = JsonGetObject(data);
-	Discord_Deserialize(obj, &guild.guild);
-	guild.joined_at    = Discord_ParseTimestamp(JsonGetString(obj, "joined_at"));
-	guild.large        = JsonGetBool(obj, "large");
-	guild.unavailable  = JsonGetBool(obj, "unavailable");
-	guild.member_count = JsonGetInt(obj, "member_count");
 
-	Json_Array voice_states = JsonGetArray(obj, "voice_states");
-	guild.voice_states.Resize(voice_states.count);
-	for (ptrdiff_t index = 0; index < guild.voice_states.count; ++index) {
-		Discord_Deserialize(JsonGetObject(voice_states[index]), &guild.voice_states[index]);
-	}
+	Discord::Guild guild;
+	Discord_Deserialize(obj, &guild);
 
-	Json_Array members = JsonGetArray(obj, "members");
-	guild.members.Resize(members.count);
-	for (ptrdiff_t index = 0; index < guild.members.count; ++index) {
-		Discord_Deserialize(JsonGetObject(members[index]), &guild.members[index]);
-	}
+	Discord::GuildInfo info;
+	info.joined_at    = Discord_ParseTimestamp(JsonGetString(obj, "joined_at"));
+	info.large        = JsonGetBool(obj, "large");
+	info.unavailable  = JsonGetBool(obj, "unavailable");
+	info.member_count = JsonGetInt(obj, "member_count");
 
-	Json_Array channels = JsonGetArray(obj, "channels");
-	guild.channels.Resize(channels.count);
-	for (ptrdiff_t index = 0; index < guild.channels.count; ++index) {
-		Discord_Deserialize(JsonGetObject(channels[index]), &guild.channels[index]);
+	Json_Array jsonvoice_states = JsonGetArray(obj, "voice_states");
+	Array<Discord::VoiceState> voice_states;
+	voice_states.Resize(jsonvoice_states.count);
+	for (ptrdiff_t index = 0; index < voice_states.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonvoice_states[index]), &voice_states[index]);
 	}
+	info.voice_states = voice_states;
+
+	Json_Array jsonmembers = JsonGetArray(obj, "members");
+	Array<Discord::GuildMember> members;
+	members.Resize(jsonmembers.count);
+	for (ptrdiff_t index = 0; index < members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonmembers[index]), &members[index]);
+	}
+	info.members = members;
+
+	Json_Array jsonchannels = JsonGetArray(obj, "channels");
+	Array<Discord::Channel> channels;
+	channels.Resize(jsonchannels.count);
+	for (ptrdiff_t index = 0; index < channels.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonchannels[index]), &channels[index]);
+	}
+	info.channels = channels;
 	
-	Json_Array threads = JsonGetArray(obj, "threads");
-	guild.threads.Resize(threads.count);
-	for (ptrdiff_t index = 0; index < guild.threads.count; ++index) {
-		Discord_Deserialize(JsonGetObject(threads[index]), &guild.threads[index]);
+	Json_Array jsonthreads = JsonGetArray(obj, "threads");
+	Array<Discord::Channel> threads;
+	threads.Resize(jsonthreads.count);
+	for (ptrdiff_t index = 0; index < threads.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonthreads[index]), &threads[index]);
 	}
+	info.threads = threads;
 
-	Json_Array presences = JsonGetArray(obj, "presences");
-	guild.presences.Resize(presences.count);
-	for (ptrdiff_t index = 0; index < guild.presences.count; ++index) {
-		Discord_Deserialize(JsonGetObject(presences[index]), &guild.presences[index]);
+	Json_Array jsonpresences = JsonGetArray(obj, "presences");
+	Array<Discord::Presence> presences;
+	presences.Resize(jsonpresences.count);
+	for (ptrdiff_t index = 0; index < presences.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonpresences[index]), &presences[index]);
 	}
+	info.presences = presences;
 
-	Json_Array stage_instances = JsonGetArray(obj, "stage_instances");
-	guild.stage_instances.Resize(stage_instances.count);
-	for (ptrdiff_t index = 0; index < guild.stage_instances.count; ++index) {
-		Discord_Deserialize(JsonGetObject(stage_instances[index]), &guild.stage_instances[index]);
+	Json_Array jsonstage_instances = JsonGetArray(obj, "stage_instances");
+	Array<Discord::StageInstance> stage_instances;
+	stage_instances.Resize(jsonstage_instances.count);
+	for (ptrdiff_t index = 0; index < stage_instances.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonstage_instances[index]), &stage_instances[index]);
 	}
+	info.stage_instances = stage_instances;
 	
-	Json_Array guild_scheduled_events = JsonGetArray(obj, "guild_scheduled_events");
-	guild.guild_scheduled_events.Resize(guild_scheduled_events.count);
-	for (ptrdiff_t index = 0; index < guild.guild_scheduled_events.count; ++index) {
-		Discord_Deserialize(JsonGetObject(guild_scheduled_events[index]), &guild.guild_scheduled_events[index]);
+	Json_Array jsonguild_scheduled_events = JsonGetArray(obj, "guild_scheduled_events");
+	Array<Discord::GuildScheduledEvent> guild_scheduled_events;
+	guild_scheduled_events.Resize(jsonguild_scheduled_events.count);
+	for (ptrdiff_t index = 0; index < guild_scheduled_events.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonguild_scheduled_events[index]), &guild_scheduled_events[index]);
 	}
+	info.guild_scheduled_events = guild_scheduled_events;
 
-	client->onevent(client, &guild);
+	client->onevent.guild_create(client, guild, info);
 }
 
 static void Discord_EventHandlerGuildUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildUpdateEvent guild;
-	Discord_Deserialize(JsonGetObject(data), &guild.guild);
-	client->onevent(client, &guild);
+	Discord::Guild guild;
+	Discord_Deserialize(JsonGetObject(data), &guild);
+	client->onevent.guild_update(client, guild);
 }
 
 static void Discord_EventHandlerGuildDelete(Discord::Client *client, const Json &data) {
-	Discord::GuildDeleteEvent guild;
-	Discord_Deserialize(JsonGetObject(data), &guild.unavailable_guild);
-	client->onevent(client, &guild);
+	Discord::UnavailableGuild guild;
+	Discord_Deserialize(JsonGetObject(data), &guild);
+	client->onevent.guild_delete(client, guild);
 }
 
 static void Discord_EventHandlerGuildBanAdd(Discord::Client *client, const Json &data) {
-	Discord::GuildBanAddEvent ban;
 	Json_Object obj = JsonGetObject(data);
-	ban.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "user"), &ban.user);
-	client->onevent(client, &ban);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::User user;
+	Discord_Deserialize(JsonGetObject(obj, "user"), &user);
+	client->onevent.guild_ban_add(client, guild_id, user);
 }
 
 static void Discord_EventHandlerGuildBanRemove(Discord::Client *client, const Json &data) {
-	Discord::GuildBanRemoveEvent ban;
 	Json_Object obj = JsonGetObject(data);
-	ban.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "user"), &ban.user);
-	client->onevent(client, &ban);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::User user;
+	Discord_Deserialize(JsonGetObject(obj, "user"), &user);
+	client->onevent.guild_ban_remove(client, guild_id, user);
 }
 
 static void Discord_EventHandlerGuildEmojisUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildEmojisUpdateEvent emojis_update;
-	Json_Object obj        = JsonGetObject(data);
-	emojis_update.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
 	
-	Json_Array emojis = JsonGetArray(obj, "emojis");
-	emojis_update.emojis.Resize(emojis.count);
-	for (ptrdiff_t index = 0; index < emojis_update.emojis.count; ++index) {
-		Discord_Deserialize(JsonGetObject(emojis[index]), &emojis_update.emojis[index]);
+	Json_Array jsonemojis = JsonGetArray(obj, "emojis");
+	Array<Discord::Emoji> emojis_update;
+	emojis_update.Resize(jsonemojis.count);
+	for (ptrdiff_t index = 0; index < emojis_update.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonemojis[index]), &emojis_update[index]);
 	}
 
-	client->onevent(client, &emojis_update);
+	client->onevent.guild_emojis_update(client, guild_id, emojis_update);
 }
 
 static void Discord_EventHandlerGuildStickersUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildStickersUpdateEvent stickers_update;
-	Json_Object obj          = JsonGetObject(data);
-	stickers_update.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
-	Json_Array stickers = JsonGetArray(obj, "stickers");
-	stickers_update.stickers.Resize(stickers.count);
-	for (ptrdiff_t index = 0; index < stickers_update.stickers.count; ++index) {
-		Discord_Deserialize(JsonGetObject(stickers[index]), &stickers_update.stickers[index]);
+	Json_Array jsonstickers = JsonGetArray(obj, "stickers");
+	Array<Discord::Sticker> stickers;
+	stickers.Resize(jsonstickers.count);
+	for (ptrdiff_t index = 0; index < stickers.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonstickers[index]), &stickers[index]);
 	}
 
-	client->onevent(client, &stickers_update);
+	client->onevent.guild_stickers_update(client, guild_id, stickers);
 }
 
 static void Discord_EventHandlerGuildIntegrationsUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildIntegrationsUpdateEvent integrations;
-	Json_Object obj       = JsonGetObject(data);
-	integrations.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &integrations);
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.guild_integrations_update(client, guild_id);
 }
 
 static void Discord_EventHandlerGuildMemberAdd(Discord::Client *client, const Json &data) {
-	Discord::GuildMemberAddEvent member;
-	Json_Object obj = JsonGetObject(data);
-	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(obj, &member.member);
-	client->onevent(client, &member);
+	Discord::GuildMember member;
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord_Deserialize(obj, &member);
+	client->onevent.guild_member_add(client, guild_id, member);
 }
 
 static void Discord_EventHandlerGuildMemberRemove(Discord::Client *client, const Json &data) {
-	Discord::GuildMemberRemoveEvent member;
 	Json_Object obj = JsonGetObject(data);
-	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "user"), &member.user);
-	client->onevent(client, &member);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::User user;
+	Discord_Deserialize(JsonGetObject(obj, "user"), &user);
+	client->onevent.guild_member_remove(client, guild_id, user);
 }
 
 static void Discord_EventHandlerGuildMemberUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildMemberUpdateEvent member;
 	Json_Object obj = JsonGetObject(data);
-	member.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
-	Json_Array roles = JsonGetArray(obj, "roles");
-	member.roles.Resize(roles.count);
-	for (ptrdiff_t index = 0; index < member.roles.count; ++index) {
-		member.roles[index] = Discord_ParseId(JsonGetString(roles[index]));
+	Discord::GuildMemberUpdate member;
+
+	Json_Array jsonroles = JsonGetArray(obj, "roles");
+	Array<Discord::Snowflake> roles;
+	roles.Resize(jsonroles.count);
+	for (ptrdiff_t index = 0; index < roles.count; ++index) {
+		roles[index] = Discord_ParseId(JsonGetString(jsonroles[index]));
 	}
+	member.roles = roles;
 
 	Discord_Deserialize(JsonGetObject(obj, "user"), &member.user);
 
@@ -2482,220 +2607,220 @@ static void Discord_EventHandlerGuildMemberUpdate(Discord::Client *client, const
 	member.pending                      = JsonGetBool(obj, "pending");
 	member.communication_disabled_until = Discord_ParseTimestamp(JsonGetString(obj, "communication_disabled_until"));
 
-	client->onevent(client, &member);
+	client->onevent.guild_member_update(client, guild_id, member);
 }
 
 static void Discord_EventHandlerGuildMembersChunk(Discord::Client *client, const Json &data) {
-	Discord::GuildMembersChunkEvent chunk;
 	Json_Object obj = JsonGetObject(data);
-	chunk.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
-	Json_Array members = JsonGetArray(obj, "members");
-	chunk.members.Resize(members.count);
-	for (ptrdiff_t index = 0; index < chunk.members.count; ++index) {
-		Discord_Deserialize(JsonGetObject(members[index]), &chunk.members[index]);
+	Discord::GuildMembersChunk chunk;
+	Json_Array jsonmembers = JsonGetArray(obj, "members");
+	Array<Discord::GuildMember> members;
+	members.Resize(jsonmembers.count);
+	for (ptrdiff_t index = 0; index < members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonmembers[index]), &members[index]);
 	}
+	chunk.members = members;
 
 	chunk.chunk_index = JsonGetInt(obj, "chunk_index");
 	chunk.chunk_count = JsonGetInt(obj, "chunk_count");
 
-	Json_Array not_found = JsonGetArray(obj, "not_found");
-	chunk.not_found.Resize(not_found.count);
-	for (ptrdiff_t index = 0; index < chunk.not_found.count; ++index) {
-		chunk.not_found[index] = Discord_ParseId(JsonGetString(not_found[index]));
+	Json_Array jsonnot_found = JsonGetArray(obj, "not_found");
+	Array<Discord::Snowflake> not_found;
+	not_found.Resize(jsonnot_found.count);
+	for (ptrdiff_t index = 0; index < not_found.count; ++index) {
+		not_found[index] = Discord_ParseId(JsonGetString(jsonnot_found[index]));
 	}
+	chunk.not_found = not_found;
 
-	Json_Array presences = JsonGetArray(obj, "presences");
-	chunk.presences.Resize(presences.count);
-	for (ptrdiff_t index = 0; index < chunk.presences.count; ++index) {
-		Discord_Deserialize(JsonGetObject(presences[index]), &chunk.presences[index]);
+	Json_Array jsonpresences = JsonGetArray(obj, "presences");
+	Array<Discord::Presence> presences;
+	presences.Resize(jsonpresences.count);
+	for (ptrdiff_t index = 0; index < presences.count; ++index) {
+		Discord_Deserialize(JsonGetObject(jsonpresences[index]), &presences[index]);
 	}
+	chunk.presences = presences;
 
 	chunk.nonce = JsonGetString(obj, "nonce");
 
-	client->onevent(client, &chunk);
+	client->onevent.guild_members_chunk(client, guild_id, chunk);
 }
 
 static void Discord_EventHandlerGuildRoleCreate(Discord::Client *client, const Json &data) {
-	Discord::GuildRoleCreateEvent role;
-	Json_Object obj = JsonGetObject(data);
-	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "role"), &role.role);
-	client->onevent(client, &role);
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Role role;
+	Discord_Deserialize(JsonGetObject(obj, "role"), &role);
+	client->onevent.guild_role_create(client, guild_id, role);
 }
 
 static void Discord_EventHandlerGuildRoleUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildRoleUpdateEvent role;
-	Json_Object obj = JsonGetObject(data);
-	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "role"), &role.role);
-	client->onevent(client, &role);
+	Json_Object obj             = JsonGetObject(data);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Role role;
+	Discord_Deserialize(JsonGetObject(obj, "role"), &role);
+	client->onevent.guild_role_update(client, guild_id, role);
 }
 
 static void Discord_EventHandlerGuildRoleDelete(Discord::Client *client, const Json &data) {
-	Discord::GuildRoleDeleteEvent role;
 	Json_Object obj = JsonGetObject(data);
-	role.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	role.role_id    = Discord_ParseId(JsonGetString(obj, "role_id"));
-	client->onevent(client, &role);
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake role_id    = Discord_ParseId(JsonGetString(obj, "role_id"));
+	client->onevent.guild_role_delete(client, guild_id, role_id);
 }
 
 static void Discord_EventHandlerGuildScheduledEventCreate(Discord::Client *client, const Json &data) {
-	Discord::GuildScheduledEventCreateEvent scheduled_event;
-	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
-	client->onevent(client, &scheduled_event);
+	Discord::GuildScheduledEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event);
+	client->onevent.guild_scheduled_event_create(client, scheduled_event);
 }
 
 static void Discord_EventHandlerGuildScheduledEventUpdate(Discord::Client *client, const Json &data) {
-	Discord::GuildScheduledEventUpdateEvent scheduled_event;
-	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
-	client->onevent(client, &scheduled_event);
+	Discord::GuildScheduledEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event);
+	client->onevent.guild_scheduled_event_update(client, scheduled_event);
 }
 
 static void Discord_EventHandlerGuildScheduledEventDelete(Discord::Client *client, const Json &data) {
-	Discord::GuildScheduledEventDeleteEvent scheduled_event;
-	Discord_Deserialize(JsonGetObject(data), &scheduled_event.scheduled_event);
-	client->onevent(client, &scheduled_event);
+	Discord::GuildScheduledEvent scheduled_event;
+	Discord_Deserialize(JsonGetObject(data), &scheduled_event);
+	client->onevent.guild_scheduled_event_delete(client, scheduled_event);
 }
 
 static void Discord_EventHandlerGuildScheduledEventUserAdd(Discord::Client *client, const Json &data) {
-	Discord::GuildScheduledEventUserAddEvent scheduled_event;
-	Json_Object obj                          = JsonGetObject(data);
-	scheduled_event.guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
-	scheduled_event.user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
-	scheduled_event.guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &scheduled_event);
+	Json_Object obj                             = JsonGetObject(data);
+	Discord::Snowflake guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
+	Discord::Snowflake user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
+	Discord::Snowflake guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.guild_scheduled_event_user_add(client, guild_scheduled_event_id, user_id, guild_id);
 }
 
 static void Discord_EventHandlerGuildScheduledEventUserRemove(Discord::Client *client, const Json &data) {
-	Discord::GuildScheduledEventUserRemoveEvent scheduled_event;
-	Json_Object obj                          = JsonGetObject(data);
-	scheduled_event.guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
-	scheduled_event.user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
-	scheduled_event.guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &scheduled_event);
+	Json_Object obj                             = JsonGetObject(data);
+	Discord::Snowflake guild_scheduled_event_id = Discord_ParseId(JsonGetString(obj, "guild_scheduled_event_id"));
+	Discord::Snowflake user_id                  = Discord_ParseId(JsonGetString(obj, "user_id"));
+	Discord::Snowflake guild_id                 = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.guild_scheduled_event_user_remove(client, guild_scheduled_event_id, user_id, guild_id);
 }
 
 static void Discord_EventHandlerIntegrationCreate(Discord::Client *client, const Json &data) {
-	Discord::IntegrationCreateEvent integration;
 	Json_Object obj = JsonGetObject(data);
-	integration.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(obj, &integration.integration);
-	client->onevent(client, &integration);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Integration integration;
+	Discord_Deserialize(obj, &integration);
+	client->onevent.integration_create(client, guild_id, integration);
 }
 
 static void Discord_EventHandlerIntegrationUpdate(Discord::Client *client, const Json &data) {
-	Discord::IntegrationUpdateEvent integration;
 	Json_Object obj = JsonGetObject(data);
-	integration.guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(obj, &integration.integration);
-	client->onevent(client, &integration);
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Integration integration;
+	Discord_Deserialize(obj, &integration);
+	client->onevent.integration_update(client, guild_id, integration);
 }
 
 static void Discord_EventHandlerIntegrationDelete(Discord::Client *client, const Json &data) {
-	Discord::IntegrationDeleteEvent integration;
-	Json_Object obj            = JsonGetObject(data);
-	integration.id             = Discord_ParseId(JsonGetString(obj, "id"));
-	integration.guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	integration.application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
-	client->onevent(client, &integration);
+	Json_Object obj                   = JsonGetObject(data);
+	Discord::Snowflake id             = Discord_ParseId(JsonGetString(obj, "id"));
+	Discord::Snowflake guild_id       = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake application_id = Discord_ParseId(JsonGetString(obj, "application_id"));
+	client->onevent.integration_delete(client, id, guild_id, application_id);
 }
 
 static void Discord_EventHandlerInteractionCreate(Discord::Client *client, const Json &data) {
-	Discord::InteractionCreateEvent interation;
-	Discord_Deserialize(JsonGetObject(data), &interation.interation);
-	client->onevent(client, &interation);
+	Discord::Interaction interation;
+	Discord_Deserialize(JsonGetObject(data), &interation);
+	client->onevent.interaction_create(client, interation);
 }
 
 static void Discord_EventHandlerInviteCreate(Discord::Client *client, const Json &data) {
-	Discord::InviteCreateEvent invite;
-	Json_Object obj   = JsonGetObject(data);
-	invite.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	invite.code       = JsonGetString(obj, "code");
-	invite.created_at = Discord_ParseTimestamp(JsonGetString(obj, "created_at"));
-	invite.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::InviteInfo info;
+	Json_Object obj = JsonGetObject(data);
+	info.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	info.code       = JsonGetString(obj, "code");
+	info.created_at = Discord_ParseTimestamp(JsonGetString(obj, "created_at"));
+	info.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
 
 	const Json *inviter = obj.Find("inviter");
 	if (inviter) {
-		invite.inviter = new Discord::User;
-		if (invite.inviter) {
-			Discord_Deserialize(JsonGetObject(*inviter), invite.inviter);
+		info.inviter = new Discord::User;
+		if (info.inviter) {
+			Discord_Deserialize(JsonGetObject(*inviter), info.inviter);
 		}
 	}
 
-	invite.max_age     = JsonGetInt(obj, "max_age");
-	invite.max_uses    = JsonGetInt(obj, "max_uses");
-	invite.target_type = (Discord::InviteTargetType)JsonGetInt(obj, "target_type");
+	info.max_age     = JsonGetInt(obj, "max_age");
+	info.max_uses    = JsonGetInt(obj, "max_uses");
+	info.target_type = (Discord::InviteTargetType)JsonGetInt(obj, "target_type");
 
 	const Json *target_user = obj.Find("target_user");
 	if (target_user) {
-		invite.target_user = new Discord::User;
-		if (invite.target_user) {
-			Discord_Deserialize(JsonGetObject(*target_user), invite.target_user);
+		info.target_user = new Discord::User;
+		if (info.target_user) {
+			Discord_Deserialize(JsonGetObject(*target_user), info.target_user);
 		}
 	}
 
 	const Json *target_application = obj.Find("target_application");
 	if (target_application) {
-		invite.target_application = new Discord::Application;
-		if (invite.target_application) {
-			Discord_Deserialize(JsonGetObject(*target_application), invite.target_application);
+		info.target_application = new Discord::Application;
+		if (info.target_application) {
+			Discord_Deserialize(JsonGetObject(*target_application), info.target_application);
 		}
 	}
 
-	invite.temporary = JsonGetBool(obj, "temporary");
-	invite.uses      = JsonGetInt(obj, "uses");
+	info.temporary = JsonGetBool(obj, "temporary");
+	info.uses      = JsonGetInt(obj, "uses");
 
-	client->onevent(client, &invite);
+	client->onevent.invite_create(client, info);
 }
 
 static void Discord_EventHandlerInviteDelete(Discord::Client *client, const Json &data) {
-	Discord::InviteDeleteEvent invite;
-	Json_Object obj   = JsonGetObject(data);
-	invite.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	invite.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	invite.code       = JsonGetString(obj, "code");
-	client->onevent(client, &invite);
+	Json_Object obj               = JsonGetObject(data);
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	String code                   = JsonGetString(obj, "code");
+	client->onevent.invite_delete(client, channel_id, guild_id, code);
 }
 
 static void Discord_EventHandlerMessageCreate(Discord::Client *client, const Json &data) {
-	Discord::MessageCreateEvent message;
-	Discord_Deserialize(JsonGetObject(data), &message.message);
-	client->onevent(client, &message);
+	Discord::Message message;
+	Discord_Deserialize(JsonGetObject(data), &message);
+	client->onevent.message_create(client, message);
 }
 
 static void Discord_EventHandlerMessageUpdate(Discord::Client *client, const Json &data) {
-	Discord::MessageUpdateEvent message;
-	Discord_Deserialize(JsonGetObject(data), &message.message);
-	client->onevent(client, &message);
+	Discord::Message message;
+	Discord_Deserialize(JsonGetObject(data), &message);
+	client->onevent.message_update(client, message);
 }
 
 static void Discord_EventHandlerMessageDelete(Discord::Client *client, const Json &data) {
-	Discord::MessageDeleteEvent message;
-	Json_Object obj    = JsonGetObject(data);
-	message.id         = Discord_ParseId(JsonGetString(obj, "id"));
-	message.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	message.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &message);
+	Json_Object obj               = JsonGetObject(data);
+	Discord::Snowflake id         = Discord_ParseId(JsonGetString(obj, "id"));
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.message_delete(client, id, channel_id, guild_id);
 }
 
 static void Discord_EventHandlerMessageDeleteBulk(Discord::Client *client, const Json &data) {
-	Discord::MessageDeleteBulkEvent message;
 	Json_Object obj    = JsonGetObject(data);
 
-	Json_Array ids = JsonGetArray(obj, "ids");
-	message.ids.Resize(ids.count);
-	for (ptrdiff_t index = 0; index < message.ids.count; ++index) {
-		message.ids[index] = Discord_ParseId(JsonGetString(ids[index]));
+	Json_Array jsonids = JsonGetArray(obj, "ids");
+	Array<Discord::Snowflake> ids;
+	ids.Resize(jsonids.count);
+	for (ptrdiff_t index = 0; index < ids.count; ++index) {
+		ids[index] = Discord_ParseId(JsonGetString(jsonids[index]));
 	}
 	
-	message.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	message.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &message);
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.message_delete_bulk(client, ids, channel_id, guild_id);
 }
 
 static void Discord_EventHandlerMessageReactionAdd(Discord::Client *client, const Json &data) {
-	Discord::MessageReactionAddEvent reaction;
+	Discord::MessageReactionInfo reaction;
 	Json_Object obj     = JsonGetObject(data);
 	reaction.user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
 	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
@@ -2711,65 +2836,64 @@ static void Discord_EventHandlerMessageReactionAdd(Discord::Client *client, cons
 	}
 
 	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
-	client->onevent(client, &reaction);
+	client->onevent.message_reaction_add(client, reaction);
 }
 
 static void Discord_EventHandlerMessageReactionRemove(Discord::Client *client, const Json &data) {
-	Discord::MessageReactionRemoveEvent reaction;
-	Json_Object obj     = JsonGetObject(data);
-	reaction.user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
-	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
-	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
-	client->onevent(client, &reaction);
+	Json_Object obj               = JsonGetObject(data);
+	Discord::Snowflake user_id    = Discord_ParseId(JsonGetString(obj, "user_id"));
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Emoji emoji;
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &emoji);
+	client->onevent.message_reaction_remove(client, user_id, channel_id, message_id, guild_id, emoji);
 }
 
 static void Discord_EventHandlerMessageReactionRemoveAll(Discord::Client *client, const Json &data) {
-	Discord::MessageReactionRemoveAllEvent reaction;
-	Json_Object obj     = JsonGetObject(data);
-	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
-	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	client->onevent(client, &reaction);
+	Json_Object obj               = JsonGetObject(data);
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	client->onevent.message_reaction_remove_all(client, channel_id, message_id, guild_id);
 }
 
 static void Discord_EventHandlerMessageReactionRemoveEmoji(Discord::Client *client, const Json &data) {
-	Discord::MessageReactionRemoveEmojiEvent reaction;
 	Json_Object obj     = JsonGetObject(data);
-	reaction.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	reaction.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	reaction.message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
-	Discord_Deserialize(JsonGetObject(obj, "emoji"), &reaction.emoji);
-	client->onevent(client, &reaction);
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake message_id = Discord_ParseId(JsonGetString(obj, "message_id"));
+	Discord::Emoji emoji;
+	Discord_Deserialize(JsonGetObject(obj, "emoji"), &emoji);
+	client->onevent.message_reaction_remove_emoji(client, channel_id, guild_id, message_id, emoji);
 }
 
 static void Discord_EventHandlerPresenceUpdate(Discord::Client *client, const Json &data) {
-	Discord::PresenceUpdateEvent presence;
-	Discord_Deserialize(JsonGetObject(data), &presence.presence);
-	client->onevent(client, &presence);
+	Discord::Presence presence;
+	Discord_Deserialize(JsonGetObject(data), &presence);
+	client->onevent.presence_update(client, presence);
 }
 
 static void Discord_EventHandlerStageInstanceCreate(Discord::Client *client, const Json &data) {
-	Discord::StageInstanceCreateEvent stage;
-	Discord_Deserialize(JsonGetObject(data), &stage.stage);
-	client->onevent(client, &stage);
+	Discord::StageInstance stage;
+	Discord_Deserialize(JsonGetObject(data), &stage);
+	client->onevent.stage_instance_create(client, stage);
 }
 
 static void Discord_EventHandlerStageInstanceDelete(Discord::Client *client, const Json &data) {
-	Discord::StageInstanceDeleteEvent stage;
-	Discord_Deserialize(JsonGetObject(data), &stage.stage);
-	client->onevent(client, &stage);
+	Discord::StageInstance stage;
+	Discord_Deserialize(JsonGetObject(data), &stage);
+	client->onevent.stage_instance_delete(client, stage);
 }
 
 static void Discord_EventHandlerStageInstanceUpdate(Discord::Client *client, const Json &data) {
-	Discord::StageInstanceUpdateEvent stage;
-	Discord_Deserialize(JsonGetObject(data), &stage.stage);
-	client->onevent(client, &stage);
+	Discord::StageInstance stage;
+	Discord_Deserialize(JsonGetObject(data), &stage);
+	client->onevent.stage_instance_update(client, stage);
 }
 
 static void Discord_EventHandlerTypingStartEvent(Discord::Client *client, const Json &data) {
-	Discord::TypingStartEvent typing;
+	Discord::TypingStartInfo typing;
 	Json_Object obj   = JsonGetObject(data);
 	typing.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
 	typing.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
@@ -2784,36 +2908,34 @@ static void Discord_EventHandlerTypingStartEvent(Discord::Client *client, const 
 		}
 	}
 
-	client->onevent(client, &typing);
+	client->onevent.typing_start(client, typing);
 }
 
 static void Discord_EventHandlerUserUpdate(Discord::Client *client, const Json &data) {
-	Discord::UserUpdateEvent user;
-	Discord_Deserialize(JsonGetObject(data), &user.user);
-	client->onevent(client, &user);
+	Discord::User user;
+	Discord_Deserialize(JsonGetObject(data), &user);
+	client->onevent.user_update(client, user);
 }
 
 static void Discord_EventHandlerVoiceStateUpdate(Discord::Client *client, const Json &data) {
-	Discord::VoiceStateUpdateEvent voice;
-	Discord_Deserialize(JsonGetObject(data), &voice.voice_state);
-	client->onevent(client, &voice);
+	Discord::VoiceState voice;
+	Discord_Deserialize(JsonGetObject(data), &voice);
+	client->onevent.voice_state_update(client, voice);
 }
 
 static void Discord_EventHandlerVoiceServerUpdate(Discord::Client *client, const Json &data) {
-	Discord::VoiceServerUpdateEvent voice;
-	Json_Object obj = JsonGetObject(data);
-	voice.token     = JsonGetString(obj, "token");
-	voice.guild_id  = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	voice.endpoint  = JsonGetString(obj, "endpoint");
-	client->onevent(client, &voice);
+	Json_Object obj             = JsonGetObject(data);
+	String token                = JsonGetString(obj, "token");
+	Discord::Snowflake guild_id = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	String endpoint             = JsonGetString(obj, "endpoint");
+	client->onevent.voice_server_update(client, token, guild_id, endpoint);
 }
 
 static void Discord_EventHandlerWebhooksUpdate(Discord::Client *client, const Json &data) {
-	Discord::WebhooksUpdateEvent webhook;
-	Json_Object obj    = JsonGetObject(data);
-	webhook.guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
-	webhook.channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
-	client->onevent(client, &webhook);
+	Json_Object obj               = JsonGetObject(data);
+	Discord::Snowflake guild_id   = Discord_ParseId(JsonGetString(obj, "guild_id"));
+	Discord::Snowflake channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	client->onevent.webhooks_update(client, guild_id, channel_id);
 }
 
 static constexpr Discord_Event_Handler DiscordEventHandlers[] = {
