@@ -35,7 +35,7 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		String name = StrTrim(SubStr(message.content, 7));
 		if (name.length) {
 			Discord::ChannelPatch patch;
-			Discord::PatchName(&patch, name);
+			patch.name = name;
 			Discord::ModifyChannel(client, message.channel_id, patch);
 		}
 	} else if (message.content == "deleteme") {

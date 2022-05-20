@@ -116,6 +116,15 @@ static void Discord_Jsonify(const Discord::VoiceStateUpdate &update_voice_state,
 	j->EndObject();
 }
 
+static void Discord_Jsonify(const Discord::Overwrite &overwrite, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("id", overwrite.id.value);
+	j->KeyValue("type", (int)overwrite.type);
+	j->KeyValue("allow", overwrite.allow);
+	j->KeyValue("deny", overwrite.deny);
+	j->EndObject();
+}
+
 //
 //
 //
@@ -1696,14 +1705,6 @@ static inline bool Discord_Delete(Discord::Client *client, const String api_endp
 	return Discord_CustomMethod(client, "DELETE", api_endpoint, body, res);
 }
 
-static inline String Discord_IdToString(Discord::Snowflake id) {
-	return FmtStr(ThreadContext.allocator, "%zu", id.value);
-}
-
-static inline String Discord_BitIntToString(uint64_t value) {
-	return FmtStr(ThreadContext.allocator, "%zu", value);
-}
-
 //
 //
 //
@@ -2013,93 +2014,6 @@ namespace Discord {
 		srand((unsigned int)time(0));
 	}
 
-	void PatchName(ChannelPatch *p, String name) {
-		p->obj.Put("name", Json(name));
-	}
-
-	void PatchIcon(ChannelPatch *p, Buffer icon) {
-		p->obj.Put("icon", Json(icon));
-	}
-
-	void PatchChannelType(ChannelPatch *p, ChannelType type) {
-		p->obj.Put("type", Json((int)type));
-	}
-
-	void PatchPosition(ChannelPatch *p, int position) {
-		p->obj.Put("position", Json(position));
-	}
-
-	void PatchTopic(ChannelPatch *p, String topic) {
-		p->obj.Put("topic", Json(topic));
-	}
-
-	void PatchNSFW(ChannelPatch *p, bool value) {
-		p->obj.Put("nsfw", Json(value));
-	}
-
-	void PatchRateLimitPerUser(ChannelPatch *p, int rate_limit_per_user) {
-		p->obj.Put("rate_limit_per_user", Json(rate_limit_per_user));
-	}
-
-	void PatchBitrate(ChannelPatch *p, int bitrate) {
-		p->obj.Put("bitrate", Json(bitrate));
-	}
-
-	void PatchUserLimit(ChannelPatch *p, int user_limit) {
-		p->obj.Put("user_limit", Json(user_limit));
-	}
-
-	void PatchOverwrites(ChannelPatch *p, Array_View<Overwrite> overwrites) {
-		Json_Array arr;
-		arr.Resize(overwrites.count);
-
-		for (ptrdiff_t index = 0; index < arr.count; ++index) {
-			Json_Object obj;
-			obj.Put("id", Json(Discord_IdToString(overwrites[index].id)));
-			obj.Put("type", Json((int)overwrites[index].type));
-			obj.Put("allow", Json(Discord_BitIntToString(overwrites[index].allow)));
-			obj.Put("deny", Json(Discord_BitIntToString(overwrites[index].deny)));
-			arr[index] = Json(obj);
-		}
-
-		p->obj.Put("permission_overwrites", Json(arr));
-	}
-
-	void PatchParentId(ChannelPatch *p, Snowflake parent_id) {
-		p->obj.Put("parent_id", Json(Discord_IdToString(parent_id)));
-	}
-
-	void PatchRTCRegion(ChannelPatch *p, String rtc_region) {
-		if (rtc_region.length)
-			p->obj.Put("rtc_region", Json(rtc_region));
-		else
-			p->obj.Put("rtc_region", Json());
-	}
-
-	void PatchVideoQualityMode(ChannelPatch *p, VideoQualityMode mode) {
-		p->obj.Put("video_quality_mode", Json((int)mode));
-	}
-
-	void PatchDefaultAutoArchiveDuration(ChannelPatch *p, int duration) {
-		p->obj.Put("default_auto_archive_duration", Json(duration));
-	}
-
-	void PatchArchived(ChannelPatch *p, bool archived) {
-		p->obj.Put("archived", Json(archived));
-	}
-
-	void PatchAutoArchiveDuration(ChannelPatch *p, int auto_archive_duration) {
-		p->obj.Put("auto_archive_duration", Json(auto_archive_duration));
-	}
-
-	void PatchLocked(ChannelPatch *p, bool locked) {
-		p->obj.Put("locked", Json(locked));
-	}
-
-	void PatchInvitable(ChannelPatch *p, bool invitable) {
-		p->obj.Put("invitable", Json(invitable));
-	}
-
 	Channel *GetChannel(Client *client, Snowflake channel_id) {
 		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
 
@@ -2113,8 +2027,66 @@ namespace Discord {
 	}
 
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch) {
+		Jsonify j(client->scratch);
+
+		j.BeginObject();
+
+		if (patch.name.length)
+			j.KeyValue("name", patch.name);
+
+		if (patch.icon.length)
+			j.KeyValue("icon", patch.icon);
+
+		if (patch.type)
+			j.KeyValue("type", (int)*patch.type);
+
+		if (patch.position)
+			j.KeyValue("position", *patch.position);
+
+		if (patch.topic.length)
+			j.KeyValue("topic", patch.topic);
+
+		if (patch.nsfw)
+			j.KeyValue("nsfw", *patch.nsfw);
+
+		if (patch.rate_limit_per_user)
+			j.KeyValue("rate_limit_per_user", *patch.rate_limit_per_user);
+
+		if (patch.bitrate)
+			j.KeyValue("bitrate", *patch.bitrate);
+
+		if (patch.user_limit)
+			j.KeyValue("user_limit", *patch.user_limit);
+
+		if (patch.permission_overwrites.count) {
+			j.PushKey("permission_overwrites");
+			j.BeginArray();
+			for (const auto &overwrite : patch.permission_overwrites) {
+				Discord_Jsonify(overwrite, &j);
+			}
+			j.EndArray();
+		}
+
+		if (patch.parent_id.value)
+			j.KeyValue("parent_id", patch.parent_id.value);
+
+		if (patch.rtc_region) {
+			if (patch.rtc_region->length)
+				j.KeyValue("rtc_region", *patch.rtc_region);
+			else
+				j.KeyNull("rtc_region");
+		}
+
+		if (patch.video_quality_mode)
+			j.KeyValue("video_quality_mode", *patch.video_quality_mode);
+
+		if (patch.default_auto_archive_duration)
+			j.KeyValue("default_auto_archive_duration", *patch.default_auto_archive_duration);
+
+		j.EndObject();
+
 		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
-		String body     = JsonDump(Json(patch.obj), client->scratch);
+		String body     = Jsonify_BuildString(&j);
 
 		Json res;
 		if (Discord_Patch(client, endpoint, body, &res)) {
@@ -2246,7 +2218,7 @@ static void Discord_EventHandlerNone(Discord::Client *client, const Json &data) 
 static void Discord_EventHandlerHello(Discord::Client *client, const Json &data) {
 	Json_Object obj = JsonGetObject(data);
 	client->heartbeat.interval = JsonGetFloat(obj, "heartbeat_interval", 45000);
-	client->onevent.hello(client, client->heartbeat.interval);
+	client->onevent.hello(client, (int32_t)client->heartbeat.interval);
 }
 
 static void Discord_EventHandlerReady(Discord::Client *client, const Json &data) {

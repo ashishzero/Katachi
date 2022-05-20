@@ -80,7 +80,6 @@ namespace Discord {
 		Permission    deny  = 0;
 	};
 
-
 	enum class InviteTargetType {
 		NONE = 0, STREAM = 1, EMBEDDED_APPLICATION = 2
 	};
@@ -1502,27 +1501,21 @@ namespace Discord {
 	//
 
 	struct ChannelPatch {
-		Json_Object obj;
+		String           name;
+		Buffer           icon;
+		ChannelType *    type     = nullptr;
+		int32_t *        position = nullptr;
+		String           topic;
+		bool *           nsfw     = nullptr;
+		int32_t *        rate_limit_per_user = nullptr;
+		int32_t *        bitrate = nullptr;
+		int32_t *        user_limit = nullptr;
+		Array<Overwrite> permission_overwrites;
+		Snowflake        parent_id;
+		String *         rtc_region = nullptr;
+		int32_t *        video_quality_mode            = nullptr;
+		int32_t *        default_auto_archive_duration = nullptr;
 	};
-
-	void PatchName(ChannelPatch *p, String name);
-	void PatchIcon(ChannelPatch *p, Buffer icon);
-	void PatchChannelType(ChannelPatch *p, ChannelType type);
-	void PatchPosition(ChannelPatch *p, int position);
-	void PatchTopic(ChannelPatch *p, String topic);
-	void PatchNSFW(ChannelPatch *p, bool value);
-	void PatchRateLimitPerUser(ChannelPatch *p, int rate_limit_per_user);
-	void PatchBitrate(ChannelPatch *p, int bitrate);
-	void PatchUserLimit(ChannelPatch *p, int user_limit);
-	void PatchOverwrites(ChannelPatch *p, Array_View<Overwrite> overwrites);
-	void PatchParentId(ChannelPatch *p, Snowflake parent_id);
-	void PatchRTCRegion(ChannelPatch *p, String rtc_region);
-	void PatchVideoQualityMode(ChannelPatch *p, VideoQualityMode mode);
-	void PatchDefaultAutoArchiveDuration(ChannelPatch *p, int duration);
-	void PatchArchived(ChannelPatch *p, bool archived);
-	void PatchAutoArchiveDuration(ChannelPatch *p, int auto_archive_duration);
-	void PatchLocked(ChannelPatch *p, bool locked);
-	void PatchInvitable(ChannelPatch *p, bool invitable);
 
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);

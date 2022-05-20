@@ -975,13 +975,13 @@ static bool Websocket_NetReceiveStream(Net_Socket *socket, Websocket_Read_Stream
 	while (true) {
 		if (stream->stop >= stream->start) {
 			ptrdiff_t read_size = buffer_size - stream->stop;
-			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, read_size);
+			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, (int)read_size);
 			if (read == 0) return true;
 			if (read < 0) return false;
 			stream->stop = (stream->stop + read) & (buffer_size - 1);
 		} else {
 			ptrdiff_t read_size = stream->start - stream->stop - 1;
-			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, read_size);
+			ptrdiff_t read = Net_Receive(socket, stream->buffer + stream->stop, (int)read_size);
 			if (read == 0) return true;
 			if (read < 0) return false;
 			stream->stop = (stream->stop + read) & (buffer_size - 1);

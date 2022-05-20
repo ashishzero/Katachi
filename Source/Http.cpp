@@ -684,8 +684,6 @@ bool Http_ReceiveResponse(Http *http, Http_Response *res, Http_Writer writer) {
 	} else {
 		String transfer_encoding = res->headers.known[HTTP_HEADER_TRANSFER_ENCODING];
 
-		Trace("===> Transfer encoding");
-
 		// Transfer-Encoding: chunked
 		if (transfer_encoding.length && StrFindICase(transfer_encoding, "chunked") >= 0) {
 			ptrdiff_t chunk_read  = body_read;

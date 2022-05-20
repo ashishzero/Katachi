@@ -626,7 +626,7 @@ int Net_SendBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 				if (net->ssl) {
 					if (SSL_get_error(net->ssl, written) == SSL_ERROR_WANT_WRITE) {
 						time_t current = clock();
-						int time_passed = (1000 * (current - counter)) / CLOCKS_PER_SEC;
+						int time_passed = (1000 * (int)(current - counter)) / CLOCKS_PER_SEC;
 						timeout -= time_passed;
 						counter = current;
 						continue;
@@ -680,7 +680,7 @@ int Net_ReceiveBlocked(Net_Socket *net, void *buffer, int length, int timeout) {
 				if (net->ssl) {
 					if (SSL_get_error(net->ssl, read) == SSL_ERROR_WANT_READ) {
 						time_t current  = clock();
-						int time_passed = (1000 * (current - counter)) / CLOCKS_PER_SEC;
+						int time_passed = (1000 * (int)(current - counter)) / CLOCKS_PER_SEC;
 						timeout -= time_passed;
 						counter = current;
 						continue;
