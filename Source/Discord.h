@@ -1555,4 +1555,5 @@ namespace Discord {
 	Message *GetChannelMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 	Message *CreateMessage(Client *client, Snowflake channel_id, const MessagePost &msg);
 	Message *CrossPost(Client *client, Snowflake channel_id, Snowflake message_id);
+	bool CreateReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji);
 }

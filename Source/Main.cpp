@@ -81,6 +81,11 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		reply.embeds.Add(embed);
 		Discord::CreateMessage(client, message.channel_id, reply);
 	} else {
+		if (StrFind(message.content, "zero") >= 0) {
+			String emoji = "%F0%9F%92%96";
+			Discord::CreateReaction(client, message.channel_id, message.id, emoji);
+		}
+
 		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
 		if (channel && channel->type == Discord::ChannelType::GUILD_NEWS) {
 			Discord::CrossPost(client, message.channel_id, message.id);

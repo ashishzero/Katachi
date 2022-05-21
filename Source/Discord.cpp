@@ -2020,6 +2020,10 @@ static inline bool Discord_Post(Discord::Client *client, const String api_endpoi
 	return Discord_CustomMethod(client, "POST", api_endpoint, params, content_type, body, res);
 }
 
+static inline bool Discord_Put(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PUT", api_endpoint, params, content_type, body, res);
+}
+
 static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
 	return Discord_CustomMethod(client, "PATCH", api_endpoint, params, content_type, body, res);
 }
@@ -2034,6 +2038,10 @@ static inline bool Discord_Get(Discord::Client *client, const String api_endpoin
 
 static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
 	return Discord_CustomMethod(client, "POST", api_endpoint, content_type, body, res);
+}
+
+static inline bool Discord_Put(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PUT", api_endpoint, content_type, body, res);
 }
 
 static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
@@ -2600,6 +2608,16 @@ namespace Discord {
 
 		return nullptr;
 	}
+
+	bool CreateReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s/@me", channel_id, message_id, StrArg(emoji));
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //
@@ -2640,9 +2658,10 @@ static bool Discord_CustomMethod(Discord::Client *client, const String method, c
 	for (int retry = 0; retry < 2; ++retry) {
 		Discord_InitHttpRequest(client->http, &req, client->authorization, content_type, body);
 		if (Http_CustomMethod(client->http, method, endpoint, params, req, &res, client->scratch)) {
-			if (res.status.code != 200) {
-				LogInfo("===> Request");
+			if (res.status.code != 200 && res.status.code != 204) {
+				LogInfo("===> Request :: " StrFmt, StrArg(endpoint));
 				Http_DumpHeader(req);
+				LogInfo(StrFmt, StrArg(req.body));
 				LogInfo("===> Response");
 				Http_DumpHeader(res);
 				LogInfo(StrFmt, StrArg(res.body));
