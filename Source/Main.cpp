@@ -147,6 +147,36 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		auto pins = Discord::GetPinnedMessage(client, message.channel_id);
 		if (pins.count)
 			Discord::UnpinMessage(client, message.channel_id, pins[0].id);
+	} else if (message.content == "thread-start") {
+		Discord::StartThreadFromMessage(client, message.channel_id, message.id, "requested-thread");
+	} else if (message.content == "thread-join") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_PUBLIC_THREAD) {
+			Discord::JoinThread(client, channel->id);
+		}
+	} else if (message.content == "thread-leave") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_PUBLIC_THREAD) {
+			Discord::LeaveThread(client, channel->id);
+		}
+	} else if (message.content == "thread-member-add") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_PUBLIC_THREAD) {
+			Discord::AddThreadMember(client, channel->id, 638930271437324290);
+		}
+	} else if (message.content == "thread-member-remove") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_PUBLIC_THREAD) {
+			Discord::RemoveThreadMember(client, channel->id, 638930271437324290);
+		}
+	} else if (message.content == "thread-member-list") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_PUBLIC_THREAD) {
+			auto list = Discord::ListThreadMembers(client, channel->id);
+			Discord::MessagePost post;
+			post.content = FmtStr(ThreadContext.allocator, "%d members in this thread.", (int)list.count);
+			Discord::CreateMessage(client, message.channel_id, post);
+		}
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
 			Discord::TriggerTypingIndicator(client, message.channel_id);

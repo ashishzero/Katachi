@@ -1607,6 +1607,27 @@ namespace Discord {
 		Snowflake        target_application_id;
 	};
 
+	struct ForumThreadMessageParams {
+		String                content;
+		Array<Embed>          embeds;
+		AllowedMentions *     allowed_mentions = nullptr;
+		Array<Component>      components;
+		Array<Snowflake>      sticker_ids;
+		Array<FileAttachment> attachments;
+		MessageFlag           flags;
+	};
+
+	struct StartForumThreadInfo {
+		Channel channel;
+		Message message;
+	};
+
+	struct ThreadsInfo {
+		Array_View<Channel>      threads;
+		Array_View<ThreadMember> members;
+		bool                     has_more = false;
+	};
+
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
 	Channel *DeleteChannel(Client *client, Snowflake channel_id);
@@ -1632,4 +1653,18 @@ namespace Discord {
 	Array_View<Message> GetPinnedMessage(Client *client, Snowflake channel_id);
 	bool PinMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 	bool UnpinMessage(Client *client, Snowflake channel_id, Snowflake message_id);
+	bool GroupDMAddRecipient(Client *client, Snowflake channel_id, Snowflake user_id, String access_token, String nick);
+	bool GroupDMRemoveRecipient(Client *client, Snowflake channel_id, Snowflake user_id);
+	Channel *StartThreadFromMessage(Client *client, Snowflake channel_id, Snowflake message_id, String name, int32_t auto_archive_duration = 0, int32_t rate_limit_per_user = 0);
+	Channel *StartThreadWithoutMessage(Client *client, Snowflake channel_id, String name, int32_t auto_archive_duration = 0, ChannelType type = ChannelType::GUILD_TEXT, bool invitable = false, int32_t rate_limit_per_user = 0);
+	StartForumThreadInfo *StartThreadInForumChannel(Client *client, Snowflake channel_id, String name, const ForumThreadMessageParams &message, int32_t auto_archive_duration = 0, int32_t rate_limit_per_user = 0);
+	bool JoinThread(Client *client, Snowflake channel_id);
+	bool AddThreadMember(Client *client, Snowflake channel_id, Snowflake user_id);
+	bool LeaveThread(Client *client, Snowflake channel_id);
+	bool RemoveThreadMember(Client *client, Snowflake channel_id, Snowflake user_id);
+	ThreadMember *GetThreadMember(Client *client, Snowflake channel_id, Snowflake user_id);
+	Array_View<ThreadMember> ListThreadMembers(Client *client, Snowflake channel_id);
+	ThreadsInfo *ListPublicArchivedThreads(Client *client, Snowflake channel_id, Timestamp before, int32_t limit);
+	ThreadsInfo *ListPrivateArchivedThread(Client *client, Snowflake channel_id, Timestamp before, int32_t limit);
+	ThreadsInfo *ListJoinedArchivedThreads(Client *client, Snowflake channel_id, Timestamp before, int32_t limit);
 }

@@ -364,8 +364,8 @@ static void Discord_Jsonify(const Discord::Embed &embed, Jsonify *j) {
 	if (embed.description.length) j->KeyValue("description", embed.description);
 	if (embed.url.length) j->KeyValue("url", embed.url);
 
+	uint8_t buffer[32];
 	if (embed.timestamp.value) {
-		uint8_t buffer[32];
 		int len = Discord_FmtTimestamp(buffer, sizeof(buffer), embed.timestamp);
 		j->KeyValue("timestamp", String(buffer, len));
 	}
@@ -1895,6 +1895,22 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::FollowedChannel
 //
 //
 
+static int32_t Discord_NormalizeThreadAutoArchiveDuration(int32_t auto_archive_duration) {
+	if (auto_archive_duration < 60 || (auto_archive_duration > 60 && auto_archive_duration < 1440))
+		auto_archive_duration = 60;
+	else if (auto_archive_duration > 1440 && auto_archive_duration < 4320)
+		auto_archive_duration = 1440;
+	else if (auto_archive_duration > 4320 && auto_archive_duration < 10080)
+		auto_archive_duration = 4320;
+	else if (auto_archive_duration > 10080)
+		auto_archive_duration = 10080;
+	return auto_archive_duration;
+}
+
+//
+//
+//
+
 static void Discord_SetupEventHandlers(Discord::EventHandler *h) {
 	using namespace Discord;
 	if (!h->tick) h->tick           = [](Client *) {};
@@ -2168,7 +2184,8 @@ namespace Discord {
 		Identify         identify;
 		uint8_t          session_id[1024] = {0};
 		int              sequence = -1;
-		bool             login = false;
+		bool             running = false;
+		bool             closing = false;
 	};
 
 	void IdentifyCommand(Client *client) {
@@ -2283,7 +2300,8 @@ namespace Discord {
 		client.allocator  = spec.allocator;
 		client.identify   = Discord::Identify(token, intents, presence);
 		client.onevent    = onevent;
-		client.login      = true;
+		client.running    = true;
+		client.closing    = false;
 
 		client.identify.shard[0] = spec.shards[0];
 		client.identify.shard[1] = spec.shards[1];
@@ -2297,7 +2315,7 @@ namespace Discord {
 
 		Discord_SetupEventHandlers(&client.onevent);
 
-		while (client.login) {
+		while (client.running) {
 			client.heartbeat = Discord::Heartbeat();
 
 			for (int reconnect = 0; !client.websocket; ++reconnect) {
@@ -2428,11 +2446,11 @@ namespace Discord {
 
 		Discord_ShardThreadProc(shard);
 
-		for (int32_t shard_id = 0; shard_id < shard_count; ++shard_id) {
+		for (int32_t shard_id = 0; shard_id < shard_count - 1; ++shard_id) {
 			Thread_Wait(shards[shard_id].handle, -1);
 		}
 
-		for (int32_t shard_id = 0; shard_id < shard_count; ++shard_id) {
+		for (int32_t shard_id = 0; shard_id < shard_count - 1; ++shard_id) {
 			Thread_Destroy(shards[shard_id].handle);
 		}
 
@@ -2440,10 +2458,10 @@ namespace Discord {
 	}
 
 	void Logout(Client *client) {
-		if (client->login) {
+		if (client->running && !client->closing) {
 			LogInfoEx("Discord", "Logging out...");
 			Websocket_Close(client->websocket, WEBSOCKET_CLOSE_NORMAL);
-			client->login = false;
+			client->closing = true;
 		}
 	}
 
@@ -3041,6 +3059,404 @@ namespace Discord {
 		}
 		return false;
 	}
+
+	bool GroupDMAddRecipient(Client *client, Snowflake channel_id, Snowflake user_id, String access_token, String nick) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/recipients/%zu", channel_id, user_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("access_token", access_token);
+		j.KeyValue("nick", nick);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", body, &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	bool GroupDMRemoveRecipient(Client *client, Snowflake channel_id, Snowflake user_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/recipients/%zu", channel_id, user_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	Channel *StartThreadFromMessage(Client *client, Snowflake channel_id, Snowflake message_id, String name, int32_t auto_archive_duration, int32_t rate_limit_per_user) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/threads", channel_id, message_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("name", name);
+		if (auto_archive_duration) {
+			auto_archive_duration = Discord_NormalizeThreadAutoArchiveDuration(auto_archive_duration);
+			j.KeyValue("auto_archive_duration", auto_archive_duration);
+		}
+		if (rate_limit_per_user)
+			j.KeyValue("rate_limit_per_user", rate_limit_per_user);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", body, &res)) {
+			Channel *channel = new Channel;
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
+		return nullptr;
+	}
+
+	Channel *StartThreadWithoutMessage(Client *client, Snowflake channel_id, String name, int32_t auto_archive_duration, ChannelType type, bool invitable, int32_t rate_limit_per_user) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/threads", channel_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("name", name);
+		if (auto_archive_duration) {
+			auto_archive_duration = Discord_NormalizeThreadAutoArchiveDuration(auto_archive_duration);
+			j.KeyValue("auto_archive_duration", auto_archive_duration);
+		}
+		j.KeyValue("type", (int)type);
+		j.KeyValue("invitable", invitable);
+		if (rate_limit_per_user)
+			j.KeyValue("rate_limit_per_user", rate_limit_per_user);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", body, &res)) {
+			Channel *channel = new Channel;
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
+		return nullptr;
+	}
+
+	StartForumThreadInfo *StartThreadInForumChannel(Client *client, Snowflake channel_id, String name, const ForumThreadMessageParams &msg, int32_t auto_archive_duration, int32_t rate_limit_per_user) {
+		Jsonify j(client->scratch);
+
+		j.BeginObject();
+
+		j.KeyValue("name", name);
+		if (auto_archive_duration) {
+			auto_archive_duration = Discord_NormalizeThreadAutoArchiveDuration(auto_archive_duration);
+			j.KeyValue("auto_archive_duration", auto_archive_duration);
+		}
+		if (rate_limit_per_user)
+			j.KeyValue("rate_limit_per_user", rate_limit_per_user);
+
+		j.PushKey("message");
+
+		j.BeginObject();
+
+		if (msg.content.length)
+			j.KeyValue("content", msg.content);
+
+		if (msg.embeds.count) {
+			j.PushKey("embeds");
+			j.BeginArray();
+			for (const auto &embed : msg.embeds)
+				Discord_Jsonify(embed, &j);
+			j.EndArray();
+		}
+
+		if (msg.allowed_mentions) {
+			j.PushKey("allowed_mentions");
+			Discord_Jsonify(*msg.allowed_mentions, &j);
+		}
+
+		if (msg.components.count) {
+			j.PushKey("components");
+			j.BeginArray();
+			for (const auto &comp : msg.components)
+				Discord_Jsonify(comp, &j);
+			j.EndArray();
+		}
+
+		if (msg.sticker_ids.count) {
+			j.PushKey("sticker_ids");
+			j.BeginArray();
+			for (const auto &id : msg.sticker_ids)
+				j.PushId(id.value);
+			j.EndArray();
+		}
+
+		if (msg.attachments.count) {
+			j.PushKey("attachments");
+			j.BeginArray();
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				j.BeginObject();
+				j.KeyValue("id", id);
+				j.KeyValue("filename", msg.attachments[id].filename);
+				if (msg.attachments[id].description.length)
+					j.KeyValue("description", msg.attachments[id].description);
+				j.EndObject();
+			}
+			j.EndArray();
+		}
+
+		if (msg.flags) j.KeyValue("flags", msg.flags);
+
+		j.EndObject();
+		j.EndObject();
+
+		String payload_json = Jsonify_BuildString(&j);
+
+		String body;
+		String content_type;
+
+		uint8_t buffer[4096];
+		int     len = 0;
+
+		if (!msg.attachments.count) {
+			body = payload_json;
+			content_type = "application/json";
+		} else {
+			Http_Multipart multipart = Http_MultipartBegin(client->scratch);
+			if (!Http_MultipartData(&multipart, payload_json, "application/json", "name=\"payload_json\""))
+				return nullptr;
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				const auto &attachment = msg.attachments[id];
+				len = snprintf((char *)buffer, sizeof(buffer), "name=\"files[%d]\"; filename=\"" StrFmt "\"", id, StrArg(attachment.filename));
+				String content_disposition(buffer, len);
+				if (!Http_MultipartData(&multipart, attachment.content, attachment.content_type, content_disposition))
+					return nullptr;
+			}
+
+			body = Http_MultipartEnd(&multipart);
+
+			String boundary = String(multipart.boundary, HTTP_MULTIPART_LENGTH);
+			len = snprintf((char *)buffer, sizeof(buffer), "multipart/form-data; boundary=" StrFmt, StrArg(boundary));
+			content_type = String(buffer, len);
+		}
+
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/threads", channel_id);
+
+		Json res;
+		if (Discord_Post(client, endpoint, content_type, body, &res)) {
+			StartForumThreadInfo *thread = new StartForumThreadInfo;
+			if (thread) {
+				Json_Object obj = JsonGetObject(res);
+				Discord_Deserialize(obj, &thread->channel);
+				Discord_Deserialize(JsonGetObject(obj, "message"), &thread->message);
+			}
+			return thread;
+		}
+
+		return nullptr;
+	}
+
+	bool JoinThread(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members/@me", channel_id);
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	bool AddThreadMember(Client *client, Snowflake channel_id, Snowflake user_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members/%zu", channel_id, user_id);
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", String(), &res)) {
+			return false;
+		}
+		return true;
+	}
+
+	bool LeaveThread(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members/@me", channel_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return false;
+		}
+		return true;
+	}
+
+	bool RemoveThreadMember(Client *client, Snowflake channel_id, Snowflake user_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members/%zu", channel_id, user_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return false;
+		}
+		return true;
+	}
+
+	ThreadMember *GetThreadMember(Client *client, Snowflake channel_id, Snowflake user_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members/%zu", channel_id, user_id);
+
+		Json res;
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
+			ThreadMember *member = new ThreadMember;
+			if (member) {
+				Discord_Deserialize(JsonGetObject(res), member);
+			}
+			return member;
+		}
+		return nullptr;
+	}
+
+	Array_View<ThreadMember> ListThreadMembers(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/thread-members", channel_id);
+
+		Json res;
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
+			Json_Array arr = JsonGetArray(res);
+			Array<ThreadMember> members;
+			members.Resize(arr.count);
+			for (ptrdiff_t index = 0; index < members.count; ++index) {
+				Discord_Deserialize(JsonGetObject(arr[index]), &members[index]);
+			}
+			return members;
+		}
+		return Array_View<ThreadMember>();
+	}
+
+	ThreadsInfo *ListPublicArchivedThreads(Client *client, Snowflake channel_id, Timestamp before, int32_t limit) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/threads/archived/public", channel_id);
+
+		uint8_t buffer[32];
+
+		Http_Query_Params params;
+		if (before.value) {
+			int len = Discord_FmtTimestamp(buffer, sizeof(buffer), before);
+			Http_QueryParamSet(&params, "before", String(buffer, len));
+		}
+
+		if (limit)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%d", limit));
+
+		Json res;
+		if (Discord_Get(client, endpoint, params, "application/json", String(), &res)) {
+			ThreadsInfo *archived = new ThreadsInfo;
+
+			if (archived) {
+				Json_Object obj = JsonGetObject(res);
+				Json_Array arr;
+				
+				arr = JsonGetArray(obj, "threads");
+				Array<Channel> threads;
+				threads.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < threads.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &threads[index]);
+
+				arr = JsonGetArray(obj, "members");
+				Array<ThreadMember> members;
+				members.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < members.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &members[index]);
+
+				archived->threads  = threads;
+				archived->members  = members;
+				archived->has_more = JsonGetBool(obj, "has_more");
+			}
+
+			return archived;
+		}
+		return nullptr;
+	}
+
+	ThreadsInfo *ListPrivateArchivedThread(Client *client, Snowflake channel_id, Timestamp before, int32_t limit) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/threads/archived/private", channel_id);
+
+		uint8_t buffer[32];
+
+		Http_Query_Params params;
+		if (before.value) {
+			int len = Discord_FmtTimestamp(buffer, sizeof(buffer), before);
+			Http_QueryParamSet(&params, "before", String(buffer, len));
+		}
+
+		if (limit)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%d", limit));
+
+		Json res;
+		if (Discord_Get(client, endpoint, params, "application/json", String(), &res)) {
+			ThreadsInfo *archived = new ThreadsInfo;
+
+			if (archived) {
+				Json_Object obj = JsonGetObject(res);
+				Json_Array arr;
+
+				arr = JsonGetArray(obj, "threads");
+				Array<Channel> threads;
+				threads.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < threads.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &threads[index]);
+
+				arr = JsonGetArray(obj, "members");
+				Array<ThreadMember> members;
+				members.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < members.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &members[index]);
+
+				archived->threads = threads;
+				archived->members = members;
+				archived->has_more = JsonGetBool(obj, "has_more");
+			}
+
+			return archived;
+		}
+		return nullptr;
+	}
+
+	ThreadsInfo *ListJoinedArchivedThreads(Client *client, Snowflake channel_id, Timestamp before, int32_t limit) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/users/@me/threads/archived/private", channel_id);
+
+		uint8_t buffer[32];
+
+		Http_Query_Params params;
+		if (before.value) {
+			int len = Discord_FmtTimestamp(buffer, sizeof(buffer), before);
+			Http_QueryParamSet(&params, "before", String(buffer, len));
+		}
+
+		if (limit)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%d", limit));
+
+		Json res;
+		if (Discord_Get(client, endpoint, params, "application/json", String(), &res)) {
+			ThreadsInfo *archived = new ThreadsInfo;
+
+			if (archived) {
+				Json_Object obj = JsonGetObject(res);
+				Json_Array arr;
+
+				arr = JsonGetArray(obj, "threads");
+				Array<Channel> threads;
+				threads.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < threads.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &threads[index]);
+
+				arr = JsonGetArray(obj, "members");
+				Array<ThreadMember> members;
+				members.Resize(arr.count);
+				for (ptrdiff_t index = 0; index < members.count; ++index)
+					Discord_Deserialize(JsonGetObject(arr[index]), &members[index]);
+
+				archived->threads = threads;
+				archived->members = members;
+				archived->has_more = JsonGetBool(obj, "has_more");
+			}
+
+			return archived;
+		}
+		return nullptr;
+	}
 }
 
 //
@@ -3081,7 +3497,7 @@ static bool Discord_CustomMethod(Discord::Client *client, const String method, c
 	for (int retry = 0; retry < 2; ++retry) {
 		Discord_InitHttpRequest(client->http, &req, client->authorization, content_type, body);
 		if (Http_CustomMethod(client->http, method, endpoint, params, req, &res, client->scratch)) {
-			if (res.status.code != 200 && res.status.code != 204) {
+			if (res.status.code > 299) {
 				LogInfo("===> Request :: " StrFmt, StrArg(endpoint));
 				Http_DumpHeader(req);
 				LogInfo(StrFmt, StrArg(req.body));
@@ -3922,6 +4338,9 @@ static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocke
 		else
 			LogErrorEx("Discord", "Abnormal shut down (%d)", code);
 
-		client->login = Discord_GatewayCloseReconnect(code);
+		bool can_reconnect = Discord_GatewayCloseReconnect(code);
+		if (!can_reconnect || client->closing) {
+			client->running = false;
+		}
 	}
 }
