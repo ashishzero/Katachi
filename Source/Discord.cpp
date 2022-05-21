@@ -2628,6 +2628,59 @@ namespace Discord {
 		}
 		return false;
 	}
+
+	bool DeleteUserReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji, Snowflake user_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s/%zu", channel_id, message_id, StrArg(emoji), user_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	Array_View<User> GetReactions(Client *client, Snowflake channel_id, Snowflake message_id, String emoji, int32_t after, int32_t limit) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s", channel_id, message_id, StrArg(emoji));
+
+		Http_Query_Params params;
+		if (after >= 0)
+			Http_QueryParamSet(&params, "after", FmtStr(client->scratch, "%d", after));
+		if (limit >= 0)
+			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%d", limit));
+
+		Json res;
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
+			Json_Array arr = JsonGetArray(res);
+			Array<User> users;
+			users.Resize(arr.count);
+			for (ptrdiff_t index = 0; index < users.count; ++index) {
+				Discord_Deserialize(JsonGetObject(arr[index]), &users[index]);
+			}
+
+			return users;
+		}
+		return Array_View<User>();
+	}
+
+	bool DeleteAllReactions(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions", channel_id, message_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	bool DeleteAllReactionsForEmoji(Client *client, Snowflake channel_id, Snowflake message_id, String emoji) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s", channel_id, message_id, StrArg(emoji));
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //

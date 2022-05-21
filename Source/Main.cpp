@@ -25,6 +25,18 @@ void OnTick(Discord::Client *client) {
 	}
 }
 
+void OnReaction(Discord::Client *client, const Discord::MessageReactionInfo &reaction) {
+	String poop = "%F0%9F%92%A9";
+	if (reaction.emoji.name == u8"💩") {
+		Discord::Message *msg = Discord::GetChannelMessage(client, reaction.channel_id, reaction.message_id);
+		if (msg && StrFind(msg->content, "zero") >= 0) {
+			Discord::DeleteUserReaction(client, reaction.channel_id, reaction.message_id, poop, reaction.user_id);
+		}
+	} else {
+		Trace("Emoji Name: " StrFmt, StrArg(reaction.emoji.name));
+	}
+}
+
 void OnMessage(Discord::Client *client, const Discord::Message &message) {
 	if (message.content == "info") {
 		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
@@ -157,6 +169,7 @@ int main(int argc, char **argv) {
 	Discord::EventHandler events;
 	events.tick           = OnTick;
 	events.message_create = OnMessage;
+	events.message_reaction_add = OnReaction;
 
 	Discord::LoginSharded(token, intents, events, &presence);
 

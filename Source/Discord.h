@@ -1557,4 +1557,8 @@ namespace Discord {
 	Message *CrossPost(Client *client, Snowflake channel_id, Snowflake message_id);
 	bool CreateReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji);
 	bool DeleteReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji);
+	bool DeleteUserReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji, Snowflake user_id);
+	Array_View<User> GetReactions(Client *client, Snowflake channel_id, Snowflake message_id, String emoji, int32_t after = 0, int32_t limit = 0);
+	bool DeleteAllReactions(Client *client, Snowflake channel_id, Snowflake message_id);
+	bool DeleteAllReactionsForEmoji(Client *client, Snowflake channel_id, Snowflake message_id, String emoji);
 }
