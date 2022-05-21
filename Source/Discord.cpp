@@ -18,6 +18,177 @@ namespace Discord {
 	const String BaseHttpUrl = "/api/v10";
 }
 
+//
+//
+//
+
+
+constexpr ptrdiff_t UNIX_YEAR = 1970;
+constexpr ptrdiff_t DaysInMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+static int Discord_FmtTimestamp(uint8_t *buffer, int size, Discord::Timestamp timestamp) {
+	ptrdiff_t secs = timestamp.value >= 0 ? timestamp.value : -timestamp.value;
+	ptrdiff_t mins = secs / 60;
+	secs %= 60;
+	ptrdiff_t hours = mins / 60;
+	mins %= 60;
+	ptrdiff_t days = hours / 24;
+	hours %= 24;
+
+	if (timestamp.value >= 0) {
+		ptrdiff_t year = UNIX_YEAR;
+		for (; days >= 365; days -= 365) {
+			year += 1;
+			if ((year & 3) == 0 && ((year % 100 != 0) || (year % 400 == 0))) {
+				days -= 1;
+			}
+		}
+
+		ptrdiff_t month = 1;
+		while (true) {
+			if (days < DaysInMonth[month - 1])
+				break;
+			days -= DaysInMonth[month - 1];
+			month += 1;
+		}
+
+		int len = snprintf((char *)buffer, size, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+			(int)year, (int)month, (int)days + 1, (int)hours, (int)mins, (int)secs);
+		return len;
+	} else {
+		ptrdiff_t year = UNIX_YEAR - 1;
+		for (; days >= 365; days -= 365) {
+			year -= 1;
+			if ((year & 3) == 0 && ((year % 100 != 0) || (year % 400 == 0))) {
+				days -= 1;
+			}
+		}
+
+		ptrdiff_t month = 1;
+		while (true) {
+			if (days < DaysInMonth[12 - month])
+				break;
+			days -= DaysInMonth[12 - month];
+			month += 1;
+		}
+
+		month = 12 - month + 1;
+
+		days = DaysInMonth[month - 1] - days;
+		hours = 24 - hours - 1;
+		mins = 60 - mins - 1;
+		secs = 60 - secs;
+
+		int len = snprintf((char *)buffer, size, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+			(int)year, (int)month, (int)days, (int)hours, (int)mins, (int)secs);
+		return len;
+	}
+}
+
+static Discord::Timestamp Discord_ParseTimestamp(String timestamp) {
+	// 1990-12-31T22:59:23Z
+	// 1996-12-19T16:39:57-08:00
+	// 1937-01-01T12:00:27.87+00:20
+	// 01234567890123456789
+
+	char buffer[32];
+
+	if (timestamp.length > sizeof(buffer) - 1)
+		return 0;
+
+	int len = (int)timestamp.length;
+	memcpy(buffer, timestamp.data, len);
+	memset(buffer + len, 0, sizeof(buffer) - len);
+
+	buffer[4] = 0;
+	buffer[7] = 0;
+	buffer[10] = 0;
+	buffer[13] = 0;
+	buffer[16] = 0;
+
+	long years = strtol(buffer + 0, nullptr, 10);
+	long months = strtol(buffer + 5, nullptr, 10);
+	long days = strtol(buffer + 8, nullptr, 10);
+	long hours = strtol(buffer + 11, nullptr, 10);
+	long mins = strtol(buffer + 14, nullptr, 10);
+
+	char *end_ptr = nullptr;
+	float frac = strtof(buffer + 17, &end_ptr);
+	long secs = (long)frac;
+
+	ptrdiff_t offset = 0;
+
+	if (*end_ptr == '+' || *end_ptr == '-') {
+		end_ptr[3] = 0;
+		long offh = strtol(end_ptr + 0, nullptr, 10);
+		long offm = strtol(end_ptr + 4, nullptr, 10);
+		offset = offh * 60 * 60 + offm * 60;
+	}
+
+	if (years >= UNIX_YEAR) {
+		for (long leap = UNIX_YEAR + 1; leap < years; ++leap) {
+			if ((leap & 3) == 0 && ((leap % 100 != 0) || (leap % 400 == 0))) {
+				days += 1;
+			}
+		}
+
+		years -= UNIX_YEAR;
+
+		months = Minimum(months, ArrayCount(DaysInMonth));
+		months -= 1;
+		for (long i = 0; i < months; ++i)
+			days += (long)DaysInMonth[i];
+		days -= 1;
+
+		ptrdiff_t epoch = -offset;
+		epoch += secs;
+		epoch += mins * 60;
+		epoch += hours * 60 * 60;
+		epoch += days * 24 * 60 * 60;
+		epoch += years * 365 * 24 * 60 * 60;
+
+		return epoch;
+	} else {
+		secs = 60 - secs;
+		mins = 60 - mins - 1;
+		hours = 24 - hours - 1;
+		months = Minimum(months, ArrayCount(DaysInMonth));
+		days = (long)DaysInMonth[months - 1] - days;
+
+		if (months >= 2) {
+			if ((years & 3) == 0 && ((years % 100 != 0) || (years % 400 == 0))) {
+				days += 1;
+			}
+		}
+
+		months = 12 - months;
+
+		for (long leap = years + 1; leap < UNIX_YEAR; ++leap) {
+			if ((leap & 3) == 0 && ((leap % 100 != 0) || (leap % 400 == 0))) {
+				days += 1;
+			}
+		}
+
+		years = UNIX_YEAR - years - 1;
+
+		for (long i = 12; i >= 0 && months >= 0; --i, --months)
+			days += (long)DaysInMonth[i];
+
+		ptrdiff_t epoch = -offset;
+		epoch += secs;
+		epoch += mins * 60;
+		epoch += hours * 60 * 60;
+		epoch += days * 24 * 60 * 60;
+		epoch += years * 365 * 24 * 60 * 60;
+
+		return -epoch;
+	}
+}
+
+//
+//
+//
+
 static void Discord_Jsonify(const Discord::Activity &activity, Jsonify *j) {
 	j->BeginObject();
 	j->KeyValue("name", activity.name);
@@ -125,6 +296,219 @@ static void Discord_Jsonify(const Discord::Overwrite &overwrite, Jsonify *j) {
 	j->EndObject();
 }
 
+static void Discord_Jsonify(const Discord::EmbedFooter &footer, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("text", footer.text);
+	if (footer.icon_url.length) j->KeyValue("icon_url", footer.icon_url);
+	if (footer.proxy_icon_url.length) j->KeyValue("proxy_icon_url", footer.proxy_icon_url);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedImage &image, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("url", image.url);
+	if (image.proxy_url.length) j->KeyValue("proxy_url", image.proxy_url);
+	if (image.height) j->KeyValue("height", image.height);
+	if (image.width) j->KeyValue("width", image.width);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedThumbnail &thumbnail, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("url", thumbnail.url);
+	if (thumbnail.proxy_url.length) j->KeyValue("proxy_url", thumbnail.proxy_url);
+	if (thumbnail.height) j->KeyValue("height", thumbnail.height);
+	if (thumbnail.width) j->KeyValue("width", thumbnail.width);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedVideo &video, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("url", video.url);
+	if (video.proxy_url.length) j->KeyValue("proxy_url", video.proxy_url);
+	if (video.height) j->KeyValue("height", video.height);
+	if (video.width) j->KeyValue("width", video.width);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedProvider &provider, Jsonify *j) {
+	j->BeginObject();
+	if (provider.name.length) j->KeyValue("name", provider.name);
+	if (provider.url.length) j->KeyValue("url", provider.url);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedAuthor &author, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("name", author.name);
+	if (author.url.length) j->KeyValue("url", author.url);
+	if (author.icon_url.length) j->KeyValue("icon_url", author.icon_url);
+	if (author.proxy_icon_url.length) j->KeyValue("proxy_icon_url", author.proxy_icon_url);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::EmbedField &field, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("name", field.name);
+	j->KeyValue("value", field.value);
+	if (field.isinline)
+		j->KeyValue("inline", field.isinline);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::Embed &embed, Jsonify *j) {
+	j->BeginObject();
+
+	if (embed.title.length) j->KeyValue("title", embed.title);
+	if (embed.type.length) j->KeyValue("type", embed.type);
+	if (embed.description.length) j->KeyValue("description", embed.description);
+	if (embed.url.length) j->KeyValue("url", embed.url);
+
+	if (embed.timestamp.value) {
+		uint8_t buffer[32];
+		int len = Discord_FmtTimestamp(buffer, sizeof(buffer), embed.timestamp);
+		j->KeyValue("timestamp", String(buffer, len));
+	}
+
+	if (embed.color) j->KeyValue("color", embed.color);
+	if (embed.footer) Discord_Jsonify(*embed.footer, j);
+	if (embed.image) Discord_Jsonify(*embed.image, j);
+	if (embed.thumbnail) Discord_Jsonify(*embed.thumbnail, j);
+	if (embed.video) Discord_Jsonify(*embed.video, j);
+	if (embed.provider) Discord_Jsonify(*embed.provider, j);
+	if (embed.author) Discord_Jsonify(*embed.author, j);
+
+	if (embed.fields.count) {
+		j->PushKey("fields");
+		j->BeginArray();
+		for (const auto &field : embed.fields)
+			Discord_Jsonify(field, j);
+		j->EndArray();
+	}
+
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::AllowedMentions &mentions, Jsonify *j) {
+	j->BeginObject();
+
+	j->PushKey("parse");
+	j->BeginArray();
+	for (const auto parse : mentions.parse) {
+		if (parse == Discord::AllowedMentionType::ROLE)
+			j->PushString("roles");
+		else if (parse == Discord::AllowedMentionType::USER)
+			j->PushString("users");
+		else
+			j->PushString("everyone");
+	}
+	j->EndArray();
+
+	j->PushKey("roles");
+	j->BeginArray();
+	for (const auto role : mentions.roles)
+		j->PushId(role.value);
+	j->EndArray();
+
+	j->PushKey("users");
+	for (const auto user : mentions.users)
+		j->PushId(user.value);
+	j->EndArray();
+
+	j->KeyValue("replied_user", mentions.replied_user);
+
+	j->EndObject();
+
+	Unimplemented();
+}
+
+static void Discord_Jsonify(const Discord::MessageReference &msg, Jsonify *j) {
+	j->BeginObject();
+	if (msg.message_id.value) j->KeyValue("message_id", msg.message_id.value);
+	if (msg.channel_id.value) j->KeyValue("channel_id", msg.channel_id.value);
+	if (msg.guild_id.value) j->KeyValue("guild_id", msg.guild_id.value);
+	if (msg.fail_if_not_exists) j->KeyValue("fail_if_not_exists", msg.fail_if_not_exists);
+	j->EndObject();
+}
+
+static void Discord_Jsonify(const Discord::Component &component, Jsonify *j) {
+	j->BeginObject();
+	j->KeyValue("type", (int)component.type);
+
+	switch (component.type) {
+		case Discord::ComponentType::ACTION_ROW: {
+			j->PushKey("components");
+			j->BeginArray();
+			for (const auto &sub : component.data.action_row.components)
+				Discord_Jsonify(sub, j);
+			j->EndArray();
+		} break;
+
+		case Discord::ComponentType::BUTTON: {
+			const Discord::Component::Button &button = component.data.button;
+			j->KeyValue("style", (int)button.style);
+			if (button.label.length) j->KeyValue("label", button.label);
+			if (button.custom_id.length) j->KeyValue("custom_id", button.custom_id);
+			if (button.url.length) j->KeyValue("url", button.url);
+			if (button.disabled) j->KeyValue("disabled", button.disabled);
+
+			if (button.emoji) {
+				j->PushKey("emoji");
+				j->BeginObject();
+				j->KeyValue("name", button.emoji->name);
+				j->KeyValue("id", button.emoji->id.value);
+				j->KeyValue("animated", button.emoji->animated);
+				j->EndObject();
+			}
+		} break;
+
+		case Discord::ComponentType::SELECT_MENU: {
+			const auto &menu = component.data.select_menu;
+			j->KeyValue("custom_id", menu.custom_id);
+			j->PushKey("options");
+			j->BeginArray();
+			for (const auto &option : menu.options) {
+				j->BeginObject();
+				j->KeyValue("label", option.label);
+				j->KeyValue("value", option.value);
+				if (option.description.length)
+					j->KeyValue("description", option.description);
+				if (option.emoji) {
+					j->PushKey("emoji");
+					j->BeginObject();
+					j->KeyValue("id", option.emoji->id.value);
+					j->KeyValue("name", option.emoji->name);
+					j->KeyValue("animated", option.emoji->animated);
+					j->EndObject();
+				}
+				if (option.isdefault)
+					j->KeyValue("default", option.isdefault);
+				j->EndObject();
+			}
+			j->EndArray();
+		} break;
+
+		case Discord::ComponentType::TEXT_INPUT: {
+			const auto &text = component.data.text_input;
+			j->KeyValue("custom_id", text.custom_id);
+			j->KeyValue("style", (int)text.style);
+			j->KeyValue("label", text.label);
+			j->KeyValue("min_length", text.min_length);
+			if (text.max_length)
+				j->KeyValue("max_length", text.max_length);
+			j->KeyValue("required", text.required);
+			if (text.value.length)
+				j->KeyValue("value", text.value);
+			if (text.placeholder.length)
+				j->KeyValue("placeholder", text.placeholder);
+		} break;
+
+		NoDefaultCase();
+	}
+
+	j->EndObject();
+}
+
 //
 //
 //
@@ -140,67 +524,6 @@ static uint64_t Discord_ParseBigInt(String id) {
 static Discord::Snowflake Discord_ParseId(String id) {
 	uint64_t value = Discord_ParseBigInt(id);
 	return Discord::Snowflake(value);
-}
-
-static Discord::Timestamp Discord_ParseTimestamp(String timestamp) {
-	// 1990-12-31T23:59:60Z
-	// 1996-12-19T16:39:57-08:00
-	// 1937-01-01T12:00:27.87+00:20
-	// 01234567890123456789
-
-	char buffer[32];
-
-	if (timestamp.length > sizeof(buffer) - 1)
-		return 0;
-
-	int len = (int)timestamp.length;
-	memcpy(buffer, timestamp.data, len);
-	memset(buffer + len, 0, sizeof(buffer) - len);
-
-	buffer[4]  = 0;
-	buffer[7]  = 0;
-	buffer[10] = 0;
-	buffer[13] = 0;
-	buffer[16] = 0;
-
-	long years  = strtol(buffer + 0, nullptr, 10);
-	long months = strtol(buffer + 5, nullptr, 10);
-	long days   = strtol(buffer + 8, nullptr, 10);
-	long hours  = strtol(buffer + 11, nullptr, 10);
-	long mins   = strtol(buffer + 14, nullptr, 10);
-
-	char *end_ptr = nullptr;
-	float frac    = strtof(buffer + 17, &end_ptr);
-	long secs     = (long)frac;
-
-	if (*end_ptr == '+' || *end_ptr == '-') {
-		end_ptr[3] = 0;
-		long offh  = strtol(end_ptr + 0, nullptr, 10);
-		long offm  = strtol(end_ptr + 4, nullptr, 10);
-		hours += offh;
-		mins += offm;
-	}
-
-	constexpr long DaysInMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-
-	const long UNIX_YEAR = 1970;
-
-	years -= UNIX_YEAR;
-
-	months = Minimum(months, ArrayCount(DaysInMonth));
-	months -= 1;
-	for (long i = 0; i < months; ++i)
-		days += DaysInMonth[i];
-	days -= 1;
-
-	ptrdiff_t epoch = 0;
-	epoch += secs;
-	epoch += mins * 60;
-	epoch += hours * 60 * 60;
-	epoch += days * 24 * 60 * 60;
-	epoch += years * 365 * 24 * 60 * 60;
-
-	return epoch;
 }
 
 //
@@ -962,9 +1285,7 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Component::Acti
 	action_row->components.Resize(components.count);
 	ptrdiff_t index = 0;
 	for (; index < action_row->components.count; ++index) {
-		action_row->components[index] = new Discord::Component;
-		if (!action_row->components[index]) break;
-		Discord_Deserialize(JsonGetObject(components[index]), action_row->components[index]);
+		Discord_Deserialize(JsonGetObject(components[index]), &action_row->components[index]);
 	}
 	action_row->components.count = index;
 	action_row->components.Pack();
@@ -2140,6 +2461,67 @@ namespace Discord {
 
 		Json res;
 		if (Discord_Get(client, endpoint, String(), &res)) {
+			Message *message = new Message;
+			Discord_Deserialize(JsonGetObject(res), message);
+			return message;
+		}
+		return nullptr;
+	}
+
+	Message *CreateMessage(Client *client, Snowflake channel_id, const MessagePost &msg) {
+		Jsonify j(client->scratch);
+
+		j.BeginObject();
+
+		if (msg.content.length)
+			j.KeyValue("content", msg.content);
+
+		if (msg.tts)
+			j.KeyValue("tts", msg.tts);
+
+		if (msg.embeds.count) {
+			j.PushKey("embeds");
+			j.BeginArray();
+			for (const auto &embed : msg.embeds)
+				Discord_Jsonify(embed, &j);
+			j.EndArray();
+		}
+
+		if (msg.allowed_mentions) {
+			j.PushKey("allowed_mentions");
+			Discord_Jsonify(*msg.allowed_mentions, &j);
+		}
+
+		if (msg.message_reference) {
+			j.PushKey("message_reference");
+			Discord_Jsonify(*msg.message_reference, &j);
+		}
+
+		if (msg.components.count) {
+			j.PushKey("components");
+			j.BeginArray();
+			for (const auto &comp : msg.components)
+				Discord_Jsonify(comp, &j);
+			j.EndArray();
+		}
+
+		if (msg.sticker_ids.count) {
+			j.PushKey("sticker_ids");
+			j.BeginArray();
+			for (const auto &id : msg.sticker_ids)
+				j.PushId(id.value);
+			j.EndArray();
+		}
+
+		// @todo handle files
+
+		j.EndObject();
+
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages", channel_id.value);
+		String body     = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, body, &res)) {
 			Message *message = new Message;
 			Discord_Deserialize(JsonGetObject(res), message);
 			return message;

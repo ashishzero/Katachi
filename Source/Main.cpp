@@ -49,6 +49,16 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 	} else if (message.content == "getmsg") {
 		auto current = Discord::GetChannelMessage(client, message.channel_id, message.id);
 		Trace(StrFmt, StrArg(current->content));
+	} else if (message.content == "ping") {
+		Discord::Embed embed;
+		embed.description = "pong";
+		embed.title = "ping";
+		embed.color = 0x00ffff;
+
+		Discord::MessagePost reply;
+		//reply.content = "pong";
+		reply.embeds.Add(embed);
+		Discord::CreateMessage(client, message.channel_id, reply);
 	}
 }
 

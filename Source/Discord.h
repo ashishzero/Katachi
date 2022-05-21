@@ -873,7 +873,7 @@ namespace Discord {
 
 	struct Component {
 		struct ActionRow {
-			Array<Component *> components;
+			Array<Component> components;
 
 			ActionRow() = default;
 			ActionRow(Memory_Allocator allocator): components(allocator) {}
@@ -1144,6 +1144,17 @@ namespace Discord {
 			mentions(allocator), mention_roles(allocator), mention_channels(allocator),
 			attachments(allocator), embeds(allocator), reactions(allocator),
 			components(allocator), sticker_items(allocator) {}
+	};
+
+	enum class AllowedMentionType {
+		ROLE, USER, EVERYONE
+	};
+
+	struct AllowedMentions {
+		Array<AllowedMentionType> parse;
+		Array<Snowflake>          roles;
+		Array<Snowflake>          users;
+		bool                      replied_user;
 	};
 
 	//
@@ -1517,9 +1528,25 @@ namespace Discord {
 		int32_t *        default_auto_archive_duration = nullptr;
 	};
 
+	struct MessagePost {
+		String           content;
+		bool             tts = false;
+		Array<Embed>     embeds;
+		AllowedMentions *allowed_mentions = nullptr;
+		MessageReference *message_reference = nullptr;
+		Array<Component> components;
+		Array<Snowflake> sticker_ids;
+		// @todo: files
+		String            payload_json;
+		Array<Attachment> attachments;
+		MessageFlag       flags = 0;
+	};
+
+
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
 	Channel *DeleteChannel(Client *client, Snowflake channel_id);
 	Array_View<Message> GetChannelMessages(Client *client, Snowflake channel_id, int limit = 0, Snowflake around = 0, Snowflake before = 0, Snowflake after = 0);
 	Message *GetChannelMessage(Client *client, Snowflake channel_id, Snowflake message_id);
+	Message *CreateMessage(Client *client, Snowflake channel_id, const MessagePost &msg);
 }
