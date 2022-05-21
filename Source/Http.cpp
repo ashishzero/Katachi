@@ -1,5 +1,6 @@
 #include "Http.h"
 #include "Kr/KrString.h"
+#include <stdlib.h>
 
 //
 //
@@ -1151,4 +1152,103 @@ bool Http_Get(Http *http, const String endpoint, const Http_Request &req, Http_R
 
 bool Http_Put(Http *http, const String endpoint, const Http_Request &req, Http_Response *res, uint8_t *memory, ptrdiff_t length) {
 	return Http_CustomMethod(http, "PUT", endpoint, req, res, memory, length);
+}
+
+//
+//
+//
+
+Http_Multipart Http_MultipartBegin(Memory_Arena *arena) {
+	static const String AlphaNums = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+	Http_Multipart mt;
+	mt.arena = arena;
+	memset(mt.boundary, '-', 12);
+	for (int i = 12; i < sizeof(mt.boundary); ++i) {
+		mt.boundary[i] = AlphaNums[rand() % AlphaNums.length];
+	}
+	mt.memory  = (uint8_t *)MemoryArenaGetCurrent(arena);
+	mt.current = mt.memory;
+	mt.length  = 0;
+	return mt;
+}
+
+bool Http_MultipartData(Http_Multipart *mt, String content, String content_disposition) {
+	uint8_t header[HTTP_MAX_HEADER_SIZE];
+
+	int hlen = snprintf((char *)header, HTTP_MAX_HEADER_SIZE,
+		"--" StrFmt "\r\n"
+		"Content-Disposition: form-data; " StrFmt "\r\n\r\n",
+		StrArg(String(mt->boundary, HTTP_MULTIPART_LENGTH)),
+		StrArg(content_disposition));
+
+	ptrdiff_t length = hlen + content.length + 2;
+
+	uint8_t *dst = (uint8_t *)PushSize(mt->arena, length);
+	if (!dst) {
+		LogErrorEx("Http", "Could not add data to multipart. Reason: Out of memory");
+		return false;
+	}
+
+	Assert(dst == mt->current);
+
+	memcpy(dst, header, hlen);
+	memcpy(dst + hlen, content.data, content.length);
+	dst[length - 2] = '\r';
+	dst[length - 1] = '\n';
+
+	mt->length += length;
+	mt->current = dst + length;
+
+	return true;
+}
+
+bool Http_MultipartData(Http_Multipart *mt, String content, String content_type, String content_disposition) {
+	uint8_t header[HTTP_MAX_HEADER_SIZE];
+
+	int hlen = snprintf((char *)header, HTTP_MAX_HEADER_SIZE,
+		"--" StrFmt "\r\n"
+		"Content-Disposition: form-data; " StrFmt "\r\n"
+		"Content-Type: " StrFmt "\r\n\r\n",
+		StrArg(String(mt->boundary, HTTP_MULTIPART_LENGTH)),
+		StrArg(content_disposition),
+		StrArg(content_type));
+
+	ptrdiff_t length = hlen + content.length + 2;
+
+	uint8_t *dst = (uint8_t *)PushSize(mt->arena, length);
+	if (!dst) {
+		LogErrorEx("Http", "Could not add data to multipart. Reason: Out of memory");
+		return false;
+	}
+
+	Assert(dst == mt->current);
+
+	memcpy(dst, header, hlen);
+	memcpy(dst + hlen, content.data, content.length);
+	dst[length - 2] = '\r';
+	dst[length - 1] = '\n';
+
+	mt->length += length;
+	mt->current = dst + length;
+
+	return true;
+}
+
+String Http_MultipartEnd(Http_Multipart *mt) {
+	uint8_t *dst = (uint8_t *)PushSize(mt->arena, 2 + HTTP_MULTIPART_LENGTH + 2);
+	if (!dst)
+		return String();
+
+	Assert(dst == mt->current);
+	mt->current = dst;
+
+	memcpy(dst + 2, mt->boundary, HTTP_MULTIPART_LENGTH);
+	dst[0] = '-';
+	dst[1] = '-';
+	dst[HTTP_MULTIPART_LENGTH + 2 + 0] = '-';
+	dst[HTTP_MULTIPART_LENGTH + 2 + 1] = '-';
+	mt->length += (2 + HTTP_MULTIPART_LENGTH + 2);
+
+	return String(mt->memory, mt->length);
 }

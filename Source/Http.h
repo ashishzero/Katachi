@@ -239,3 +239,22 @@ void   Http_SetContent(Http_Response *res, String type, Buffer content);
 void   Http_SetBody(Http_Response *res, Buffer content);
 String Http_GetHeader(Http_Response *res, Http_Header_Id id);
 String Http_GetHeader(Http_Response *res, const String name);
+
+//
+//
+//
+
+constexpr int HTTP_MULTIPART_LENGTH = 64;
+
+struct Http_Multipart {
+	uint8_t       boundary[HTTP_MULTIPART_LENGTH];
+	ptrdiff_t     length = 0;
+	uint8_t *memory = nullptr;
+	uint8_t *current = nullptr;
+	Memory_Arena *arena = nullptr;
+};
+
+Http_Multipart Http_MultipartBegin(Memory_Arena *arena);
+bool Http_MultipartData(Http_Multipart *mt, String content, String filename);
+bool Http_MultipartData(Http_Multipart *mt, String content, String content_type, String filename);
+String Http_MultipartEnd(Http_Multipart *mt);

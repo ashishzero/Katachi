@@ -1528,18 +1528,23 @@ namespace Discord {
 		int32_t *        default_auto_archive_duration = nullptr;
 	};
 
+	struct FileAttachment {
+		String filename;
+		String description;
+		String content_type;
+		Buffer content;
+	};
+
 	struct MessagePost {
-		String           content;
-		bool             tts = false;
-		Array<Embed>     embeds;
-		AllowedMentions *allowed_mentions = nullptr;
-		MessageReference *message_reference = nullptr;
-		Array<Component> components;
-		Array<Snowflake> sticker_ids;
-		// @todo: files
-		String            payload_json;
-		Array<Attachment> attachments;
-		MessageFlag       flags = 0;
+		String                content;
+		bool                  tts = false;
+		Array<Embed>          embeds;
+		AllowedMentions *     allowed_mentions = nullptr;
+		MessageReference *    message_reference = nullptr;
+		Array<Component>      components;
+		Array<Snowflake>      sticker_ids;
+		Array<FileAttachment> attachments;
+		MessageFlag           flags = 0;
 	};
 
 

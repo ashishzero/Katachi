@@ -371,12 +371,30 @@ static void Discord_Jsonify(const Discord::Embed &embed, Jsonify *j) {
 	}
 
 	if (embed.color) j->KeyValue("color", embed.color);
-	if (embed.footer) Discord_Jsonify(*embed.footer, j);
-	if (embed.image) Discord_Jsonify(*embed.image, j);
-	if (embed.thumbnail) Discord_Jsonify(*embed.thumbnail, j);
-	if (embed.video) Discord_Jsonify(*embed.video, j);
-	if (embed.provider) Discord_Jsonify(*embed.provider, j);
-	if (embed.author) Discord_Jsonify(*embed.author, j);
+	if (embed.footer) {
+		j->PushKey("footer");
+		Discord_Jsonify(*embed.footer, j);
+	}
+	if (embed.image) {
+		j->PushKey("image");
+		Discord_Jsonify(*embed.image, j);
+	}
+	if (embed.thumbnail) {
+		j->PushKey("thumbnail");
+		Discord_Jsonify(*embed.thumbnail, j);
+	}
+	if (embed.video) {
+		j->PushKey("video");
+		Discord_Jsonify(*embed.video, j);
+	}
+	if (embed.provider) {
+		j->PushKey("provider");
+		Discord_Jsonify(*embed.provider, j);
+	}
+	if (embed.author) {
+		j->PushKey("author");
+		Discord_Jsonify(*embed.author, j);
+	}
 
 	if (embed.fields.count) {
 		j->PushKey("fields");
@@ -1987,43 +2005,43 @@ static int Discord_ShardThreadProc(void *arg) {
 
 static void Discord_HandleWebsocketEvent(Discord::Client *client, const Websocket_Event &event);
 
-static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json);
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *json);
 
-static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const String body, Json *res) {
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const String content_type, const String body, Json *res) {
 	Http_Query_Params params;
-	return Discord_CustomMethod(client, method, api_endpoint, params, body, res);
+	return Discord_CustomMethod(client, method, api_endpoint, params, content_type, body, res);
 }
 
-static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
-	return Discord_CustomMethod(client, "GET", api_endpoint, params, body, res);
+static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "GET", api_endpoint, params, content_type, body, res);
 }
 
-static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
-	return Discord_CustomMethod(client, "POST", api_endpoint, params, body, res);
+static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "POST", api_endpoint, params, content_type, body, res);
 }
 
-static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
-	return Discord_CustomMethod(client, "PATCH", api_endpoint, params, body, res);
+static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PATCH", api_endpoint, params, content_type, body, res);
 }
 
-static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String body, Json *res) {
-	return Discord_CustomMethod(client, "DELETE", api_endpoint, params, body, res);
+static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "DELETE", api_endpoint, params, content_type, body, res);
 }
 
-static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
-	return Discord_CustomMethod(client, "GET", api_endpoint, body, res);
+static inline bool Discord_Get(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "GET", api_endpoint, content_type, body, res);
 }
 
-static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
-	return Discord_CustomMethod(client, "POST", api_endpoint, body, res);
+static inline bool Discord_Post(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "POST", api_endpoint, content_type, body, res);
 }
 
-static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
-	return Discord_CustomMethod(client, "PATCH", api_endpoint, body, res);
+static inline bool Discord_Patch(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "PATCH", api_endpoint, content_type, body, res);
 }
 
-static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const String body, Json *res) {
-	return Discord_CustomMethod(client, "DELETE", api_endpoint, body, res);
+static inline bool Discord_Delete(Discord::Client *client, const String api_endpoint, const String content_type, const String body, Json *res) {
+	return Discord_CustomMethod(client, "DELETE", api_endpoint, content_type, body, res);
 }
 
 //
@@ -2339,7 +2357,7 @@ namespace Discord {
 		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
 
 		Json res;
-		if (Discord_Get(client, endpoint, String(), &res)) {
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
 			Channel *channel = new Channel;
 			Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
@@ -2410,7 +2428,7 @@ namespace Discord {
 		String body     = Jsonify_BuildString(&j);
 
 		Json res;
-		if (Discord_Patch(client, endpoint, body, &res)) {
+		if (Discord_Patch(client, endpoint, "application/json", body, &res)) {
 			Channel *channel = new Channel;
 			Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
@@ -2422,7 +2440,7 @@ namespace Discord {
 		String endpoint = FmtStr(client->scratch, "/channels/%zu", channel_id);
 
 		Json res;
-		if (Discord_Delete(client, endpoint, String(), &res)) {
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
 			Channel *channel = new Channel;
 			Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
@@ -2444,7 +2462,7 @@ namespace Discord {
 			Http_QueryParamSet(&params, "limit", FmtStr(client->scratch, "%zu", after.value));
 
 		Json res;
-		if (Discord_Get(client, endpoint, params, String(), &res)) {
+		if (Discord_Get(client, endpoint, params, "application/json", String(), &res)) {
 			Json_Array arr = JsonGetArray(res);
 			Array<Message> messages;
 			messages.Resize(arr.count);
@@ -2460,7 +2478,7 @@ namespace Discord {
 		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu", channel_id, message_id);
 
 		Json res;
-		if (Discord_Get(client, endpoint, String(), &res)) {
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
 			Message *message = new Message;
 			Discord_Deserialize(JsonGetObject(res), message);
 			return message;
@@ -2513,15 +2531,56 @@ namespace Discord {
 			j.EndArray();
 		}
 
-		// @todo handle files
+		if (msg.attachments.count) {
+			j.PushKey("attachments");
+			j.BeginArray();
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				j.BeginObject();
+				j.KeyValue("id", id);
+				j.KeyValue("filename", msg.attachments[id].filename);
+				if (msg.attachments[id].description.length)
+					j.KeyValue("description", msg.attachments[id].description);
+				j.EndObject();
+			}
+			j.EndArray();
+		}
 
 		j.EndObject();
 
+		String payload_json = Jsonify_BuildString(&j);
+
+		String body;
+		String content_type;
+
+		uint8_t buffer[4096];
+		int     len = 0;
+
+		if (0 && !msg.attachments.count) {
+			body = payload_json;
+			content_type = "application/json";
+		} else {
+			Http_Multipart multipart = Http_MultipartBegin(client->scratch);
+			if (!Http_MultipartData(&multipart, payload_json, "application/json", "name=\"payload_json\""))
+				return nullptr;
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				const auto &attachment = msg.attachments[id];
+				len = snprintf((char *)buffer, sizeof(buffer), "name=\"files[%d]\"; filename=\"" StrFmt "\"", id, StrArg(attachment.filename));
+				String content_disposition(buffer, len);
+				if (!Http_MultipartData(&multipart, attachment.content, attachment.content_type, content_disposition))
+					return nullptr;
+			}
+
+			body = Http_MultipartEnd(&multipart);
+			
+			String boundary = String(multipart.boundary, HTTP_MULTIPART_LENGTH);
+			len = snprintf((char *)buffer, sizeof(buffer), "multipart/form-data; boundary=" StrFmt, StrArg(boundary));
+			content_type = String(buffer, len);
+		}
+
 		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages", channel_id.value);
-		String body     = Jsonify_BuildString(&j);
 
 		Json res;
-		if (Discord_Post(client, endpoint, body, &res)) {
+		if (Discord_Post(client, endpoint, content_type, body, &res)) {
 			Message *message = new Message;
 			Discord_Deserialize(JsonGetObject(res), message);
 			return message;
@@ -2534,13 +2593,13 @@ namespace Discord {
 //
 //
 
-static void Discord_InitHttpRequest(Http *http, Http_Request *req, String authorization, String body = String()) {
+static void Discord_InitHttpRequest(Http *http, Http_Request *req, String authorization, String content_type, String body) {
 	Http_InitRequest(req);
 	Http_SetHost(req, http);
-	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "close");
+	Http_SetHeader(req, HTTP_HEADER_CONNECTION, "keep-alive");
 	Http_SetHeader(req, HTTP_HEADER_USER_AGENT, Discord::UserAgent);
 	Http_SetHeader(req, HTTP_HEADER_AUTHORIZATION, authorization);
-	Http_SetContent(req, "application/json", body);
+	Http_SetContent(req, content_type, body);
 }
 
 static bool Discord_HttpConnect(Discord::Client *client) {
@@ -2554,7 +2613,7 @@ static bool Discord_HttpConnect(Discord::Client *client) {
 	return true;
 }
 
-static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String body, Json *json) {
+static bool Discord_CustomMethod(Discord::Client *client, const String method, const String api_endpoint, const Http_Query_Params &params, const String content_type, const String body, Json *json) {
 	if (!client->http) {
 		if (!Discord_HttpConnect(client))
 			return false;
@@ -2566,9 +2625,15 @@ static bool Discord_CustomMethod(Discord::Client *client, const String method, c
 	Http_Response res;
 
 	for (int retry = 0; retry < 2; ++retry) {
-		Discord_InitHttpRequest(client->http, &req, client->authorization, body);
+		Discord_InitHttpRequest(client->http, &req, client->authorization, content_type, body);
 		if (Http_CustomMethod(client->http, method, endpoint, params, req, &res, client->scratch)) {
 			if (res.status.code != 200) {
+				LogInfo("===> Request");
+				Http_DumpHeader(req);
+				LogInfo("===> Response");
+				Http_DumpHeader(res);
+				LogInfo(StrFmt, StrArg(res.body));
+
 				// @todo: handle rate limiting
 				return false;
 			}

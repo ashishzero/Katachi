@@ -1,5 +1,6 @@
 ﻿#include "Discord.h"
 #include "Kr/KrString.h"
+#include "Base64.h"
 
 #include <stdio.h>
 
@@ -16,6 +17,7 @@ void LogProcedure(void *context, Log_Level level, const char *source, const char
 }
 
 static volatile bool Logout = false;
+static String        ImageFile = "";
 
 void OnTick(Discord::Client *client) {
 	if (Logout) {
@@ -27,9 +29,9 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 	if (message.content == "info") {
 		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
 		if (channel) {
-			Trace("Channel name" StrFmt, StrArg(channel->name));
-		} else {
-			Trace("Channle not found!");
+			Discord::MessagePost reply;
+			reply.content = channel->name;
+			Discord::CreateMessage(client, message.channel_id, reply);
 		}
 	} else if (StrStartsWith(message.content, "rename ")) {
 		String name = StrTrim(SubStr(message.content, 7));
@@ -56,7 +58,26 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		embed.color = 0x00ffff;
 
 		Discord::MessagePost reply;
-		//reply.content = "pong";
+		reply.embeds.Add(embed);
+		Discord::CreateMessage(client, message.channel_id, reply);
+	} else if (message.content == "me") {
+		Discord::FileAttachment file;
+		file.content      = ImageFile;
+		file.content_type = "image/png";
+		file.filename     = "me.png";
+		file.description  = "This is some desc";
+
+		Discord::Embed embed;
+		embed.title          = "Embed";
+		embed.description    = "This is embedded msg";
+		embed.thumbnail      = new Discord::EmbedThumbnail;
+		embed.thumbnail->url = "attachment://me.png";
+		embed.image          = new Discord::EmbedImage;
+		embed.image->url     = "attachment://me.png";
+
+		Discord::MessagePost reply;
+		reply.attachments.Add(file);
+		reply.content = "Image";
 		reply.embeds.Add(embed);
 		Discord::CreateMessage(client, message.channel_id, reply);
 	}
@@ -68,6 +89,24 @@ static void InterruptHandler(int signo) {
 
 #include <signal.h>
 
+static String ReadEntireFile(const char *filename) {
+	FILE *f = fopen(filename, "rb");
+
+	if (!f)
+		return String();
+
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	char *string = (char *)MemoryAllocate(fsize + 1);
+	fread(string, fsize, 1, f);
+	fclose(f);
+
+	string[fsize] = 0;
+	return String(string, fsize);
+}
+
 int main(int argc, char **argv) {
 	InitThreadContext(0);
 	ThreadContextSetLogger({ LogProcedure, nullptr });
@@ -76,6 +115,9 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "USAGE: %s token\n\n", argv[0]);
 		return 1;
 	}
+
+	ImageFile = ReadEntireFile("SampleImage.png");
+	Assert(ImageFile.length);
 
 	signal(SIGINT, InterruptHandler);
 
