@@ -92,6 +92,7 @@ void Jsonify::PushString(String str) {
 }
 
 void Jsonify::PushId(uint64_t id) {
+	NextElement(false);
 	char buff[100];
 	int len = snprintf(buff, sizeof(buff), "%zu", id);
 	PushByte('"');

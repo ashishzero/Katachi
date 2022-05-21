@@ -2779,6 +2779,29 @@ namespace Discord {
 		}
 		return false;
 	}
+
+	bool BulkDeleteMessages(Client *client, Snowflake channel_id, Array_View<Snowflake> messages_ids) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/bulk-delete", channel_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.PushKey("messages");
+		j.BeginArray();
+		for (const auto id : messages_ids) {
+			j.PushId(id.value);
+		}
+		j.EndArray();
+
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", body, &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //

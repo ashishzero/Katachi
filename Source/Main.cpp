@@ -54,15 +54,22 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		}
 	} else if (message.content == "deleteme") {
 		Discord::DeleteChannel(client, message.channel_id);
-	} else if (message.content == "getmsgs") {
+	} else if (message.content == "delete-bulk") {
 		auto msgs = Discord::GetChannelMessages(client, message.channel_id);
-		Trace("Get Msgs Count: %d", (int)msgs.count);
-		for (auto &m : msgs) {
-			Trace(StrFmt, StrArg(m.content));
+		Discord::MessagePost post;
+		post.content = FmtStr(ThreadContext.allocator, "Deleting %d messages...", (int)msgs.count);
+		auto sent = Discord::CreateMessage(client, message.channel_id, post);
+		Trace("Deleting %d messages...", (int)msgs.count);
+		Array<Discord::Snowflake> ids;
+		ids.Resize(msgs.count);
+		for (ptrdiff_t index = 0; index < ids.count; ++index) {
+			ids[index] = msgs[index].id;
 		}
-	} else if (message.content == "getmsg") {
-		auto current = Discord::GetChannelMessage(client, message.channel_id, message.id);
-		Trace(StrFmt, StrArg(current->content));
+		if (Discord::BulkDeleteMessages(client, message.channel_id, ids) && sent) {
+			Discord::MessagePatch patch;
+			patch.content = new String(FmtStr(ThreadContext.allocator, "Deleted %d messages", (int)msgs.count));
+			Discord::EditMessage(client, message.channel_id, sent->id, patch);
+		}
 	} else if (message.content == "ping") {
 		Discord::Embed embed;
 		embed.description = "pong";
