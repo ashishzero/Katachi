@@ -1796,6 +1796,96 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Interaction *in
 	interaction->guild_locale = JsonGetString(obj, "guild_locale");
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::InviteStageInstance *invite) {
+	Json_Array members = JsonGetArray(obj, "members");
+	invite->members.Resize(members.count);
+	for (ptrdiff_t index = 0; index < invite->members.count; ++index) {
+		Discord_Deserialize(JsonGetObject(members[index]), &invite->members[index]);
+	}
+
+	invite->participant_count = JsonGetInt(obj, "participant_count");
+	invite->speaker_count     = JsonGetInt(obj, "speaker_count");
+	invite->topic             = JsonGetString(obj, "topic");
+}
+
+static void Discord_Deserialize(const Json_Object &obj, Discord::Invite *invite) {
+	invite->code = JsonGetString(obj, "code");
+	
+	const Json *guild = obj.Find("guild");
+	if (guild) {
+		invite->guild = new Discord::Guild;
+		if (invite->guild) {
+			Discord_Deserialize(JsonGetObject(*guild), invite->guild);
+		}
+	}
+
+	const Json *channel = obj.Find("channel");
+	if (channel && channel->type == JSON_TYPE_OBJECT) {
+		invite->channel = new Discord::Channel;
+		if (invite->channel) {
+			Discord_Deserialize(channel->value.object, invite->channel);
+		}
+	}
+
+	const Json *inviter = obj.Find("inviter");
+	if (inviter) {
+		invite->inviter = new Discord::User;
+		if (invite->inviter) {
+			Discord_Deserialize(JsonGetObject(*inviter), invite->inviter);
+		}
+	}
+
+	invite->target_type = (Discord::InviteTargetType)JsonGetInt(obj, "target_type");
+
+	const Json *target_user = obj.Find("target_user");
+	if (target_user) {
+		invite->target_user = new Discord::User;
+		if (invite->target_user) {
+			Discord_Deserialize(JsonGetObject(*target_user), invite->target_user);
+		}
+	}
+
+	const Json *target_application = obj.Find("target_application");
+	if (target_application) {
+		invite->target_application = new Discord::Application;
+		if (invite->target_application) {
+			Discord_Deserialize(JsonGetObject(*target_application), invite->target_application);
+		}
+	}
+
+	invite->approximate_presence_count = JsonGetInt(obj, "approximate_presence_count");
+	invite->approximate_member_count   = JsonGetInt(obj, "approximate_member_count");
+	invite->expires_at                 = Discord_ParseTimestamp(JsonGetString(obj, "expires_at"));
+
+	const Json *stage_instance = obj.Find("stage_instance");
+	if (stage_instance) {
+		invite->stage_instance = new Discord::InviteStageInstance;
+		if (invite->stage_instance) {
+			Discord_Deserialize(JsonGetObject(*stage_instance), invite->stage_instance);
+		}
+	}
+
+	const Json *guild_scheduled_event = obj.Find("guild_scheduled_event");
+	if (guild_scheduled_event) {
+		invite->guild_scheduled_event = new Discord::GuildScheduledEvent;
+		if (invite->guild_scheduled_event) {
+			Discord_Deserialize(JsonGetObject(*guild_scheduled_event), invite->guild_scheduled_event);
+		}
+	}
+
+	const Json *uses = obj.Find("uses");
+	if (uses) {
+		invite->metadata = new Discord::InviteMetadata;
+		if (invite->metadata) {
+			invite->metadata->uses       = JsonGetInt(*uses);
+			invite->metadata->max_uses   = JsonGetInt(obj, "max_uses");
+			invite->metadata->max_age    = JsonGetInt(obj, "max_age");
+			invite->metadata->temporary  = JsonGetBool(obj, "temporary");
+			invite->metadata->created_at = Discord_ParseTimestamp(JsonGetString(obj, "created_at"));
+		}
+	}
+}
+
 //
 //
 //
@@ -2367,7 +2457,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
 			Channel *channel = new Channel;
-			Discord_Deserialize(JsonGetObject(res), channel);
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
 		}
 		return nullptr;
@@ -2438,7 +2529,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Patch(client, endpoint, "application/json", body, &res)) {
 			Channel *channel = new Channel;
-			Discord_Deserialize(JsonGetObject(res), channel);
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
 		}
 		return nullptr;
@@ -2450,7 +2542,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
 			Channel *channel = new Channel;
-			Discord_Deserialize(JsonGetObject(res), channel);
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
 			return channel;
 		}
 		return nullptr;
@@ -2488,7 +2581,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
 			Message *message = new Message;
-			Discord_Deserialize(JsonGetObject(res), message);
+			if (message)
+				Discord_Deserialize(JsonGetObject(res), message);
 			return message;
 		}
 		return nullptr;
@@ -2592,7 +2686,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Post(client, endpoint, content_type, body, &res)) {
 			Message *message = new Message;
-			Discord_Deserialize(JsonGetObject(res), message);
+			if (message)
+				Discord_Deserialize(JsonGetObject(res), message);
 			return message;
 		}
 		return nullptr;
@@ -2604,7 +2699,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Post(client, endpoint, "application/json", String(), &res)) {
 			Message *message = new Message;
-			Discord_Deserialize(JsonGetObject(res), message);
+			if (message)
+				Discord_Deserialize(JsonGetObject(res), message);
 			return message;
 		}
 
@@ -2764,7 +2860,8 @@ namespace Discord {
 		Json res;
 		if (Discord_Patch(client, endpoint, content_type, body, &res)) {
 			Message *message = new Message;
-			Discord_Deserialize(JsonGetObject(res), message);
+			if (message)
+				Discord_Deserialize(JsonGetObject(res), message);
 			return message;
 		}
 		return nullptr;
@@ -2820,6 +2917,49 @@ namespace Discord {
 			return true;
 		}
 		return false;
+	}
+
+	Array_View<Invite> GetChannelInvites(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/invites", channel_id);
+
+		Json res;
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
+			Json_Array arr = JsonGetArray(res);
+			Array<Invite> invites;
+			invites.Resize(arr.count);
+			for (ptrdiff_t index = 0; index < invites.count; ++index)
+				Discord_Deserialize(JsonGetObject(arr[index]), &invites[index]);
+			return invites;
+		}
+
+		return Array_View<Invite>();
+	}
+
+	Invite *CreateChannelInvite(Client *client, Snowflake channel_id, const InvitePost &invite) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/invites", channel_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("max_age", invite.max_age);
+		j.KeyValue("max_uses", invite.max_uses);
+		j.KeyValue("temporary", invite.temporary);
+		j.KeyValue("unique", invite.unique);
+		if (invite.target_type != InviteTargetType::NONE) j.KeyValue("target_type", (int)invite.target_type);
+		if (invite.target_user_id.value) j.KeyValue("target_user_id", invite.target_user_id.value);
+		if (invite.target_application_id.value) j.KeyValue("target_application_id", invite.target_application_id.value);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", body, & res)) {
+			Invite *invite = new Invite;
+			if (invite)
+				Discord_Deserialize(JsonGetObject(res), invite);
+			return invite;
+		}
+
+		return nullptr;
 	}
 }
 

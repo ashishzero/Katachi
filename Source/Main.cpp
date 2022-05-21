@@ -120,6 +120,23 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		}
 	} else if (StrFind(message.content, "one") >= 0) {
 		Discord::DeleteMessage(client, message.channel_id, message.id);
+	} else if (message.content == "create-invite") {
+		auto invite = Discord::CreateChannelInvite(client, message.channel_id);
+		if (invite) {
+			Discord::MessagePost reply;
+			reply.content = FmtStr(ThreadContext.allocator, "https://discord.gg/" StrFmt, StrArg(invite->code));
+			Discord::CreateMessage(client, message.channel_id, reply);
+		}
+	} else if (message.content == "list-invite") {
+		auto invites = Discord::GetChannelInvites(client, message.channel_id);
+		uint8_t buffer[1024];
+		int len = 0;
+		for (const auto &in : invites) {
+			len += snprintf((char *)buffer + len, sizeof(buffer) - len, StrFmt ", ", StrArg(in.code));
+		}
+		Discord::MessagePost reply;
+		reply.content = String(buffer, len);
+		Discord::CreateMessage(client, message.channel_id, reply);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
 			String heart  = "%F0%9F%92%96";

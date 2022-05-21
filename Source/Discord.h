@@ -80,10 +80,6 @@ namespace Discord {
 		Permission    deny  = 0;
 	};
 
-	enum class InviteTargetType {
-		NONE = 0, STREAM = 1, EMBEDDED_APPLICATION = 2
-	};
-
 	//
 	//
 	//
@@ -1161,6 +1157,46 @@ namespace Discord {
 	//
 	//
 
+
+	enum class InviteTargetType {
+		NONE = 0, STREAM = 1, EMBEDDED_APPLICATION = 2
+	};
+
+	struct InviteMetadata {
+		int32_t   uses = 0;
+		int32_t   max_uses = 0;
+		int32_t   max_age = 0;
+		bool      temporary = false;
+		Timestamp created_at;
+	};
+
+	struct InviteStageInstance {
+		Array<GuildMember> members;
+		int32_t            participant_count = 0;
+		int32_t            speaker_count = 0;
+		String             topic;
+	};
+
+	struct Invite {
+		String               code;
+		Guild *              guild = nullptr;
+		Channel *            channel = nullptr;
+		User *               inviter = nullptr;
+		InviteTargetType     target_type = InviteTargetType::NONE;
+		User *               target_user = nullptr;
+		Application *        target_application = nullptr;
+		int32_t              approximate_presence_count = 0;
+		int32_t              approximate_member_count = 0;
+		Timestamp            expires_at;
+		InviteStageInstance *stage_instance = nullptr;
+		GuildScheduledEvent *guild_scheduled_event = nullptr;
+		InviteMetadata *     metadata = nullptr;
+	};
+
+	//
+	//
+	//
+
 	struct InteractionData {
 		struct ResolvedData {
 			Hash_Table<Snowflake, User>        users;
@@ -1309,7 +1345,7 @@ namespace Discord {
 		String           code;
 		Timestamp        created_at;
 		Snowflake        guild_id;
-		User *inviter = nullptr;
+		User *           inviter = nullptr;
 		int32_t          max_age;
 		int32_t          max_uses;
 		InviteTargetType target_type = InviteTargetType::NONE;
@@ -1556,6 +1592,16 @@ namespace Discord {
 		Array<FileAttachment> attachments;
 	};
 
+	struct InvitePost {
+		int32_t          max_age     = 86400;
+		int32_t          max_uses    = 0;
+		bool             temporary   = false;
+		bool             unique      = false;
+		InviteTargetType target_type = InviteTargetType::NONE;
+		Snowflake        target_user_id;
+		Snowflake        target_application_id;
+	};
+
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
 	Channel *DeleteChannel(Client *client, Snowflake channel_id);
@@ -1573,4 +1619,7 @@ namespace Discord {
 	bool DeleteMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 	bool BulkDeleteMessages(Client *client, Snowflake channel_id, Array_View<Snowflake> messages_ids);
 	bool EditChannelPermissions(Client *client, Snowflake channel_id, Snowflake overwrite_id, Permission allow, Permission deny, OverwriteType type);
+	Array_View<Invite> GetChannelInvites(Client *client, Snowflake channel_id);
+	Invite *CreateChannelInvite(Client *client, Snowflake channel_id, const InvitePost &invite = InvitePost());
+
 }
