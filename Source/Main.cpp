@@ -82,8 +82,11 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		Discord::CreateMessage(client, message.channel_id, reply);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
-			String emoji = "%F0%9F%92%96";
-			Discord::CreateReaction(client, message.channel_id, message.id, emoji);
+			String heart  = "%F0%9F%92%96";
+			String potato = "%F0%9F%A5%94";
+			Discord::CreateReaction(client, message.channel_id, message.id, potato);
+			Discord::CreateReaction(client, message.channel_id, message.id, heart);
+			Discord::DeleteReaction(client, message.channel_id, message.id, potato);
 		}
 
 		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);

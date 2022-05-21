@@ -2618,6 +2618,16 @@ namespace Discord {
 		}
 		return false;
 	}
+
+	bool DeleteReaction(Client *client, Snowflake channel_id, Snowflake message_id, String emoji) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s/@me", channel_id, message_id, StrArg(emoji));
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //
