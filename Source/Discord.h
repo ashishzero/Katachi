@@ -1572,4 +1572,5 @@ namespace Discord {
 	Message *EditMessage(Client *client, Snowflake channel_id, Snowflake message_id, const MessagePatch &msg);
 	bool DeleteMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 	bool BulkDeleteMessages(Client *client, Snowflake channel_id, Array_View<Snowflake> messages_ids);
+	bool EditChannelPermissions(Client *client, Snowflake channel_id, Snowflake overwrite_id, Permission allow, Permission deny, OverwriteType type);
 }

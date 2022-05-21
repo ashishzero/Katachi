@@ -2802,6 +2802,25 @@ namespace Discord {
 		}
 		return false;
 	}
+
+	bool EditChannelPermissions(Client *client, Snowflake channel_id, Snowflake overwrite_id, Permission allow, Permission deny, OverwriteType type) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/permissions/%zu", channel_id, overwrite_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("allow", allow);
+		j.KeyValue("deny", deny);
+		j.KeyValue("tye", (int)type);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", body, &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //

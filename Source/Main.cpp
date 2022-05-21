@@ -108,6 +108,16 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 			edited.content = new String("The message is edited now");
 			Discord::EditMessage(client, msg->channel_id, msg->id, edited);
 		}
+	} else if (message.content == "editperms") {
+		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
+		if (channel) {
+			if (channel->permission_overwrites.count) {
+				auto perms = channel->permission_overwrites[0];
+				perms.deny = ToggleFlag(perms.deny, Discord::PermissionBit::SEND_MESSAGES);
+				Discord::EditChannelPermissions(client, message.channel_id, perms.id, perms.allow, perms.deny, perms.type);
+				Trace("Edited Permissions: %zu, %zu, %d", perms.allow, perms.deny, perms.type);
+			}
+		}
 	} else if (StrFind(message.content, "one") >= 0) {
 		Discord::DeleteMessage(client, message.channel_id, message.id);
 	} else {
