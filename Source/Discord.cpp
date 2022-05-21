@@ -3007,7 +3007,40 @@ namespace Discord {
 		return false;
 	}
 
+	Array_View<Message> GetPinnedMessage(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/pins", channel_id);
 
+		Json res;
+		if (Discord_Get(client, endpoint, "application/json", String(), &res)) {
+			Json_Array arr = JsonGetArray(res);
+			Array<Message> pinned;
+			pinned.Resize(arr.count);
+			for (ptrdiff_t index = 0; index < pinned.count; ++index)
+				Discord_Deserialize(JsonGetObject(arr[index]), &pinned[index]);
+			return pinned;
+		}
+		return Array_View<Message>();
+	}
+
+	bool PinMessage(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/pins/%zu", channel_id, message_id);
+
+		Json res;
+		if (Discord_Put(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	bool UnpinMessage(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/pins/%zu", channel_id, message_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
 }
 
 //

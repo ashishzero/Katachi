@@ -1629,4 +1629,7 @@ namespace Discord {
 	bool DeleteChannelPermission(Client *client, Snowflake channel_id, Snowflake overwrite_id);
 	FollowedChannel *FollowNewsChannel(Client *client, Snowflake channel_id, Snowflake webhook_id);
 	bool TriggerTypingIndicator(Client *client, Snowflake channel_id);
+	Array_View<Message> GetPinnedMessage(Client *client, Snowflake channel_id);
+	bool PinMessage(Client *client, Snowflake channel_id, Snowflake message_id);
+	bool UnpinMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 }

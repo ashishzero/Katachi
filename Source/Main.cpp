@@ -141,6 +141,12 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		auto channel = Discord::GetChannel(client, message.channel_id);
 		if (channel && channel->permission_overwrites.count)
 			Discord::DeleteChannelPermission(client, message.channel_id, channel->permission_overwrites[0].id);
+	} else if (StrStartsWith(message.content, "pin")) {
+		Discord::PinMessage(client, message.channel_id, message.id);
+	} else if (message.content == "unpin") {
+		auto pins = Discord::GetPinnedMessage(client, message.channel_id);
+		if (pins.count)
+			Discord::UnpinMessage(client, message.channel_id, pins[0].id);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
 			Discord::TriggerTypingIndicator(client, message.channel_id);
