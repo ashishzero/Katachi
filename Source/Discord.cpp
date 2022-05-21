@@ -1886,6 +1886,11 @@ static void Discord_Deserialize(const Json_Object &obj, Discord::Invite *invite)
 	}
 }
 
+static void Discord_Deserialize(const Json_Object &obj, Discord::FollowedChannel *channel) {
+	channel->channel_id = Discord_ParseId(JsonGetString(obj, "channel_id"));
+	channel->webhook_id = Discord_ParseId(JsonGetString(obj, "webhook_id"));
+}
+
 //
 //
 //
@@ -2959,6 +2964,36 @@ namespace Discord {
 			return invite;
 		}
 
+		return nullptr;
+	}
+
+	bool DeleteChannelPermission(Client *client, Snowflake channel_id, Snowflake overwrite_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/permissions/%zu", channel_id, overwrite_id);
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	FollowedChannel *FollowNewsChannel(Client *client, Snowflake channel_id, Snowflake webhook_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/followers", channel_id);
+
+		Jsonify j(client->scratch);
+		j.BeginObject();
+		j.KeyValue("webhook_channel_id", webhook_id.value);
+		j.EndObject();
+
+		String body = Jsonify_BuildString(&j);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", body, &res)) {
+			FollowedChannel *channel = new FollowedChannel;
+			if (channel)
+				Discord_Deserialize(JsonGetObject(res), channel);
+			return channel;
+		}
 		return nullptr;
 	}
 }

@@ -465,6 +465,11 @@ namespace Discord {
 		Channel(Memory_Allocator allocator): permission_overwrites(allocator), recipients(allocator) {}
 	};
 
+	struct FollowedChannel {
+		Snowflake channel_id;
+		Snowflake webhook_id;
+	};
+
 	enum class VerificationLevel {
 		NONE = 0, LOW = 1, MEDIUM = 2, HIGH = 3, VERY_HIGH = 4
 	};
@@ -1621,5 +1626,6 @@ namespace Discord {
 	bool EditChannelPermissions(Client *client, Snowflake channel_id, Snowflake overwrite_id, Permission allow, Permission deny, OverwriteType type);
 	Array_View<Invite> GetChannelInvites(Client *client, Snowflake channel_id);
 	Invite *CreateChannelInvite(Client *client, Snowflake channel_id, const InvitePost &invite = InvitePost());
-
+	bool DeleteChannelPermission(Client *client, Snowflake channel_id, Snowflake overwrite_id);
+	FollowedChannel *FollowNewsChannel(Client *client, Snowflake channel_id, Snowflake webhook_id);
 }

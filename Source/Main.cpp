@@ -137,6 +137,10 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		Discord::MessagePost reply;
 		reply.content = String(buffer, len);
 		Discord::CreateMessage(client, message.channel_id, reply);
+	} else if (message.content == "del-perms") {
+		auto channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->permission_overwrites.count)
+			Discord::DeleteChannelPermission(client, message.channel_id, channel->permission_overwrites[0].id);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
 			String heart  = "%F0%9F%92%96";
