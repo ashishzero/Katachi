@@ -92,6 +92,17 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		reply.content = "Image";
 		reply.embeds.Add(embed);
 		Discord::CreateMessage(client, message.channel_id, reply);
+	} else if (message.content == "editmsg") {
+		Discord::MessagePost reply;
+		reply.content = "This is original message";
+		Discord::Message *msg = Discord::CreateMessage(client, message.channel_id, reply);
+		if (msg) {
+			Discord::MessagePatch edited;
+			edited.content = new String("The message is edited now");
+			Discord::EditMessage(client, msg->channel_id, msg->id, edited);
+		}
+	} else if (StrFind(message.content, "one") >= 0) {
+		Discord::DeleteMessage(client, message.channel_id, message.id);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
 			String heart  = "%F0%9F%92%96";

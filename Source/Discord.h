@@ -1547,6 +1547,14 @@ namespace Discord {
 		MessageFlag           flags = 0;
 	};
 
+	struct MessagePatch {
+		String *              content = nullptr;
+		Array<Embed>          embeds;
+		MessageFlag *         flags = nullptr;
+		AllowedMentions *     allowed_mentions = nullptr;
+		Array<Component>      components;
+		Array<FileAttachment> attachments;
+	};
 
 	Channel *GetChannel(Client *client, Snowflake channel_id);
 	Channel *ModifyChannel(Client *client, Snowflake channel_id, const ChannelPatch &patch);
@@ -1561,4 +1569,6 @@ namespace Discord {
 	Array_View<User> GetReactions(Client *client, Snowflake channel_id, Snowflake message_id, String emoji, int32_t after = 0, int32_t limit = 0);
 	bool DeleteAllReactions(Client *client, Snowflake channel_id, Snowflake message_id);
 	bool DeleteAllReactionsForEmoji(Client *client, Snowflake channel_id, Snowflake message_id, String emoji);
+	Message *EditMessage(Client *client, Snowflake channel_id, Snowflake message_id, const MessagePatch &msg);
+	bool DeleteMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 }

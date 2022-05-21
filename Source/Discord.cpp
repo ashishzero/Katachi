@@ -2553,6 +2553,8 @@ namespace Discord {
 			j.EndArray();
 		}
 
+		if (msg.flags) j.KeyValue("flags", msg.flags);
+
 		j.EndObject();
 
 		String payload_json = Jsonify_BuildString(&j);
@@ -2563,7 +2565,7 @@ namespace Discord {
 		uint8_t buffer[4096];
 		int     len = 0;
 
-		if (0 && !msg.attachments.count) {
+		if (!msg.attachments.count) {
 			body = payload_json;
 			content_type = "application/json";
 		} else {
@@ -2674,6 +2676,102 @@ namespace Discord {
 
 	bool DeleteAllReactionsForEmoji(Client *client, Snowflake channel_id, Snowflake message_id, String emoji) {
 		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/reactions/%.*s", channel_id, message_id, StrArg(emoji));
+
+		Json res;
+		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+	Message *EditMessage(Client *client, Snowflake channel_id, Snowflake message_id, const MessagePatch &msg) {
+		Jsonify j(client->scratch);
+
+		j.BeginObject();
+
+		if (msg.content) j.KeyValue("content", *msg.content);
+		if (msg.flags) j.KeyValue("flags", *msg.flags);
+
+		if (msg.embeds.count) {
+			j.PushKey("embeds");
+			j.BeginArray();
+			for (const auto &embed : msg.embeds)
+				Discord_Jsonify(embed, &j);
+			j.EndArray();
+		}
+
+		if (msg.allowed_mentions) {
+			j.PushKey("allowed_mentions");
+			Discord_Jsonify(*msg.allowed_mentions, &j);
+		}
+
+		if (msg.components.count) {
+			j.PushKey("components");
+			j.BeginArray();
+			for (const auto &comp : msg.components)
+				Discord_Jsonify(comp, &j);
+			j.EndArray();
+		}
+
+		if (msg.attachments.count) {
+			j.PushKey("attachments");
+			j.BeginArray();
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				j.BeginObject();
+				j.KeyValue("id", id);
+				j.KeyValue("filename", msg.attachments[id].filename);
+				if (msg.attachments[id].description.length)
+					j.KeyValue("description", msg.attachments[id].description);
+				j.EndObject();
+			}
+			j.EndArray();
+		}
+
+		j.EndObject();
+
+		String payload_json = Jsonify_BuildString(&j);
+
+		String body;
+		String content_type;
+
+		uint8_t buffer[4096];
+		int     len = 0;
+
+		if (!msg.attachments.count) {
+			body = payload_json;
+			content_type = "application/json";
+		} else {
+			Http_Multipart multipart = Http_MultipartBegin(client->scratch);
+			if (!Http_MultipartData(&multipart, payload_json, "application/json", "name=\"payload_json\""))
+				return nullptr;
+			for (int id = 0; id < (int)msg.attachments.count; ++id) {
+				const auto &attachment = msg.attachments[id];
+				len = snprintf((char *)buffer, sizeof(buffer), "name=\"files[%d]\"; filename=\"" StrFmt "\"", id, StrArg(attachment.filename));
+				String content_disposition(buffer, len);
+				if (!Http_MultipartData(&multipart, attachment.content, attachment.content_type, content_disposition))
+					return nullptr;
+			}
+
+			body = Http_MultipartEnd(&multipart);
+
+			String boundary = String(multipart.boundary, HTTP_MULTIPART_LENGTH);
+			len = snprintf((char *)buffer, sizeof(buffer), "multipart/form-data; boundary=" StrFmt, StrArg(boundary));
+			content_type = String(buffer, len);
+		}
+
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu", channel_id, message_id);
+
+		Json res;
+		if (Discord_Patch(client, endpoint, content_type, body, &res)) {
+			Message *message = new Message;
+			Discord_Deserialize(JsonGetObject(res), message);
+			return message;
+		}
+		return nullptr;
+	}
+
+	bool DeleteMessage(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu", channel_id, message_id);
 
 		Json res;
 		if (Discord_Delete(client, endpoint, "application/json", String(), &res)) {
