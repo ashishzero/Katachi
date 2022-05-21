@@ -80,6 +80,11 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 		reply.content = "Image";
 		reply.embeds.Add(embed);
 		Discord::CreateMessage(client, message.channel_id, reply);
+	} else {
+		Discord::Channel *channel = Discord::GetChannel(client, message.channel_id);
+		if (channel && channel->type == Discord::ChannelType::GUILD_NEWS) {
+			Discord::CrossPost(client, message.channel_id, message.id);
+		}
 	}
 }
 

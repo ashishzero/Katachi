@@ -1554,4 +1554,5 @@ namespace Discord {
 	Array_View<Message> GetChannelMessages(Client *client, Snowflake channel_id, int limit = 0, Snowflake around = 0, Snowflake before = 0, Snowflake after = 0);
 	Message *GetChannelMessage(Client *client, Snowflake channel_id, Snowflake message_id);
 	Message *CreateMessage(Client *client, Snowflake channel_id, const MessagePost &msg);
+	Message *CrossPost(Client *client, Snowflake channel_id, Snowflake message_id);
 }

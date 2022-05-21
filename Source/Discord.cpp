@@ -2587,6 +2587,19 @@ namespace Discord {
 		}
 		return nullptr;
 	}
+
+	Message *CrossPost(Client *client, Snowflake channel_id, Snowflake message_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/messages/%zu/crosspost", channel_id, message_id);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", String(), &res)) {
+			Message *message = new Message;
+			Discord_Deserialize(JsonGetObject(res), message);
+			return message;
+		}
+
+		return nullptr;
+	}
 }
 
 //
