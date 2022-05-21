@@ -1628,4 +1628,5 @@ namespace Discord {
 	Invite *CreateChannelInvite(Client *client, Snowflake channel_id, const InvitePost &invite = InvitePost());
 	bool DeleteChannelPermission(Client *client, Snowflake channel_id, Snowflake overwrite_id);
 	FollowedChannel *FollowNewsChannel(Client *client, Snowflake channel_id, Snowflake webhook_id);
+	bool TriggerTypingIndicator(Client *client, Snowflake channel_id);
 }

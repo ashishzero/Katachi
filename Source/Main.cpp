@@ -143,6 +143,8 @@ void OnMessage(Discord::Client *client, const Discord::Message &message) {
 			Discord::DeleteChannelPermission(client, message.channel_id, channel->permission_overwrites[0].id);
 	} else {
 		if (StrFind(message.content, "zero") >= 0) {
+			Discord::TriggerTypingIndicator(client, message.channel_id);
+
 			String heart  = "%F0%9F%92%96";
 			String potato = "%F0%9F%A5%94";
 			Discord::CreateReaction(client, message.channel_id, message.id, potato);

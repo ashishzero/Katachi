@@ -2996,6 +2996,18 @@ namespace Discord {
 		}
 		return nullptr;
 	}
+
+	bool TriggerTypingIndicator(Client *client, Snowflake channel_id) {
+		String endpoint = FmtStr(client->scratch, "/channels/%zu/typing", channel_id);
+
+		Json res;
+		if (Discord_Post(client, endpoint, "application/json", String(), &res)) {
+			return true;
+		}
+		return false;
+	}
+
+
 }
 
 //
