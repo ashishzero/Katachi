@@ -11,3 +11,5 @@ A discord bot implementation in C/C++
 ## Building
 - Use [premake](https://premake.github.io/) to generate build files and build the project accordingly.
 
+*Note: The binaries of premake for Windows, Linux and Mac is present in Premake directory at the root of the repository*
+
